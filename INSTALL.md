@@ -118,8 +118,19 @@ WhatsAppGo registers a standard Linux system-tray/status icon. GNOME Shell does
 not display status icons by itself; enable a StatusNotifier/AppIndicator shell
 extension if your GNOME installation does not already provide one. Other
 desktops with a standard system tray normally show the icon without extra
-configuration. The application continues to use the desktop notification
-service or portal when no tray host is available.
+configuration. On Debian and Ubuntu, install the GNOME integration with:
+
+```bash
+sudo apt install gnome-shell-extension-appindicator
+```
+
+Enable **AppIndicator and KStatusNotifierItem Support** in the GNOME Extensions
+application, then sign out and back in before restarting WhatsAppGo. The icon
+registers even if the extension starts after WhatsAppGo. Minimizing hides the
+window behind the icon; its menu provides **Open/Hide** and **Quit WhatsAppGo**.
+If no tray host exists, minimizing remains a normal window-manager minimize and
+closing exits safely. Native notifications continue through the desktop portal
+in either case.
 
 ## First start
 

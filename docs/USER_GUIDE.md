@@ -158,14 +158,15 @@ with a known-good GPU driver may launch with `QT_QUICK_BACKEND=rhi`.
 
 ## Notifications and presence
 
-Incoming messages use native system notifications unless the chat is muted.
+Incoming messages use the native desktop notification service or portal unless
+the chat is muted; notification delivery does not depend on a tray icon.
 Clicking a notification opens its conversation. When the desktop provides a
 system tray, WhatsAppGo also places its icon there with connection status,
-**Open/Hide**, and **Quit WhatsAppGo** actions. Opening a chat sends read
-receipts for its incoming messages. Typing and presence updates depend on what
-the other account and WhatsApp expose.
+**Open/Hide**, and **Quit WhatsAppGo** actions. Minimizing hides the window
+behind that icon. Opening a chat sends read receipts for its incoming messages.
+Typing and presence updates depend on what the other account and WhatsApp expose.
 
-With a tray available, closing the window hides it and keeps notifications and
+With a tray available, minimizing or closing the window hides it and keeps notifications and
 the linked-device connection active. Use **Quit WhatsAppGo** in the tray menu to
 stop the application and its backend. Without a tray host, closing the window
 still quits normally. Neither action unlinks the device.

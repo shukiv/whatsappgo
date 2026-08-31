@@ -13,6 +13,7 @@ BuildRequires:  qt6-qtbase-devel
 BuildRequires:  qt6-qtdeclarative-devel
 BuildRequires:  qt6-qtmultimedia-devel
 BuildRequires:  kf6-kirigami-devel
+Suggests:       gnome-shell-extension-appindicator
 
 %description
 WhatsAppGo combines a native Qt/Kirigami interface with a lightweight Go

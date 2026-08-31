@@ -41,8 +41,8 @@ QString daemonExecutable()
 }
 }
 
-RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, bool desktopNotifications, QObject *parent)
-    : QObject(parent), m_desktopNotifications(desktopNotifications)
+RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, QObject *parent)
+    : QObject(parent)
 {
     m_initialChat = initialChat;
     QSettings settings;
@@ -148,9 +148,11 @@ void RpcClient::startBackendForCurrentProfile()
     auto *process = new QProcess(this);
     process->setObjectName(QStringLiteral("whatsappBackend-%1").arg(profile));
     process->setProgram(executable);
+    // Native notifications belong to the backend on every desktop. A tray
+    // host can appear or disappear while the application is running, and
+    // notification delivery must not depend on that startup-time condition.
     process->setArguments({QStringLiteral("--profile"), profile,
-                           m_desktopNotifications ? QStringLiteral("--notifications=false")
-                                                  : QStringLiteral("--notifications=true")});
+                           QStringLiteral("--notifications=true")});
     if (qEnvironmentVariableIntValue("WHATSAPPGO_BACKEND_LOGS") > 0) {
         process->setProcessChannelMode(QProcess::ForwardedChannels);
     } else {

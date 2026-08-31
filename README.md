@@ -65,7 +65,8 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - image copy/paste, native media preview, downloads, and cached avatars
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
-- native system notifications and a tray/status icon, light/dark/system
+- native system notifications independent of the tray, minimize-to-tray with
+  late GNOME AppIndicator discovery, light/dark/system
   appearance, RTL text, selectable message text, clickable links, and
   accessible controls
 - `whatsappctl` command-line automation with JSON output, live event streams,

@@ -18,6 +18,8 @@ qt_add_executable(whatsappgo
     src/messagemodel.h
     src/rpcclient.cpp
     src/rpcclient.h
+    src/traybehavior.cpp
+    src/traybehavior.h
 )
 
 qt_add_resources(whatsappgo "desktop-assets"
@@ -128,6 +130,16 @@ if(BUILD_TESTING)
     target_link_libraries(message-model-test PRIVATE Qt6::Core)
     add_test(NAME desktop-message-model COMMAND message-model-test)
     set_tests_properties(desktop-message-model PROPERTIES TIMEOUT 10)
+
+    qt_add_executable(tray-behavior-test
+        tests/TrayBehavior.cpp
+        src/traybehavior.cpp
+        src/traybehavior.h
+    )
+    target_include_directories(tray-behavior-test PRIVATE src)
+    target_link_libraries(tray-behavior-test PRIVATE Qt6::Gui)
+    add_test(NAME desktop-tray-behavior COMMAND tray-behavior-test)
+    set_tests_properties(desktop-tray-behavior PROPERTIES TIMEOUT 10)
 
     add_test(NAME desktop-qml-smoke COMMAND whatsappgo --smoke-test)
     set_tests_properties(desktop-qml-smoke PROPERTIES

@@ -1,4 +1,5 @@
 #include "rpcclient.h"
+#include "traybehavior.h"
 
 #include <QApplication>
 #include <QAction>
@@ -182,11 +183,11 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
     }
 
-    const bool trayEnabled = !automatedRun && QSystemTrayIcon::isSystemTrayAvailable();
+    bool trayAvailable = !automatedRun && QSystemTrayIcon::isSystemTrayAvailable();
     if (!automatedRun)
-        app.setQuitOnLastWindowClosed(!trayEnabled);
+        app.setQuitOnLastWindowClosed(!TrayBehavior::shouldKeepRunning(trayAvailable));
 
-    RpcClient backend(initialProfile, parser.value(chatOption), trayEnabled);
+    RpcClient backend(initialProfile, parser.value(chatOption));
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
@@ -198,14 +199,13 @@ int main(int argc, char *argv[])
     if (applicationWindow != nullptr)
         installResizeRepaintGuard(applicationWindow);
 
-    QString lastNotificationChat;
-    QString lastNotificationTitle;
-    // Qt's offscreen platform has no tray host and some versions crash while
-    // tearing down widget-backed tray menus. Construct this integration only
-    // in an interactive session where the platform reports a real tray.
+    // Qt keeps a visible QSystemTrayIcon registered if a tray host appears
+    // after startup. Build it for every interactive run, but never for the
+    // offscreen test platform, whose widget teardown is not tray-safe.
     std::unique_ptr<QMenu> trayMenu;
     std::unique_ptr<QSystemTrayIcon> trayIcon;
-    if (trayEnabled) {
+    QTimer trayAvailabilityTimer;
+    if (!automatedRun) {
         trayMenu = std::make_unique<QMenu>();
         trayMenu->setObjectName(QStringLiteral("whatsappgoTrayMenu"));
         auto *trayStatusAction = trayMenu->addAction(QStringLiteral("Connecting…"));
@@ -245,27 +245,10 @@ int main(int argc, char *argv[])
             updateToggleAction();
         });
         QObject::connect(trayQuitAction, &QAction::triggered, &app, &QApplication::quit);
-        if (applicationWindow != nullptr) {
-            QObject::connect(applicationWindow, &QWindow::visibilityChanged, &app,
-                             [updateToggleAction](QWindow::Visibility) { updateToggleAction(); });
-        }
         QObject::connect(trayIcon.get(), &QSystemTrayIcon::activated, &app,
                          [activateWindow](QSystemTrayIcon::ActivationReason reason) {
                              if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
                                  activateWindow();
-                         });
-        QObject::connect(&backend, &RpcClient::notificationRequested, &app,
-                         [icon = trayIcon.get(), &applicationIcon, &lastNotificationChat, &lastNotificationTitle]
-                         (const QString &chatJid, const QString &title, const QString &body) {
-                             lastNotificationChat = chatJid;
-                             lastNotificationTitle = title;
-                             icon->showMessage(title, body, applicationIcon, 8000);
-                         });
-        QObject::connect(trayIcon.get(), &QSystemTrayIcon::messageClicked, &app,
-                         [&backend, activateWindow, &lastNotificationChat, &lastNotificationTitle] {
-                             if (!lastNotificationChat.isEmpty())
-                                 backend.openChat(lastNotificationChat, lastNotificationTitle);
-                             activateWindow();
                          });
         const auto updateTrayStatus = [&backend, icon = trayIcon.get(), trayStatusAction] {
             const auto status = backend.status();
@@ -277,13 +260,40 @@ int main(int argc, char *argv[])
         QObject::connect(&backend, &RpcClient::statusChanged, &app, updateTrayStatus);
         QObject::connect(&backend, &RpcClient::daemonConnectedChanged, &app, updateTrayStatus);
         QObject::connect(&app, &QCoreApplication::aboutToQuit, trayIcon.get(), &QSystemTrayIcon::hide);
+        const auto syncTrayAvailability = [&app, applicationWindow, activateWindow, icon = trayIcon.get(), &trayAvailable] {
+            const bool availableNow = QSystemTrayIcon::isSystemTrayAvailable();
+            if (!availableNow && trayAvailable && applicationWindow != nullptr && !applicationWindow->isVisible())
+                activateWindow();
+            trayAvailable = availableNow;
+            app.setQuitOnLastWindowClosed(!TrayBehavior::shouldKeepRunning(trayAvailable));
+            if (TrayBehavior::shouldHideWindow(applicationWindow == nullptr
+                                                    ? QWindow::Hidden
+                                                    : applicationWindow->visibility(),
+                                                trayAvailable)) {
+                QTimer::singleShot(0, applicationWindow, &QWindow::hide);
+            }
+            if (!icon->isVisible())
+                icon->show();
+        };
+        if (applicationWindow != nullptr) {
+            QObject::connect(applicationWindow, &QWindow::visibilityChanged, &app,
+                             [applicationWindow, updateToggleAction, &trayAvailable](QWindow::Visibility visibility) {
+                updateToggleAction();
+                if (TrayBehavior::shouldHideWindow(visibility, trayAvailable))
+                    QTimer::singleShot(0, applicationWindow, &QWindow::hide);
+            });
+        }
+        trayAvailabilityTimer.setInterval(1500);
+        QObject::connect(&trayAvailabilityTimer, &QTimer::timeout, &app, syncTrayAvailability);
+        trayAvailabilityTimer.start();
         updateToggleAction();
         updateTrayStatus();
         trayIcon->show();
+        syncTrayAvailability();
     }
 
     if (desktopIntegrationTest) {
-        return !applicationIcon.isNull() && !trayEnabled && trayIcon == nullptr && trayMenu == nullptr
+        return !applicationIcon.isNull() && !trayAvailable && trayIcon == nullptr && trayMenu == nullptr
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (resizeRenderingTest) {

@@ -42,7 +42,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
 
 public:
-    explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), bool desktopNotifications = false, QObject *parent = nullptr);
+    explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
     ~RpcClient() override;
 
     bool daemonConnected() const;
@@ -178,7 +178,6 @@ private:
     QString m_profile = QStringLiteral("default");
     QStringList m_profiles{QStringLiteral("default")};
     bool m_busy = false;
-    bool m_desktopNotifications = false;
     QHash<QString, QProcess *> m_ownedBackends;
     bool m_shuttingDown = false;
     QString m_initialChat;

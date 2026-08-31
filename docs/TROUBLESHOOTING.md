@@ -127,10 +127,13 @@ attach an action to the notification.
 ## The WhatsAppGo icon is missing from the GNOME top bar
 
 GNOME Shell requires a StatusNotifier/AppIndicator extension to display tray
-icons. Enable that extension and restart WhatsAppGo. The icon should then offer
-connection status, **Open/Hide**, and **Quit WhatsAppGo**. If the desktop exposes
-no tray host, WhatsAppGo intentionally quits when its last window closes and
-falls back to the desktop notification service or portal.
+icons. On Debian/Ubuntu, install `gnome-shell-extension-appindicator`, enable
+**AppIndicator and KStatusNotifierItem Support** in GNOME Extensions, and sign
+out and back in. WhatsAppGo notices a tray host that appears after it starts;
+the icon then offers connection status, **Open/Hide**, and **Quit WhatsAppGo**.
+If the desktop exposes no tray host, WhatsAppGo keeps normal minimize behavior,
+quits when its last window closes, and still sends notifications through the
+desktop service or portal.
 
 ## A voice note or video opens a web browser
 

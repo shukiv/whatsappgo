@@ -58,6 +58,12 @@ but normal packages do not install or require systemd user units.
   notification service or portal when no desktop tray host is available
 - exposes a small local RPC API; it does not expose HTTP or a network port
 
+Native notifications are always owned by the backend and use the freedesktop
+notification service or desktop portal. Tray availability affects only window
+lifecycle: the desktop registers an icon eagerly, polls for a late tray host,
+and hides a minimized window only while that icon is actually available. This
+prevents losing the window on GNOME installations without an AppIndicator host.
+
 ## Account isolation
 
 Every account is a profile name matching
