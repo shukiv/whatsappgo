@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	appEvents "github.com/shuki/whatsappgo/internal/events"
+	appEvents "github.com/shukiv/whatsappgo/internal/events"
 )
 
 type Handler interface {

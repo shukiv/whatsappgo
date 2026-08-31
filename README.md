@@ -27,6 +27,8 @@ sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qml6-module-org-kde-kirigami qml6-module-org-kde-desktop \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 
+git clone https://github.com/shukiv/whatsappgo.git
+cd whatsappgo
 make desktop
 ./desktop/build/whatsappgo
 ```
@@ -40,6 +42,9 @@ To link an account, open WhatsApp on the phone and choose **Settings → Linked
 devices → Link a device**, then scan the QR code. Phone-code pairing accepts an
 international number without `+`, spaces, or a leading zero.
 
+For Fedora, Arch, per-user installation, system-wide installation, upgrades,
+and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
+
 ## Features
 
 - QR and phone-code account linking
@@ -51,7 +56,8 @@ international number without `+`, spaces, or a leading zero.
 - inline photo, video, and sticker previews before the full file is fetched
 - voice notes with the sender's waveform that play in place and run on to the next
 - built-in audio and video playback; no browser or external player
-- link previews with the title, description, and picture the sender's client resolved
+- link previews with title, description, and picture; a one-time YouTube
+  metadata backfill repairs historical cards that arrived without thumbnails
 - shared contacts and places as cards, with a phone number to message and a map
 - attachments fetched automatically for the conversation on screen
 - attachments stored in a database, so clearing the media cache loses nothing
@@ -67,6 +73,8 @@ or video calls is not supported.
 
 ## Documentation
 
+- [Installation guide](INSTALL.md): dependencies, source build, per-user and
+  system-wide installation, updates, and uninstalling
 - [User guide](docs/USER_GUIDE.md): pairing, accounts, messaging, history,
   appearance, data, and limitations
 - [Troubleshooting](docs/TROUBLESHOOTING.md): build, startup, graphics, history,
@@ -112,6 +120,10 @@ sudo cmake --install desktop/build
 
 Both `whatsappgo` and its internal `whatsappd` helper are installed together.
 Users launch only `whatsappgo`.
+
+The package definitions under `packaging/` are maintained for release work;
+until signed artifacts are attached to a GitHub release, install from source as
+described in [INSTALL.md](INSTALL.md).
 
 Qt Quick's software renderer is the default because it is reliable and light
 on hybrid-GPU Linux systems. A working GPU stack can opt in with:

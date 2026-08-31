@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/shuki/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/model"
 )
 
 type Store struct {
@@ -54,8 +54,10 @@ CREATE TABLE IF NOT EXISTS chats (
   last_message_at INTEGER NOT NULL DEFAULT 0,
   last_message_preview TEXT NOT NULL DEFAULT '',
   unread_count INTEGER NOT NULL DEFAULT 0,
+  read_through_at INTEGER NOT NULL DEFAULT 0,
   muted_until INTEGER NOT NULL DEFAULT 0,
   pinned INTEGER NOT NULL DEFAULT 0,
+  pinned_at INTEGER NOT NULL DEFAULT 0,
   favorite INTEGER NOT NULL DEFAULT 0,
   archived INTEGER NOT NULL DEFAULT 0,
   is_group INTEGER NOT NULL DEFAULT 0
@@ -124,6 +126,12 @@ CREATE TABLE IF NOT EXISTS metadata (
 	// Existing profiles predate chat filters and link previews. Keep migrations
 	// additive so their message history and device identity remain untouched.
 	if err := s.ensureColumn(ctx, "chats", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "chats", "read_through_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail"} {
@@ -238,8 +246,8 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO chats
-	 (jid,title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,muted_until,pinned,favorite,archived,is_group)
-	 SELECT ?,title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,muted_until,pinned,favorite,archived,is_group
+	 (jid,title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group)
+	 SELECT ?,title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group
 	 FROM chats WHERE jid=? ON CONFLICT(jid) DO NOTHING`, canonicalJID, aliasJID); err != nil {
 		return err
 	}
@@ -250,13 +258,15 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	 last_message_preview=CASE WHEN COALESCE((SELECT last_message_at FROM chats WHERE jid=?),0)>last_message_at THEN COALESCE((SELECT last_message_preview FROM chats WHERE jid=?),'') ELSE last_message_preview END,
 	 last_message_at=MAX(last_message_at,COALESCE((SELECT last_message_at FROM chats WHERE jid=?),0)),
 	 unread_count=MAX(unread_count,COALESCE((SELECT unread_count FROM chats WHERE jid=?),0)),
+	 read_through_at=MAX(read_through_at,COALESCE((SELECT read_through_at FROM chats WHERE jid=?),0)),
 	 muted_until=MAX(muted_until,COALESCE((SELECT muted_until FROM chats WHERE jid=?),0)),
 	 pinned=MAX(pinned,COALESCE((SELECT pinned FROM chats WHERE jid=?),0)),
+	 pinned_at=MAX(pinned_at,COALESCE((SELECT pinned_at FROM chats WHERE jid=?),0)),
 	 favorite=MAX(favorite,COALESCE((SELECT favorite FROM chats WHERE jid=?),0)),
 	 archived=MIN(archived,COALESCE((SELECT archived FROM chats WHERE jid=?),archived)),
 	 is_group=MAX(is_group,COALESCE((SELECT is_group FROM chats WHERE jid=?),0))
 	 WHERE jid=?`, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID,
-		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
+		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO messages
@@ -310,11 +320,11 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
  (jid,title,last_message_id,last_message_at,last_message_preview,unread_count,is_group)
  VALUES(?,?,?,?,?,?,?)
  ON CONFLICT(jid) DO UPDATE SET
-  title=CASE WHEN ? THEN excluded.title ELSE chats.title END,
+  title=CASE WHEN ? AND (TRIM(chats.title)='' OR chats.title=substr(chats.jid,1,instr(chats.jid,'@')-1)) THEN excluded.title ELSE chats.title END,
   last_message_id=CASE WHEN excluded.last_message_at>=chats.last_message_at THEN excluded.last_message_id ELSE chats.last_message_id END,
   last_message_at=MAX(chats.last_message_at,excluded.last_message_at),
   last_message_preview=CASE WHEN excluded.last_message_at>=chats.last_message_at THEN excluded.last_message_preview ELSE chats.last_message_preview END,
-  unread_count=chats.unread_count+excluded.unread_count,
+	  unread_count=chats.unread_count+excluded.unread_count,
   is_group=excluded.is_group`,
 		msg.ChatJID, titleForInsert, msg.ID, msg.Timestamp, preview(msg), unread, isGroup, chatTitle != "")
 	if err != nil {
@@ -408,14 +418,14 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
   WHEN m.kind='sticker' THEN 'Sticker'
   ELSE 'Message'
  END,
- c.unread_count,c.muted_until,c.pinned,c.favorite,c.archived,c.is_group
+ c.unread_count,c.muted_until,c.pinned,c.pinned_at,c.favorite,c.archived,c.is_group
 	FROM chats c
 	LEFT JOIN messages m ON m.chat_jid=c.jid AND m.id=(
   SELECT latest.id FROM messages latest
   WHERE latest.chat_jid=c.jid AND latest.kind NOT IN ('unknown','system','')
   ORDER BY latest.timestamp DESC,latest.id DESC LIMIT 1
  ) `+where+`
-	ORDER BY c.pinned DESC,COALESCE(m.timestamp,c.last_message_at) DESC LIMIT ? OFFSET ?`, args...)
+	ORDER BY c.pinned DESC,c.pinned_at DESC,COALESCE(m.timestamp,c.last_message_at) DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +434,7 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	for rows.Next() {
 		var c model.Chat
 		if err := rows.Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview,
-			&c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.Favorite, &c.Archived, &c.IsGroup); err != nil {
+			&c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup); err != nil {
 			return nil, err
 		}
 		result = append(result, c)
@@ -436,7 +446,7 @@ func (s *Store) GetChat(ctx context.Context, jid string) (model.Chat, error) {
 	jid = s.canonicalChatJID(ctx, jid)
 	var c model.Chat
 	err := s.db.QueryRowContext(ctx, `SELECT jid,title,avatar_path,last_message_id,last_message_at,last_message_preview,
- unread_count,muted_until,pinned,favorite,archived,is_group FROM chats WHERE jid=?`, jid).Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview, &c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.Favorite, &c.Archived, &c.IsGroup)
+	 unread_count,muted_until,pinned,pinned_at,favorite,archived,is_group FROM chats WHERE jid=?`, jid).Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview, &c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup)
 	return c, err
 }
 
@@ -568,8 +578,59 @@ func (s *Store) MediaPayload(ctx context.Context, chatJID, messageID string) ([]
 }
 
 func (s *Store) MarkChatRead(ctx context.Context, chatJID string) error {
+	return s.MarkChatReadThrough(ctx, chatJID, time.Now().UnixMilli())
+}
+
+// MarkChatReadThrough applies a historical linked-device read action only when
+// it covers the newest activity stored for the chat. Full app-state replay
+// contains old actions which must not clear messages that arrived afterward.
+func (s *Store) MarkChatReadThrough(ctx context.Context, chatJID string, through int64) error {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
-	_, err := s.db.ExecContext(ctx, `UPDATE chats SET unread_count=0 WHERE jid=?`, chatJID)
+	if through <= 0 {
+		through = time.Now().UnixMilli()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET status='read'
+	 WHERE chat_jid=? AND from_me=0 AND timestamp<=? AND status NOT IN ('read','played')`, chatJID, through); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chats SET
+	 unread_count=CASE
+	  WHEN EXISTS(SELECT 1 FROM messages r WHERE r.chat_jid=chats.jid AND r.from_me=0 AND r.status IN ('read','played'))
+	  THEN (SELECT COUNT(*) FROM messages m WHERE m.chat_jid=chats.jid AND m.from_me=0
+	        AND m.kind NOT IN ('unknown','system','') AND m.timestamp>(
+	          SELECT MAX(r.timestamp) FROM messages r WHERE r.chat_jid=chats.jid AND r.from_me=0 AND r.status IN ('read','played')))
+	  WHEN last_message_at<=? THEN 0 ELSE unread_count END,
+	 read_through_at=MAX(read_through_at,?)
+	 WHERE jid=?`, through, through, chatJID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// RecalculateUnreadCounts repairs cached chat totals from receipt state while
+// preserving WhatsApp snapshot totals for chats that have no local incoming
+// read boundary. Outgoing read receipts are deliberately ignored.
+func (s *Store) RecalculateUnreadCounts(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET unread_count=(
+	 SELECT COUNT(*) FROM messages m WHERE m.chat_jid=chats.jid AND m.from_me=0
+	 AND m.kind NOT IN ('unknown','system','') AND m.timestamp>(
+	  SELECT MAX(r.timestamp) FROM messages r WHERE r.chat_jid=chats.jid AND r.from_me=0 AND r.status IN ('read','played')))
+	 WHERE EXISTS(SELECT 1 FROM messages r WHERE r.chat_jid=chats.jid AND r.from_me=0 AND r.status IN ('read','played'))`)
+	return err
+}
+
+func (s *Store) RecalculateChatUnread(ctx context.Context, chatJID string) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET unread_count=(
+	 SELECT COUNT(*) FROM messages m WHERE m.chat_jid=chats.jid AND m.from_me=0
+	 AND m.kind NOT IN ('unknown','system','') AND m.timestamp>(
+	  SELECT MAX(r.timestamp) FROM messages r WHERE r.chat_jid=chats.jid AND r.from_me=0 AND r.status IN ('read','played')))
+	 WHERE jid=? AND EXISTS(SELECT 1 FROM messages r WHERE r.chat_jid=chats.jid AND r.from_me=0 AND r.status IN ('read','played'))`, chatJID)
 	return err
 }
 
@@ -577,19 +638,20 @@ func (s *Store) MarkChatRead(ctx context.Context, chatJID string) error {
 // title, avatar, latest activity time, and the group flag. The trailing
 // parameter carries the caller's raw title so an empty title never replaces a
 // known one. Conversation settings are inserted for new rows only.
-const chatIdentityUpsertSQL = `INSERT INTO chats(jid,title,avatar_path,last_message_at,unread_count,muted_until,pinned,favorite,archived,is_group)
- VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(jid) DO UPDATE SET
+const chatIdentityUpsertSQL = `INSERT INTO chats(jid,title,avatar_path,last_message_at,unread_count,muted_until,pinned,pinned_at,favorite,archived,is_group)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(jid) DO UPDATE SET
  title=CASE WHEN ?<>'' THEN excluded.title ELSE chats.title END,
  avatar_path=CASE WHEN excluded.avatar_path<>'' THEN excluded.avatar_path ELSE chats.avatar_path END,
  last_message_at=MAX(chats.last_message_at,excluded.last_message_at),
  is_group=MAX(chats.is_group,excluded.is_group)`
 
 // chatSnapshotUpsertSQL additionally applies WhatsApp's conversation settings.
-// Unread counts never decrease because live messages may already have
-// arrived; favorite is synchronised separately through app state.
+// A snapshot may lower the unread count when it covers at least the newest
+// activity already stored. An older snapshot must not erase newer live
+// messages; favorite is synchronised separately through app state.
 const chatSnapshotUpsertSQL = chatIdentityUpsertSQL + `,
- unread_count=MAX(chats.unread_count,excluded.unread_count),
- muted_until=excluded.muted_until,pinned=excluded.pinned,archived=excluded.archived`
+ unread_count=CASE WHEN excluded.last_message_at>=chats.last_message_at THEN excluded.unread_count ELSE chats.unread_count END,
+ muted_until=excluded.muted_until,pinned=excluded.pinned,pinned_at=excluded.pinned_at,archived=excluded.archived`
 
 // UpsertChat ensures a conversation exists and merges its identity details.
 // Callers such as directory sync, group metadata events, and contact
@@ -626,7 +688,7 @@ func (s *Store) upsertChat(ctx context.Context, chat model.Chat, query string) e
 		titleForInsert = displayJID(chat.JID)
 	}
 	_, err := s.db.ExecContext(ctx, query,
-		chat.JID, titleForInsert, chat.AvatarPath, chat.LastMessageAt, chat.UnreadCount, chat.MutedUntil, chat.Pinned, chat.Favorite, chat.Archived, chat.IsGroup, title)
+		chat.JID, titleForInsert, chat.AvatarPath, chat.LastMessageAt, chat.UnreadCount, chat.MutedUntil, chat.Pinned, chat.PinnedAt, chat.Favorite, chat.Archived, chat.IsGroup, title)
 	return err
 }
 
@@ -639,6 +701,47 @@ func (s *Store) UpdateChatTitle(ctx context.Context, jid, title string) error {
 	return err
 }
 
+// UpdateChatTitleIfPlaceholder applies a weak identity (for example a push or
+// verified-business name) only while the stored title is still the raw JID.
+// Saved address-book names are stronger and must never be replaced here.
+func (s *Store) UpdateChatTitleIfPlaceholder(ctx context.Context, jid, title string) error {
+	title = strings.TrimSpace(title)
+	if jid == "" || title == "" {
+		return nil
+	}
+	jid = s.canonicalChatJID(ctx, jid)
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET title=?
+	 WHERE jid=? AND (TRIM(title)='' OR title=substr(jid,1,instr(jid,'@')-1))`, title, jid)
+	return err
+}
+
+// ListPlaceholderContactJIDs returns direct conversations whose only local
+// identity is their protocol identifier. The WhatsApp client can enrich these
+// in one batched user-info request after connecting.
+func (s *Store) ListPlaceholderContactJIDs(ctx context.Context, limit int) ([]string, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT jid FROM chats
+	 WHERE is_group=0
+	   AND (jid LIKE '%@lid' OR jid LIKE '%@s.whatsapp.net')
+	   AND (TRIM(title)='' OR title=substr(jid,1,instr(jid,'@')-1))
+	 ORDER BY last_message_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]string, 0)
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		result = append(result, jid)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) UpdateChatAvatar(ctx context.Context, jid, path string) error {
 	jid = s.canonicalChatJID(ctx, jid)
 	_, err := s.db.ExecContext(ctx, `UPDATE chats SET avatar_path=? WHERE jid=?`, path, jid)
@@ -646,12 +749,25 @@ func (s *Store) UpdateChatAvatar(ctx context.Context, jid, path string) error {
 }
 
 func (s *Store) UpdateChatPinned(ctx context.Context, jid string, pinned bool) error {
+	pinnedAt := int64(0)
+	if pinned {
+		pinnedAt = time.Now().UnixMilli()
+	}
+	return s.UpdateChatPinnedAt(ctx, jid, pinned, pinnedAt)
+}
+
+// UpdateChatPinnedAt stores both the pin state and WhatsApp's action time so
+// multiple pinned chats appear in the same order as on other linked devices.
+func (s *Store) UpdateChatPinnedAt(ctx context.Context, jid string, pinned bool, pinnedAt int64) error {
 	if jid == "" {
 		return errors.New("chat jid is required")
 	}
 	jid = s.canonicalChatJID(ctx, jid)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,pinned) VALUES(?,?,?)
- ON CONFLICT(jid) DO UPDATE SET pinned=excluded.pinned`, jid, displayJID(jid), pinned)
+	if !pinned {
+		pinnedAt = 0
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,pinned,pinned_at) VALUES(?,?,?,?)
+	 ON CONFLICT(jid) DO UPDATE SET pinned=excluded.pinned,pinned_at=excluded.pinned_at`, jid, displayJID(jid), pinned, pinnedAt)
 	return err
 }
 
@@ -909,6 +1025,15 @@ type PendingThumbnail struct {
 	Payload   []byte
 }
 
+// PendingLinkPreview is a stored text message whose YouTube card may need the
+// thumbnail and metadata that were unavailable in the original history sync.
+type PendingLinkPreview struct {
+	ChatJID   string
+	MessageID string
+	Body      string
+	LinkURL   string
+}
+
 // MessagesMissingThumbnails returns stored media messages that have no cached
 // preview, ordered so that the returned cursor can continue the scan.
 func (s *Store) MessagesMissingThumbnails(ctx context.Context, after MediaCursor, limit int) ([]PendingThumbnail, error) {
@@ -933,6 +1058,45 @@ func (s *Store) MessagesMissingThumbnails(ctx context.Context, after MediaCursor
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// MessagesMissingLinkPreviews returns link-bearing text messages without a
+// cached card image. The caller further restricts the scan to YouTube URLs.
+func (s *Store) MessagesMissingLinkPreviews(ctx context.Context, after MediaCursor, limit int) ([]PendingLinkPreview, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT chat_jid,id,body,link_url FROM messages
+ WHERE link_thumbnail='' AND kind='text'
+  AND (link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')
+  AND (chat_jid,id) > (?,?)
+ ORDER BY chat_jid,id LIMIT ?`, after.ChatJID, after.MessageID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]PendingLinkPreview, 0, limit)
+	for rows.Next() {
+		var item PendingLinkPreview
+		if err := rows.Scan(&item.ChatJID, &item.MessageID, &item.Body, &item.LinkURL); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// UpdateLinkPreview replaces a message's cached card without changing its
+// body, timestamp, delivery state, or conversation ordering.
+func (s *Store) UpdateLinkPreview(ctx context.Context, chatJID, messageID, rawURL, title, description, thumbnail string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET
+ link_url=CASE WHEN ?<>'' THEN ? ELSE link_url END,
+ link_title=CASE WHEN ?<>'' THEN ? ELSE link_title END,
+ link_description=CASE WHEN ?<>'' THEN ? ELSE link_description END,
+ link_thumbnail=CASE WHEN ?<>'' THEN ? ELSE link_thumbnail END
+ WHERE chat_jid=? AND id=?`, rawURL, rawURL, title, title, description, description,
+		thumbnail, thumbnail, chatJID, messageID)
+	return err
 }
 
 // MessageCursor marks how far a newest-first scan has progressed.

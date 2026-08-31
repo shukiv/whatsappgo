@@ -5,27 +5,35 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/shuki/whatsappgo/internal/events"
-	"github.com/shuki/whatsappgo/internal/gateway"
-	"github.com/shuki/whatsappgo/internal/model"
-	"github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/events"
+	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/store"
 )
 
 type fakeGateway struct {
 	gateway.Unavailable
 	sentText        string
+	sentPreview     model.LinkPreview
 	historyChat     string
+	refreshedChat   string
 	downloadMessage string
 }
 
 func (f *fakeGateway) Subscribe(func(gateway.Event)) func() { return func() {} }
-func (f *fakeGateway) SendText(_ context.Context, chat, text, reply string) (model.Message, error) {
-	f.sentText = text
-	return model.Message{ID: "out-1", ChatJID: chat, SenderJID: "me@s.whatsapp.net", Timestamp: 10, Kind: "text", Body: text, FromMe: true, Status: "sent", ReplyTo: reply}, nil
+func (f *fakeGateway) SendText(_ context.Context, req gateway.TextRequest) (model.Message, error) {
+	f.sentText = req.Text
+	f.sentPreview = req.Preview
+	return model.Message{ID: "out-1", ChatJID: req.ChatJID, SenderJID: "me@s.whatsapp.net", Timestamp: 10, Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}, nil
 }
 
 func (f *fakeGateway) RequestHistory(_ context.Context, chat string, _ int) error {
 	f.historyChat = chat
+	return nil
+}
+
+func (f *fakeGateway) RefreshHistory(_ context.Context, chat string, _ int) error {
+	f.refreshedChat = chat
 	return nil
 }
 
@@ -43,12 +51,15 @@ func TestSendMessagePersistsOutgoingResult(t *testing.T) {
 	gw := &fakeGateway{}
 	svc := New(st, gw, events.New())
 	defer svc.Close()
-	result, err := svc.Handle(context.Background(), "message.send", json.RawMessage(`{"chat_jid":"alice@s.whatsapp.net","text":"hello","reply_to":""}`))
+	result, err := svc.Handle(context.Background(), "message.send", json.RawMessage(`{"chat_jid":"alice@s.whatsapp.net","text":"hello https://example.com","reply_to":"","link_preview":{"url":"https://example.com","title":"Example"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gw.sentText != "hello" {
+	if gw.sentText != "hello https://example.com" {
 		t.Fatalf("gateway received %q", gw.sentText)
+	}
+	if gw.sentPreview.URL != "https://example.com" || gw.sentPreview.Title != "Example" {
+		t.Fatalf("gateway lost link preview: %#v", gw.sentPreview)
 	}
 	if result.(model.Message).ID != "out-1" {
 		t.Fatalf("unexpected result: %#v", result)
@@ -57,7 +68,7 @@ func TestSendMessagePersistsOutgoingResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Messages) != 1 || page.Messages[0].Body != "hello" {
+	if len(page.Messages) != 1 || page.Messages[0].Body != "hello https://example.com" || page.Messages[0].LinkTitle != "Example" {
 		t.Fatalf("message not persisted: %#v", page)
 	}
 }
@@ -88,12 +99,15 @@ func TestHistoryAndMediaRequestsReachGateway(t *testing.T) {
 	if _, err := svc.Handle(context.Background(), "history.request", json.RawMessage(`{"chat_jid":"alice@s.whatsapp.net","limit":50}`)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc.Handle(context.Background(), "history.refresh", json.RawMessage(`{"chat_jid":"alice@s.whatsapp.net","limit":50}`)); err != nil {
+		t.Fatal(err)
+	}
 	result, err := svc.Handle(context.Background(), "message.download", json.RawMessage(`{"chat_jid":"alice@s.whatsapp.net","message_id":"doc-1"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gw.historyChat != "alice@s.whatsapp.net" || gw.downloadMessage != "doc-1" {
-		t.Fatalf("gateway calls missing: history=%q download=%q", gw.historyChat, gw.downloadMessage)
+	if gw.historyChat != "alice@s.whatsapp.net" || gw.refreshedChat != "alice@s.whatsapp.net" || gw.downloadMessage != "doc-1" {
+		t.Fatalf("gateway calls missing: history=%q refresh=%q download=%q", gw.historyChat, gw.refreshedChat, gw.downloadMessage)
 	}
 	if result.(model.Message).MediaPath != "/tmp/report.pdf" {
 		t.Fatalf("unexpected download result: %#v", result)

@@ -39,6 +39,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantList channels READ channels NOTIFY channelsChanged)
     Q_PROPERTY(QVariantList communities READ communities NOTIFY communitiesChanged)
     Q_PROPERTY(bool clipboardHasImage READ clipboardHasImage NOTIFY clipboardChanged)
+    Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
 
 public:
     explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
@@ -63,6 +64,7 @@ public:
     QVariantList channels() const { return m_channels; }
     QVariantList communities() const { return m_communities; }
     bool clipboardHasImage() const;
+    QVariantMap composerLinkPreview() const { return m_composerLinkPreview; }
 
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void refreshStatus();
@@ -76,6 +78,8 @@ public:
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
+    Q_INVOKABLE void requestLinkPreview(const QString &text);
+    Q_INVOKABLE void clearComposerLinkPreview();
     Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {});
     Q_INVOKABLE void sendVoice(const QString &localUrl);
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
@@ -125,6 +129,7 @@ signals:
     void channelsChanged();
     void communitiesChanged();
     void clipboardChanged();
+    void composerLinkPreviewChanged();
     void noticeOccurred(const QString &message);
     // A message's file is cached and can be played or opened.
     void mediaReady(const QString &messageId, const QString &path);
@@ -140,6 +145,7 @@ private:
     void upsertMessage(const QVariantMap &message);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
+    void refreshOpenMessages();
     void pumpMediaQueue();
     bool copyImageFile(const QString &path);
     QString clipboardDirectory() const;
@@ -164,6 +170,8 @@ private:
     QVariantList m_callLogs;
     QVariantList m_channels;
     QVariantList m_communities;
+    QVariantMap m_composerLinkPreview;
+    QString m_linkPreviewRequestText;
     QString m_pairingQr;
     QString m_pairingCode;
     QString m_profile = QStringLiteral("default");
@@ -176,6 +184,7 @@ private:
     bool m_hasMore = false;
     qint64 m_nextBefore = 0;
     QSet<QString> m_requestedHistoryBoundaries;
+	QSet<QString> m_refreshedHistoryChats;
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
     QSet<QString> m_requestedMedia;

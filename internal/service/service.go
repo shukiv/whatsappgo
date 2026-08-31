@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/shuki/whatsappgo/internal/events"
-	"github.com/shuki/whatsappgo/internal/gateway"
-	"github.com/shuki/whatsappgo/internal/model"
-	"github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/events"
+	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/linkpreview"
+	"github.com/shukiv/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/store"
 )
 
 type Service struct {
@@ -52,9 +53,13 @@ type downloadParams struct {
 	MessageID string `json:"message_id"`
 }
 type sendTextParams struct {
-	ChatJID string `json:"chat_jid"`
-	Text    string `json:"text"`
-	ReplyTo string `json:"reply_to"`
+	ChatJID     string            `json:"chat_jid"`
+	Text        string            `json:"text"`
+	ReplyTo     string            `json:"reply_to"`
+	LinkPreview model.LinkPreview `json:"link_preview"`
+}
+type linkPreviewParams struct {
+	Text string `json:"text"`
 }
 type sendMediaParams struct {
 	ChatJID string `json:"chat_jid"`
@@ -188,6 +193,18 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return s.store.SearchMessages(ctx, p.Query, p.Limit)
+	case "link.preview":
+		var p linkPreviewParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		preview, err := linkpreview.Resolve(ctx, p.Text)
+		if err != nil {
+			// Missing or blocked metadata is a normal composer state, not a
+			// daemon error or a toast-worthy failure.
+			return model.LinkPreview{}, nil
+		}
+		return preview, nil
 	case "history.request":
 		var p historyRequestParams
 		if err := decode(raw, &p); err != nil {
@@ -200,6 +217,18 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			p.Limit = 50
 		}
 		return okResult(), s.gateway.RequestHistory(ctx, p.ChatJID, p.Limit)
+	case "history.refresh":
+		var p historyRequestParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		if p.Limit <= 0 || p.Limit > 200 {
+			p.Limit = 50
+		}
+		return okResult(), s.gateway.RefreshHistory(ctx, p.ChatJID, p.Limit)
 	case "message.download":
 		var p downloadParams
 		if err := decode(raw, &p); err != nil {
@@ -220,7 +249,7 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if strings.TrimSpace(p.Text) == "" {
 			return nil, errors.New("text is required")
 		}
-		msg, err := s.gateway.SendText(ctx, p.ChatJID, p.Text, p.ReplyTo)
+		msg, err := s.gateway.SendText(ctx, gateway.TextRequest{ChatJID: p.ChatJID, Text: p.Text, ReplyTo: p.ReplyTo, Preview: p.LinkPreview})
 		if err != nil {
 			return nil, err
 		}

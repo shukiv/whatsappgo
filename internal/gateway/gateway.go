@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/shuki/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/model"
 )
 
 type Event struct {
@@ -20,6 +20,13 @@ type MediaRequest struct {
 	Voice   bool
 }
 
+type TextRequest struct {
+	ChatJID string
+	Text    string
+	ReplyTo string
+	Preview model.LinkPreview
+}
+
 type Gateway interface {
 	Status() model.ConnectionStatus
 	Connect(context.Context) error
@@ -27,10 +34,11 @@ type Gateway interface {
 	PairPhone(context.Context, string) (string, error)
 	Disconnect()
 	Logout(context.Context) error
-	SendText(context.Context, string, string, string) (model.Message, error)
+	SendText(context.Context, TextRequest) (model.Message, error)
 	SendMedia(context.Context, MediaRequest) (model.Message, error)
 	DownloadMedia(context.Context, string, string) (model.Message, error)
 	RequestHistory(context.Context, string, int) error
+	RefreshHistory(context.Context, string, int) error
 	SendReaction(context.Context, string, string, string, string) error
 	EditText(context.Context, string, string, string) error
 	DeleteMessage(context.Context, string, string, string) error
@@ -58,7 +66,7 @@ func (Unavailable) StartPairing(context.Context) error                { return E
 func (Unavailable) PairPhone(context.Context, string) (string, error) { return "", ErrUnavailable }
 func (Unavailable) Disconnect()                                       {}
 func (Unavailable) Logout(context.Context) error                      { return ErrUnavailable }
-func (Unavailable) SendText(context.Context, string, string, string) (model.Message, error) {
+func (Unavailable) SendText(context.Context, TextRequest) (model.Message, error) {
 	return model.Message{}, ErrUnavailable
 }
 func (Unavailable) SendMedia(context.Context, MediaRequest) (model.Message, error) {
@@ -68,6 +76,7 @@ func (Unavailable) DownloadMedia(context.Context, string, string) (model.Message
 	return model.Message{}, ErrUnavailable
 }
 func (Unavailable) RequestHistory(context.Context, string, int) error { return ErrUnavailable }
+func (Unavailable) RefreshHistory(context.Context, string, int) error { return ErrUnavailable }
 func (Unavailable) SendReaction(context.Context, string, string, string, string) error {
 	return ErrUnavailable
 }

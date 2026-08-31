@@ -637,45 +637,70 @@ Kirigami.ApplicationWindow {
 
                 Timer { id: searchTimer; interval: 250; onTriggered: backend.refreshChats(searchField.text) }
 
-                ListView {
-                    id: chatList
+                Item {
+                    id: chatListViewport
+                    objectName: "chatListViewport"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    model: window.showArchived ? backend.archivedChats : window.visibleChats
-                    spacing: 0
-                    clip: true
-                    reuseItems: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: OverlayScrollBar {}
-                    delegate: ChatListDelegate {
-                        current: backend.selectedChat.jid === modelData.jid
-                        onChosen: (jid, title) => backend.openChat(jid, title)
+
+                    ListView {
+                        id: chatList
+                        objectName: "chatList"
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        model: window.showArchived ? backend.archivedChats : window.visibleChats
+                        spacing: 2
+                        clip: true
+                        reuseItems: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        delegate: ChatListDelegate {
+                            current: backend.selectedChat.jid === modelData.jid
+                            onChosen: (jid, title) => backend.openChat(jid, title)
+                        }
+
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 10
+                            visible: chatList.count === 0
+                            Label {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: {
+                                    if (searchField.text)
+                                        return qsTr("No matching chats")
+                                    if (window.chatFilter === "unread")
+                                        return qsTr("No unread chats")
+                                    if (window.chatFilter === "favorites")
+                                        return qsTr("No favorite chats")
+                                    if (window.chatFilter === "groups")
+                                        return qsTr("No groups")
+                                    return qsTr("No chats synced yet")
+                                }
+                                color: Theme.textMuted
+                            }
+                            Button {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: qsTr("Refresh")
+                                flat: true
+                                onClicked: backend.refreshChats(searchField.text)
+                            }
+                        }
                     }
 
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 10
-                        visible: chatList.count === 0
-                        Label {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: {
-                                if (searchField.text)
-                                    return qsTr("No matching chats")
-                                if (window.chatFilter === "unread")
-                                    return qsTr("No unread chats")
-                                if (window.chatFilter === "favorites")
-                                    return qsTr("No favorite chats")
-                                if (window.chatFilter === "groups")
-                                    return qsTr("No groups")
-                                return qsTr("No chats synced yet")
-                            }
-                            color: Theme.textMuted
-                        }
-                        Button {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: qsTr("Refresh")
-                            flat: true
-                            onClicked: backend.refreshChats(searchField.text)
+                    OverlayScrollBar {
+                        id: chatListScrollBar
+                        objectName: "chatListScrollBar"
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        size: chatList.visibleArea.heightRatio
+                        position: chatList.visibleArea.yPosition
+                        active: chatList.moving
+                        onPositionChanged: {
+                            if (pressed)
+                                chatList.contentY = position * chatList.contentHeight
                         }
                     }
                 }
@@ -861,6 +886,9 @@ Kirigami.ApplicationWindow {
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: OverlayScrollBar {}
                         delegate: MessageDelegate {
+                            chatTitle: backend.selectedChat.title || ""
+                            chatAvatarSource: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
+                            ownTitle: backend.status.user_name || ""
                             onEditRequested: (messageId, body) => {
                                 editDialog.messageId = messageId
                                 editField.text = body
@@ -988,6 +1016,12 @@ Kirigami.ApplicationWindow {
                             }
                         }
 
+                        ComposerLinkPreview {
+                            Layout.fillWidth: true
+                            preview: backend.composerLinkPreview
+                            onDismissed: backend.clearComposerLinkPreview()
+                        }
+
                         Rectangle {
                             Layout.fillWidth: true
                             // The box grows with the message and then stops and
@@ -1052,7 +1086,10 @@ Kirigami.ApplicationWindow {
                                     font.pixelSize: 14
                                     wrapMode: TextEdit.Wrap
                                     Accessible.name: qsTr("Message")
-                                    onTextChanged: typingTimer.restart()
+                                    onTextChanged: {
+                                        typingTimer.restart()
+                                        linkPreviewTimer.restart()
+                                    }
                                     Keys.onPressed: event => {
                                         if (event.matches(StandardKey.Paste) && backend.clipboardHasImage) {
                                             window.prepareClipboardPaste()
@@ -1102,6 +1139,7 @@ Kirigami.ApplicationWindow {
                         }
                     }
                     Timer { id: typingTimer; interval: 700; onTriggered: backend.setTyping(composer.text.length > 0) }
+                    Timer { id: linkPreviewTimer; interval: 450; onTriggered: backend.requestLinkPreview(composer.text) }
                 }
             }
 

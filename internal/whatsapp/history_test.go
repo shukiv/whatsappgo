@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/shuki/whatsappgo/internal/model"
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/model"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 func TestHistoryBackfillKeyIsPerConversation(t *testing.T) {

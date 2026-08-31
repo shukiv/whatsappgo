@@ -17,14 +17,15 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/shuki/whatsappgo/internal/gateway"
-	"github.com/shuki/whatsappgo/internal/mediastore"
-	"github.com/shuki/whatsappgo/internal/model"
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/mediastore"
+	"github.com/shukiv/whatsappgo/internal/model"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 func (c *Client) handleEvent(raw any) {
@@ -44,9 +45,13 @@ func (c *Client) handleEvent(raw any) {
 		// rather than queueing behind directory and app-state synchronisation,
 		// which wait on the network and can take minutes.
 		go c.backfillThumbnails()
+		go c.backfillLinkPreviews()
 		go func() {
 			_ = c.wa.SendPresence(context.Background(), types.PresenceAvailable)
 			c.syncDirectory()
+			if err := c.store.RecalculateUnreadCounts(context.Background()); err == nil {
+				c.emit(gateway.Event{Name: "chat.updated"})
+			}
 			c.backfillCallLogs()
 			c.backfillChatSettings()
 			// Older messages and their attachments are collected side by
@@ -87,8 +92,25 @@ func (c *Client) handleEvent(raw any) {
 		c.handleAppStateSyncComplete(evt)
 	case *waEvents.Pin:
 		if evt.Action != nil {
-			_ = c.store.UpdateChatPinned(context.Background(), evt.JID.String(), evt.Action.GetPinned())
+			_ = c.store.UpdateChatPinnedAt(context.Background(), evt.JID.String(), evt.Action.GetPinned(), evt.Timestamp.UnixMilli())
 			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]any{"jid": evt.JID.String(), "pinned": evt.Action.GetPinned()}})
+		}
+	case *waEvents.MarkChatAsRead:
+		if evt.Action != nil {
+			if evt.Action.GetRead() {
+				if evt.FromFullSync {
+					readThrough := evt.Timestamp.UnixMilli()
+					if messageRange := evt.Action.GetMessageRange(); messageRange != nil && messageRange.GetLastMessageTimestamp() > 0 {
+						readThrough = messageRange.GetLastMessageTimestamp() * 1000
+					}
+					_ = c.store.MarkChatReadThrough(context.Background(), evt.JID.String(), readThrough)
+				} else {
+					_ = c.store.MarkChatRead(context.Background(), evt.JID.String())
+				}
+			} else {
+				_ = c.store.MarkChatUnread(context.Background(), evt.JID.String())
+			}
+			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]any{"jid": evt.JID.String(), "read": evt.Action.GetRead()}})
 		}
 	case *waEvents.Mute:
 		if evt.Action != nil {
@@ -112,7 +134,7 @@ func (c *Client) handleEvent(raw any) {
 }
 
 const callLogBackfillMetadataKey = "call_logs_app_state_backfill_v1"
-const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v3"
+const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v5"
 
 func (c *Client) backfillCallLogs() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -214,23 +236,46 @@ func (c *Client) syncDirectory() {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if contacts, err := c.wa.Store.Contacts.GetAllContacts(ctx); err == nil {
-		for jid, info := range contacts {
-			name := firstNonEmpty(info.FullName, info.FirstName, info.PushName, info.BusinessName)
-			var lid types.JID
-			if jid.Server == types.DefaultUserServer {
-				lid, _ = c.wa.Store.LIDs.GetLIDForPN(ctx, jid)
-			}
-			if err := syncDirectoryContact(ctx, c.store, jid, lid, name); err != nil {
-				c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "merge contact history: " + err.Error()}})
+		// Saved names affect what the user sees, so resolve them before the
+		// potentially large alias-only pass. Go map iteration is random and the
+		// directory operation has a timeout; a single mixed pass made startup
+		// naming depend on iteration order.
+		for pass := 0; pass < 2; pass++ {
+			for jid, info := range contacts {
+				name := authoritativeContactName(info)
+				if (pass == 0) != (name != "") {
+					continue
+				}
+				var lid types.JID
+				if jid.Server == types.DefaultUserServer {
+					lid, _ = c.wa.Store.LIDs.GetLIDForPN(ctx, jid)
+				}
+				if err := syncDirectoryContactInfo(ctx, c.store, jid, lid, info); err != nil {
+					c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "merge contact history: " + err.Error()}})
+				}
 			}
 		}
 	}
+	// History can contain a LID whose phone mapping is known locally even when
+	// the contact table has never fetched that user's verified business name.
+	// Ask WhatsApp for all such identities in one batch; GetUserInfo persists
+	// verified names into the whatsmeow contact store, after which the normal
+	// strength rules below can safely upgrade only numeric placeholders.
+	c.enrichPlaceholderContacts(ctx)
 	if groups, err := c.wa.GetJoinedGroups(ctx); err == nil {
 		for _, group := range groups {
 			_ = c.store.UpsertChat(ctx, model.Chat{JID: group.JID.String(), Title: group.Name, LastMessageAt: group.GroupCreated.UnixMilli(), IsGroup: true})
 		}
 	}
 	c.emit(gateway.Event{Name: "directory.synced"})
+}
+
+// authoritativeContactName deliberately excludes PushName. LID and phone-JID
+// entries can describe the same person, and the LID entry often contains only
+// a push name. Letting it overwrite the phone entry's address-book name made
+// titles change nondeterministically on every reconnect.
+func authoritativeContactName(info types.ContactInfo) string {
+	return firstNonEmpty(info.FullName, info.FirstName, info.BusinessName)
 }
 
 // syncDirectoryContact consolidates the legacy phone-number address and the
@@ -249,6 +294,72 @@ func syncDirectoryContact(ctx context.Context, st *localstore.Store, pn, lid typ
 		return st.UpdateChatTitle(ctx, canonical.String(), name)
 	}
 	return nil
+}
+
+func syncDirectoryContactInfo(ctx context.Context, st *localstore.Store, pn, lid types.JID, info types.ContactInfo) error {
+	name := authoritativeContactName(info)
+	if err := syncDirectoryContact(ctx, st, pn, lid, name); err != nil {
+		return err
+	}
+	if name != "" || strings.TrimSpace(info.PushName) == "" {
+		return nil
+	}
+	canonical := pn
+	if !lid.IsEmpty() && lid.String() != pn.String() {
+		canonical = lid
+	}
+	return st.UpdateChatTitleIfPlaceholder(ctx, canonical.String(), info.PushName)
+}
+
+func (c *Client) enrichPlaceholderContacts(ctx context.Context) {
+	stored, err := c.store.ListPlaceholderContactJIDs(ctx, 100)
+	if err != nil || len(stored) == 0 {
+		return
+	}
+	type identity struct {
+		pn  types.JID
+		lid types.JID
+	}
+	identities := make([]identity, 0, len(stored))
+	queries := make([]types.JID, 0, len(stored))
+	seen := make(map[string]bool)
+	for _, raw := range stored {
+		jid, err := types.ParseJID(raw)
+		if err != nil {
+			continue
+		}
+		current := identity{pn: jid}
+		switch jid.Server {
+		case types.HiddenUserServer:
+			current.lid = jid
+			current.pn, err = c.wa.Store.LIDs.GetPNForLID(ctx, jid)
+		case types.DefaultUserServer:
+			current.lid, _ = c.wa.Store.LIDs.GetLIDForPN(ctx, jid)
+		default:
+			continue
+		}
+		if err != nil || current.pn.IsEmpty() || current.pn.Server != types.DefaultUserServer {
+			continue
+		}
+		identities = append(identities, current)
+		if !seen[current.pn.String()] {
+			seen[current.pn.String()] = true
+			queries = append(queries, current.pn)
+		}
+	}
+	if len(queries) == 0 {
+		return
+	}
+	if _, err := c.wa.GetUserInfo(ctx, queries); err != nil {
+		return
+	}
+	for _, current := range identities {
+		info, err := c.wa.Store.Contacts.GetContact(ctx, current.pn)
+		if err != nil {
+			continue
+		}
+		_ = syncDirectoryContactInfo(ctx, c.store, current.pn, current.lid, info)
+	}
 }
 
 func (c *Client) handleMessage(evt *waEvents.Message) {
@@ -338,6 +449,13 @@ func (c *Client) handleReceipt(evt *waEvents.Receipt) {
 		ids[i] = string(id)
 	}
 	_ = c.store.UpdateReceipt(context.Background(), evt.Chat.String(), ids, status)
+	_ = c.store.RecalculateChatUnread(context.Background(), evt.Chat.String())
+	// A read-self receipt is generated when this account reads incoming
+	// messages on another linked device while read receipts are disabled. It
+	// is chat state, not merely delivery state for one outgoing message.
+	if evt.Type == types.ReceiptTypeReadSelf {
+		_ = c.store.MarkChatRead(context.Background(), evt.Chat.String())
+	}
 	c.emit(gateway.Event{Name: "message.receipt", Data: map[string]any{"chat_jid": evt.Chat.String(), "message_ids": ids, "status": status, "timestamp": evt.Timestamp.UnixMilli()}})
 }
 
@@ -353,16 +471,26 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 		storeChat = c.store.ApplyChatSnapshot
 	}
 	total := 0
+	chatJIDs := make([]string, 0, len(evt.Data.GetConversations()))
 	for _, conversation := range evt.Data.GetConversations() {
 		chatJID, err := types.ParseJID(conversation.GetID())
 		if err != nil {
 			continue
 		}
+		chatJIDs = append(chatJIDs, chatJID.String())
 		title := conversation.GetName()
 		if title == "" {
 			title = conversation.GetDisplayName()
 		}
-		if err := storeChat(context.Background(), model.Chat{JID: chatJID.String(), Title: title, LastMessageAt: int64(conversation.GetLastMsgTimestamp()) * 1000, UnreadCount: int(conversation.GetUnreadCount()), MutedUntil: normalizeMuteTime(conversation.GetMuteEndTime()), Pinned: conversation.GetPinned() > 0, Archived: conversation.GetArchived(), IsGroup: chatJID.Server == types.GroupServer}); err != nil {
+		// A history conversation often carries the sender's push name, while
+		// directory sync has the user's saved address-book name. Never let the
+		// weaker history value replace an already resolved identity. A raw JID
+		// placeholder is still upgraded normally.
+		if existing, err := c.store.GetChat(context.Background(), chatJID.String()); err == nil &&
+			strings.TrimSpace(existing.Title) != "" && existing.Title != displayJID(chatJID.String()) {
+			title = ""
+		}
+		if err := storeChat(context.Background(), model.Chat{JID: chatJID.String(), Title: title, LastMessageAt: int64(conversation.GetLastMsgTimestamp()) * 1000, UnreadCount: int(conversation.GetUnreadCount()), MutedUntil: normalizeMuteTime(conversation.GetMuteEndTime()), Pinned: conversation.GetPinned() > 0, PinnedAt: int64(conversation.GetPinned()), Archived: conversation.GetArchived(), IsGroup: chatJID.Server == types.GroupServer}); err != nil {
 			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "save conversation: " + err.Error()}})
 			continue
 		}
@@ -377,6 +505,14 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			}
 			msg = c.withCachedThumbnail(msg, parsed.Message)
 			msg = c.withCachedLinkPreview(msg, parsed.Message)
+			// History carries how far each of our own messages actually got.
+			// Without this every synced message looks merely sent, so a
+			// conversation full of read messages shows a single mark.
+			if msg.FromMe {
+				if delivered := deliveryFromWebStatus(historyMessage.GetMessage().GetStatus()); delivered != "" {
+					msg.Status = delivered
+				}
+			}
 			if err := c.store.UpsertMessage(context.Background(), msg, title, false); err == nil {
 				c.rememberMediaPayload(msg, parsed.Message)
 				total++
@@ -388,7 +524,8 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			_ = c.store.UpsertCallLog(context.Background(), call)
 		}
 	}
-	c.emit(gateway.Event{Name: "history.synced", Data: map[string]int{"messages": total}})
+	_ = c.store.RecalculateUnreadCounts(context.Background())
+	c.emit(gateway.Event{Name: "history.synced", Data: map[string]any{"messages": total, "chat_jids": chatJIDs}})
 }
 
 func historySyncCarriesChatSettings(syncType waHistorySync.HistorySync_HistorySyncType) bool {
@@ -397,6 +534,22 @@ func historySyncCarriesChatSettings(syncType waHistorySync.HistorySync_HistorySy
 		return true
 	default:
 		return false
+	}
+}
+
+// deliveryFromWebStatus translates the delivery state stored with a history
+// message. An empty result means the message carries nothing better than what
+// is already known about it.
+func deliveryFromWebStatus(status waWeb.WebMessageInfo_Status) string {
+	switch status {
+	case waWeb.WebMessageInfo_PLAYED:
+		return "played"
+	case waWeb.WebMessageInfo_READ:
+		return "read"
+	case waWeb.WebMessageInfo_DELIVERY_ACK:
+		return "delivered"
+	default:
+		return ""
 	}
 }
 

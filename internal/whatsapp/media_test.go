@@ -3,7 +3,7 @@ package whatsapp
 import (
 	"testing"
 
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 func TestMediaCursorRoundTrip(t *testing.T) {

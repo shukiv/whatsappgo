@@ -24,7 +24,8 @@ ItemDelegate {
     }
     readonly property bool fallbackIdentity: displayTitle.startsWith("+") || displayTitle.startsWith(qsTr("Contact ·"))
 
-    width: ListView.view ? ListView.view.width : 360
+    x: 8
+    width: Math.max(0, (ListView.view ? ListView.view.width : 376) - 16)
     height: 72
     padding: 0
     leftPadding: 12
@@ -35,6 +36,8 @@ ItemDelegate {
     onClicked: chosen(modelData.jid, displayTitle)
 
     background: Rectangle {
+        objectName: "chatRowBackground"
+        radius: 12
         color: root.down ? Theme.pressedRow : root.current ? Theme.selectedRow : root.hovered ? Theme.hoverRow : Theme.surface
         Rectangle {
             visible: root.activeFocus
@@ -184,12 +187,4 @@ ItemDelegate {
         }
     }
 
-    Rectangle {
-        anchors.left: parent.left
-        anchors.leftMargin: 74
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: 1
-        color: Theme.border
-    }
 }

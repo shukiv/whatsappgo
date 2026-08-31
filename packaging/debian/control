@@ -7,7 +7,7 @@ Maintainer: WhatsAppGo Contributors <maintainers@whatsappgo.org>
 # trixie-backports or unstable); see docs/DEVELOPMENT.md.
 Build-Depends: debhelper-compat (= 13), golang-any (>= 2:1.26~), cmake, ninja-build, qt6-base-dev, qt6-declarative-dev, qt6-multimedia-dev, qt6-tools-dev, libkirigami-dev
 Standards-Version: 4.7.2
-Homepage: https://github.com/shuki/whatsappgo
+Homepage: https://github.com/shukiv/whatsappgo
 Rules-Requires-Root: no
 
 Package: whatsappgo

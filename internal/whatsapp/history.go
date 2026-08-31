@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shuki/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/gateway"
 )
 
 // WhatsApp hands a linked device only a recent window of each conversation.

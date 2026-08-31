@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/shuki/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/model"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -250,6 +250,33 @@ func TestListChatsIncludesPinnedChatWithoutSyncedMessage(t *testing.T) {
 	}
 }
 
+func TestListChatsUsesWhatsAppPinOrderBeforeMessageTime(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, chat := range []model.Chat{
+		{JID: "new-message@s.whatsapp.net", Title: "New message", LastMessageAt: 300, Pinned: true, PinnedAt: 100},
+		{JID: "new-pin@s.whatsapp.net", Title: "New pin", LastMessageAt: 100, Pinned: true, PinnedAt: 300},
+		{JID: "middle-pin@s.whatsapp.net", Title: "Middle pin", LastMessageAt: 200, Pinned: true, PinnedAt: 200},
+	} {
+		if err := s.ApplyChatSnapshot(ctx, chat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chats, err := s.ListChats(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"new-pin@s.whatsapp.net", "middle-pin@s.whatsapp.net", "new-message@s.whatsapp.net"}
+	if len(chats) != len(want) {
+		t.Fatalf("got %d chats, want %d: %#v", len(chats), len(want), chats)
+	}
+	for i := range want {
+		if chats[i].JID != want[i] {
+			t.Fatalf("pin order[%d]=%q, want %q", i, chats[i].JID, want[i])
+		}
+	}
+}
+
 func TestUpdateChatFavoritesReplacesSynchronizedSet(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -401,6 +428,106 @@ func TestApplyChatSnapshotOverwritesConversationSettings(t *testing.T) {
 	}
 	if !chat.Favorite {
 		t.Fatalf("snapshot cleared favorite, which WhatsApp synchronises separately: %#v", chat)
+	}
+}
+
+func TestApplyCurrentChatSnapshotCanReduceUnreadCount(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, Title: "Alice", LastMessageAt: 20, UnreadCount: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 20, UnreadCount: 0}); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("current authoritative snapshot left %d unread messages", chat.UnreadCount)
+	}
+
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 30, UnreadCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 10, UnreadCount: 0}); err != nil {
+		t.Fatal(err)
+	}
+	chat, err = s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("stale snapshot replaced newer unread count: %#v", chat)
+	}
+}
+
+func TestRecalculateUnreadUsesNewestIncomingReadBoundary(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	for _, msg := range []model.Message{
+		{ID: "ancient-unmarked", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "old", Status: "received"},
+		{ID: "read-boundary", ChatJID: jid, Timestamp: 200, Kind: "text", Body: "read", Status: "read"},
+		{ID: "outgoing", ChatJID: jid, Timestamp: 250, Kind: "text", Body: "mine", FromMe: true, Status: "read"},
+		{ID: "new-unread", ChatJID: jid, Timestamp: 300, Kind: "text", Body: "new", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 300, UnreadCount: 9}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecalculateUnreadCounts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("recalculated unread count = %d, want 1", chat.UnreadCount)
+	}
+}
+
+func TestMarkChatReadClearsSnapshotWithoutLocalMessages(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, UnreadCount: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkChatRead(ctx, jid); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("mark read left %d unread messages", chat.UnreadCount)
+	}
+}
+
+func TestIncomingPushNameDoesNotReplaceResolvedContactName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	if err := s.UpsertChat(ctx, model.Chat{JID: jid, Title: "Adony Robles Lopez"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertMessage(ctx, model.Message{ID: "message-1", ChatJID: jid, Timestamp: 10, Kind: "text", Body: "hello", Status: "received"}, "zone yalo", true); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Title != "Adony Robles Lopez" {
+		t.Fatalf("push name replaced resolved contact name: %q", chat.Title)
 	}
 }
 
@@ -596,6 +723,62 @@ func TestListChatsNamesConversationsFromTheirSender(t *testing.T) {
 		if chat.JID == "9999@lid" && chat.Title != "9999" {
 			t.Fatalf("unexpected fallback title: %q", chat.Title)
 		}
+	}
+}
+
+func TestWeakContactNameOnlyReplacesIdentifierPlaceholder(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const placeholder = "179452491378772@lid"
+	if err := s.UpsertChat(ctx, model.Chat{JID: placeholder}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateChatTitleIfPlaceholder(ctx, placeholder, "Bancolombia"); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, placeholder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Title != "Bancolombia" {
+		t.Fatalf("numeric placeholder was not upgraded: %q", chat.Title)
+	}
+
+	const saved = "1234@lid"
+	if err := s.UpsertChat(ctx, model.Chat{JID: saved, Title: "Saved contact"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateChatTitleIfPlaceholder(ctx, saved, "Weaker push name"); err != nil {
+		t.Fatal(err)
+	}
+	chat, err = s.GetChat(ctx, saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Title != "Saved contact" {
+		t.Fatalf("weak name replaced a saved name: %q", chat.Title)
+	}
+}
+
+func TestListPlaceholderContactJIDsExcludesNamedAndGroupChats(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, chat := range []model.Chat{
+		{JID: "179452491378772@lid"},
+		{JID: "573013536788@s.whatsapp.net"},
+		{JID: "named@lid", Title: "Named person"},
+		{JID: "120363000000000001@g.us", Title: "120363000000000001", IsGroup: true},
+	} {
+		if err := s.UpsertChat(ctx, chat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	jids, err := s.ListPlaceholderContactJIDs(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jids) != 2 || jids[0] != "179452491378772@lid" || jids[1] != "573013536788@s.whatsapp.net" {
+		t.Fatalf("unexpected unresolved contacts: %#v", jids)
 	}
 }
 

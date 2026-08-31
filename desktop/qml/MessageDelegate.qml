@@ -6,6 +6,9 @@ import org.whatsappgo
 Item {
     id: root
     required property var modelData
+    property string chatTitle: ""
+    property url chatAvatarSource
+    property string ownTitle: ""
     signal editRequested(string messageId, string body)
     signal deleteRequested(string messageId, string senderJid)
     signal replyRequested(string messageId, string body)
@@ -65,7 +68,7 @@ Item {
         senderLabel.visible ? Math.min(senderLabel.implicitWidth, contentMaxWidth) : 0,
         replyBox.visible ? Math.min(Math.max(replyBox.naturalWidth, 96), contentMaxWidth) : 0,
         mediaFrame.visible ? mediaWidth : 0,
-        voiceRow.visible ? 232 : 0,
+        voiceRow.visible ? 284 : 0,
         fileRow.visible ? Math.min(fileRow.implicitWidth, contentMaxWidth) : 0,
         linkPreview.visible ? Math.min(Math.max(linkPreview.naturalWidth, 240), contentMaxWidth) : 0,
         contactCard.visible ? Math.min(Math.max(contactCard.naturalWidth, 220), contentMaxWidth) : 0,
@@ -504,6 +507,17 @@ Item {
                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                         onClicked: mouse => Playback.seek(Playback.duration * (mouse.x / Math.max(1, width)))
                     }
+                }
+
+                Avatar {
+                    id: voiceAvatar
+                    objectName: "voiceAvatar"
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 44
+                    diameter: 44
+                    title: root.modelData.from_me ? root.ownTitle : root.chatTitle
+                    source: root.modelData.from_me ? "" : root.chatAvatarSource
+                    fallbackIdentity: root.modelData.from_me
                 }
             }
 

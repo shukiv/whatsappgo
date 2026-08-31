@@ -11,12 +11,13 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/shuki/whatsappgo/internal/model"
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/model"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 func TestMessageFromEventExtractsReplyAndMedia(t *testing.T) {
@@ -79,13 +80,110 @@ func TestPinAppStateEventUpdatesLocalChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &Client{store: st}
-	c.handleEvent(&waEvents.Pin{JID: jid, Action: &waSyncAction.PinAction{Pinned: proto.Bool(true)}})
+	pinnedAt := time.Unix(1_700_000_000, 0)
+	c.handleEvent(&waEvents.Pin{JID: jid, Timestamp: pinnedAt, Action: &waSyncAction.PinAction{Pinned: proto.Bool(true)}})
 	chat, err := st.GetChat(ctx, jid.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !chat.Pinned {
 		t.Fatal("pin app-state event did not update the local chat")
+	}
+	if chat.PinnedAt != pinnedAt.UnixMilli() {
+		t.Fatalf("pin timestamp = %d, want %d", chat.PinnedAt, pinnedAt.UnixMilli())
+	}
+}
+
+func TestMarkChatAsReadAppStateEventUpdatesUnreadCount(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	jid := types.NewJID("123", types.DefaultUserServer)
+	if err := st.ApplyChatSnapshot(ctx, model.Chat{JID: jid.String(), Title: "Alice", UnreadCount: 4}); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+	c.handleEvent(&waEvents.MarkChatAsRead{JID: jid, Timestamp: time.Now(), Action: &waSyncAction.MarkChatAsReadAction{Read: proto.Bool(true)}})
+	chat, err := st.GetChat(ctx, jid.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("mark-as-read event left %d unread messages", chat.UnreadCount)
+	}
+
+	c.handleEvent(&waEvents.MarkChatAsRead{JID: jid, Action: &waSyncAction.MarkChatAsReadAction{Read: proto.Bool(false)}})
+	chat, err = st.GetChat(ctx, jid.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("mark-as-unread event set unread count to %d, want 1", chat.UnreadCount)
+	}
+}
+
+func TestHistoricalReadReplayKeepsMessagesAfterReadRangeUnread(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	jid := types.NewJID("123", types.DefaultUserServer)
+	for _, msg := range []model.Message{
+		{ID: "read", ChatJID: jid.String(), Timestamp: 1_000, Kind: "text", Body: "old", Status: "received"},
+		{ID: "unread", ChatJID: jid.String(), Timestamp: 3_000, Kind: "text", Body: "new", Status: "received"},
+	} {
+		if err := st.UpsertMessage(ctx, msg, "Alice", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &Client{store: st}
+	c.handleEvent(&waEvents.MarkChatAsRead{
+		JID:          jid,
+		Timestamp:    time.Unix(10, 0),
+		FromFullSync: true,
+		Action: &waSyncAction.MarkChatAsReadAction{
+			Read:         proto.Bool(true),
+			MessageRange: &waSyncAction.SyncActionMessageRange{LastMessageTimestamp: proto.Int64(1)},
+		},
+	})
+	chat, err := st.GetChat(ctx, jid.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("historical read range left %d unread messages, want 1", chat.UnreadCount)
+	}
+}
+
+func TestSelfReadReceiptClearsChatUnreadCount(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	jid := types.NewJID("123", types.DefaultUserServer)
+	if err := st.ApplyChatSnapshot(ctx, model.Chat{JID: jid.String(), Title: "Alice", UnreadCount: 3}); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+	c.handleReceipt(&waEvents.Receipt{
+		MessageSource: types.MessageSource{Chat: jid, IsFromMe: true},
+		MessageIDs:    []types.MessageID{"message-1"},
+		Timestamp:     time.Now(),
+		Type:          types.ReceiptTypeReadSelf,
+	})
+	chat, err := st.GetChat(ctx, jid.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("self-read receipt left %d unread messages", chat.UnreadCount)
 	}
 }
 
@@ -157,6 +255,47 @@ func TestSyncDirectoryContactMergesPhoneAndLIDHistory(t *testing.T) {
 	}
 }
 
+func TestAuthoritativeContactNameDoesNotUsePushName(t *testing.T) {
+	if got := authoritativeContactName(types.ContactInfo{PushName: "zone yalo"}); got != "" {
+		t.Fatalf("push-only contact name was treated as authoritative: %q", got)
+	}
+	if got := authoritativeContactName(types.ContactInfo{FullName: "Adony Robles Lopez", PushName: "zone yalo"}); got != "Adony Robles Lopez" {
+		t.Fatalf("full contact name was not preferred: %q", got)
+	}
+}
+
+func TestDirectoryPushNameUpgradesPlaceholderButPreservesSavedName(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	placeholder := types.NewJID("179452491378772", types.HiddenUserServer)
+	if err := st.UpsertChat(ctx, model.Chat{JID: placeholder.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDirectoryContactInfo(ctx, st, placeholder, types.JID{}, types.ContactInfo{PushName: "Bancolombia"}); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.GetChat(ctx, placeholder.String())
+	if err != nil || chat.Title != "Bancolombia" {
+		t.Fatalf("push name did not upgrade placeholder: chat=%#v err=%v", chat, err)
+	}
+
+	saved := types.NewJID("1234", types.HiddenUserServer)
+	if err := st.UpsertChat(ctx, model.Chat{JID: saved.String(), Title: "Saved name"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDirectoryContactInfo(ctx, st, saved, types.JID{}, types.ContactInfo{PushName: "Weaker name"}); err != nil {
+		t.Fatal(err)
+	}
+	chat, err = st.GetChat(ctx, saved.String())
+	if err != nil || chat.Title != "Saved name" {
+		t.Fatalf("push name replaced saved contact: chat=%#v err=%v", chat, err)
+	}
+}
+
 func TestJoinedGroupEventPreservesSynchronisedChatSettings(t *testing.T) {
 	st, err := localstore.OpenMemory()
 	if err != nil {
@@ -214,7 +353,7 @@ func TestInitialHistorySyncAppliesConversationSettings(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	ctx := context.Background()
 	const jid = "alice@s.whatsapp.net"
-	if err := st.UpsertChat(ctx, model.Chat{JID: jid, Title: "Alice"}); err != nil {
+	if err := st.UpsertChat(ctx, model.Chat{JID: jid}); err != nil {
 		t.Fatal(err)
 	}
 	c := &Client{store: st}
@@ -235,6 +374,34 @@ func TestInitialHistorySyncAppliesConversationSettings(t *testing.T) {
 	}
 	if !chat.Pinned || !chat.Archived || chat.MutedUntil != 4_102_444_800_000 || chat.UnreadCount != 3 || chat.Title != "Alice Example" {
 		t.Fatalf("initial history sync did not apply conversation settings: %#v", chat)
+	}
+}
+
+func TestHistorySyncDoesNotReplaceResolvedContactNameWithPushName(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	if err := st.UpsertChat(ctx, model.Chat{JID: jid, Title: "Adony Robles Lopez"}); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+	c.handleHistorySync(&waEvents.HistorySync{Data: &waHistorySync.HistorySync{
+		SyncType: waHistorySync.HistorySync_RECENT.Enum(),
+		Conversations: []*waHistorySync.Conversation{{
+			ID:   proto.String(jid),
+			Name: proto.String("zone yalo"),
+		}},
+	}})
+	chat, err := st.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Title != "Adony Robles Lopez" {
+		t.Fatalf("history push name replaced resolved contact name: %q", chat.Title)
 	}
 }
 
@@ -356,5 +523,50 @@ func TestLocationThumbnailIsCached(t *testing.T) {
 		&waE2E.Message{LocationMessage: &waE2E.LocationMessage{JPEGThumbnail: jpegBytes(t)}})
 	if path == "" {
 		t.Fatal("the map picture of a shared place was not cached")
+	}
+}
+
+func TestDeliveryFromWebStatus(t *testing.T) {
+	cases := map[waWeb.WebMessageInfo_Status]string{
+		waWeb.WebMessageInfo_PLAYED:       "played",
+		waWeb.WebMessageInfo_READ:         "read",
+		waWeb.WebMessageInfo_DELIVERY_ACK: "delivered",
+		// Anything the server has merely accepted, or that failed, tells us
+		// nothing better than what the message already says.
+		waWeb.WebMessageInfo_SERVER_ACK: "",
+		waWeb.WebMessageInfo_PENDING:    "",
+		waWeb.WebMessageInfo_ERROR:      "",
+	}
+	for status, want := range cases {
+		if got := deliveryFromWebStatus(status); got != want {
+			t.Errorf("status %v = %q, want %q", status, got, want)
+		}
+	}
+}
+
+func TestHistorySyncKeepsDeliveryState(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const chat = "alice@s.whatsapp.net"
+	// A message already known to be read must not fall back to "sent" when
+	// history redelivers it.
+	if err := st.UpsertMessage(ctx, model.Message{ID: "m1", ChatJID: chat, Timestamp: 5, Kind: "text",
+		Body: "hi", FromMe: true, Status: "read"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertMessage(ctx, model.Message{ID: "m1", ChatJID: chat, Timestamp: 5, Kind: "text",
+		Body: "hi", FromMe: true, Status: "sent"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetMessage(ctx, chat, "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "read" {
+		t.Fatalf("delivery state regressed to %q", stored.Status)
 	}
 }

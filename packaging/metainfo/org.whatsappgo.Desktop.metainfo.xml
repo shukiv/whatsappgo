@@ -11,8 +11,8 @@
     <p>It supports linked-device login, text and media messages, local history, replies, reactions, receipts, typing indicators, search, and desktop notifications. Voice and video calls are not supported.</p>
   </description>
   <launchable type="desktop-id">org.whatsappgo.Desktop.desktop</launchable>
-  <url type="homepage">https://github.com/shuki/whatsappgo</url>
-  <url type="bugtracker">https://github.com/shuki/whatsappgo/issues</url>
+  <url type="homepage">https://github.com/shukiv/whatsappgo</url>
+  <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
     <release version="0.1.0" date="2026-08-30">

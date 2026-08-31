@@ -3,7 +3,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        MPL-2.0
-URL:            https://github.com/shuki/whatsappgo
+URL:            https://github.com/shukiv/whatsappgo
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  golang >= 1.26

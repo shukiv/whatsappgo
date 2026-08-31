@@ -13,9 +13,10 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/shuki/whatsappgo/internal/gateway"
-	"github.com/shuki/whatsappgo/internal/model"
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/linkpreview"
+	"github.com/shukiv/whatsappgo/internal/model"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 // maxInlineThumbnail bounds what is written to the cache. WhatsApp's inline
@@ -23,6 +24,7 @@ import (
 const maxInlineThumbnail = 1 << 20
 
 const thumbnailBackfillMetadataKey = "media_thumbnail_backfill_v1"
+const linkPreviewBackfillMetadataKey = "youtube_link_preview_backfill_v1"
 
 // thumbnailFromMessage returns the small preview picture WhatsApp embeds
 // directly in a media message, together with the extension for its format.
@@ -163,5 +165,61 @@ func (c *Client) backfillThumbnails() {
 	}
 	if updated > 0 {
 		c.emit(gateway.Event{Name: "chat.updated"})
+	}
+}
+
+// backfillLinkPreviews repairs historical YouTube cards that WhatsApp synced
+// without an inline picture. It is deliberately a one-time YouTube-only pass:
+// arbitrary links in old private conversations are never contacted.
+func (c *Client) backfillLinkPreviews() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if _, done, err := c.store.Metadata(ctx, linkPreviewBackfillMetadataKey); err != nil || done {
+		return
+	}
+	resolver := c.resolveLinkPreview
+	if resolver == nil {
+		resolver = linkpreview.Resolve
+	}
+	cursor := localstore.MediaCursor{}
+	updatedChats := make(map[string]struct{})
+	updated := 0
+	for {
+		pending, err := c.store.MessagesMissingLinkPreviews(ctx, cursor, 100)
+		if err != nil || len(pending) == 0 {
+			break
+		}
+		for _, item := range pending {
+			text := item.LinkURL
+			if text == "" {
+				text = item.Body
+			}
+			if linkpreview.IsYouTube(text) {
+				if preview, err := resolver(ctx, text); err == nil {
+					path := c.writeThumbnail(item.ChatJID+"-"+item.MessageID+"-link", preview.Thumbnail, ".jpg")
+					if path != "" {
+						if err := c.store.UpdateLinkPreview(ctx, item.ChatJID, item.MessageID, preview.URL, preview.Title, preview.Description, path); err != nil {
+							return
+						}
+						updated++
+						updatedChats[item.ChatJID] = struct{}{}
+					}
+				}
+			}
+			cursor = localstore.MediaCursor{ChatJID: item.ChatJID, MessageID: item.MessageID}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+	if err := c.store.SetMetadata(ctx, linkPreviewBackfillMetadataKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return
+	}
+	if updated > 0 {
+		chatJIDs := make([]string, 0, len(updatedChats))
+		for chatJID := range updatedChats {
+			chatJIDs = append(chatJIDs, chatJID)
+		}
+		c.emit(gateway.Event{Name: "history.synced", Data: map[string]any{"messages": updated, "chat_jids": chatJIDs}})
 	}
 }

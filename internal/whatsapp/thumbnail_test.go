@@ -14,8 +14,8 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/shuki/whatsappgo/internal/model"
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/model"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 func jpegBytes(t *testing.T) []byte {
@@ -176,5 +176,43 @@ func TestBackfillThumbnailsExtractsPreviewsFromStoredPayloads(t *testing.T) {
 	}
 	if message.MediaThumbnail != "" {
 		t.Fatal("completed backfill ran a second time")
+	}
+}
+
+func TestBackfillLinkPreviewsRepairsHistoricalYouTubeCard(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const chat = "george@lid"
+	const messageID = "youtube-old"
+	if err := st.UpsertMessage(ctx, model.Message{
+		ID: messageID, ChatJID: chat, Timestamp: 1, Kind: "text", Status: "received",
+		Body: "https://youtu.be/ub1O8H02j4E?si=test", LinkURL: "https://youtu.be/ub1O8H02j4E?si=test",
+		LinkTitle: "- YouTube", LinkDescription: "Generic fallback",
+	}, "George", false); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{
+		store: st, mediaDir: t.TempDir(),
+		resolveLinkPreview: func(context.Context, string) (model.LinkPreview, error) {
+			return model.LinkPreview{URL: "https://youtu.be/ub1O8H02j4E?si=test", Title: "Real video", Description: "Channel", Thumbnail: jpegBytes(t), ThumbnailMIME: "image/jpeg"}, nil
+		},
+	}
+	c.backfillLinkPreviews()
+	message, err := st.GetMessage(ctx, chat, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.LinkTitle != "Real video" || message.LinkDescription != "Channel" || message.LinkThumbnail == "" {
+		t.Fatalf("historical YouTube preview was not repaired: %#v", message)
+	}
+	if _, err := os.Stat(message.LinkThumbnail); err != nil {
+		t.Fatalf("cached thumbnail is unavailable: %v", err)
+	}
+	if _, done, err := st.Metadata(ctx, linkPreviewBackfillMetadataKey); err != nil || !done {
+		t.Fatalf("link preview backfill was not recorded: done=%v err=%v", done, err)
 	}
 }

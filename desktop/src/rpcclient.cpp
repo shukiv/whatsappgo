@@ -323,6 +323,13 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         refreshChats();
         refreshStatuses();
         refreshCalls();
+		const auto syncedChats = data.toObject().value(QStringLiteral("chat_jids")).toArray();
+		for (const auto &chat : syncedChats) {
+			if (chat.toString() == m_selectedChat.value(QStringLiteral("jid")).toString()) {
+				refreshOpenMessages();
+				break;
+			}
+		}
 		if (m_waitingRemoteHistory && !m_selectedChat.isEmpty())
 			loadRemoteHistoryPage();
 	} else if (name == QStringLiteral("call.upsert") || name == QStringLiteral("calls.synced")) {
@@ -423,6 +430,11 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     m_hasMore = false;
     m_nextBefore = 0;
     emit selectedChatChanged();
+	if (!m_refreshedHistoryChats.contains(jid)) {
+		m_refreshedHistoryChats.insert(jid);
+		sendRequest(QStringLiteral("history.refresh"),
+			{{QStringLiteral("chat_jid"), jid}, {QStringLiteral("limit"), 100}});
+	}
     sendRequest(QStringLiteral("messages.list"),
                 {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), 50}},
                 [this](const QJsonValue &result, const QJsonObject &error) {
@@ -470,6 +482,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
 void RpcClient::closeChat()
 {
 	m_waitingRemoteHistory = false;
+    clearComposerLinkPreview();
     m_selectedChat.clear();
     m_searchResults.clear();
     m_messages.clear();
@@ -544,15 +557,88 @@ void RpcClient::loadRemoteHistoryPage()
 		});
 }
 
+void RpcClient::refreshOpenMessages()
+{
+	if (m_selectedChat.isEmpty())
+		return;
+	const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+	const auto limit = qMax(50, m_messages.rowCount());
+	sendRequest(QStringLiteral("messages.list"),
+		{{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), limit}},
+		[this, chatJid](const QJsonValue &result, const QJsonObject &error) {
+			if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+				return;
+			const auto page = result.toObject();
+			m_messages.reset(page.value(QStringLiteral("messages")).toArray().toVariantList());
+			m_hasMore = page.value(QStringLiteral("has_more")).toBool();
+			m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
+		});
+}
+
 void RpcClient::sendMessage(const QString &text, const QString &replyTo)
 {
     if (text.trimmed().isEmpty() || m_selectedChat.isEmpty())
         return;
     setBusy(true);
-    sendRequest(QStringLiteral("message.send"),
-                {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
-                 {QStringLiteral("text"), text}, {QStringLiteral("reply_to"), replyTo}},
-                [this](const QJsonValue &, const QJsonObject &) { setBusy(false); emit messageSent(); });
+    QJsonObject params{
+        {QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
+        {QStringLiteral("text"), text},
+        {QStringLiteral("reply_to"), replyTo},
+    };
+    const auto previewURL = m_composerLinkPreview.value(QStringLiteral("url")).toString();
+    if (!previewURL.isEmpty() && text.contains(previewURL)) {
+        auto wirePreview = m_composerLinkPreview;
+        wirePreview.remove(QStringLiteral("thumbnail_source"));
+        params.insert(QStringLiteral("link_preview"), QJsonObject::fromVariantMap(wirePreview));
+    }
+    sendRequest(QStringLiteral("message.send"), params,
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    setBusy(false);
+                    if (error.isEmpty()) {
+                        clearComposerLinkPreview();
+                        emit messageSent();
+                    }
+                });
+}
+
+void RpcClient::requestLinkPreview(const QString &text)
+{
+    static const QRegularExpression urlPattern(QStringLiteral("https?://[^\\s<>\\\"']+"),
+                                                QRegularExpression::CaseInsensitiveOption);
+    const auto match = urlPattern.match(text);
+    if (!match.hasMatch()) {
+        clearComposerLinkPreview();
+        return;
+    }
+    const auto requestText = text;
+    m_linkPreviewRequestText = requestText;
+    sendRequest(QStringLiteral("link.preview"), {{QStringLiteral("text"), text}},
+                [this, requestText](const QJsonValue &result, const QJsonObject &error) {
+                    if (requestText != m_linkPreviewRequestText)
+                        return;
+                    QVariantMap preview;
+                    if (error.isEmpty())
+                        preview = result.toObject().toVariantMap();
+                    const auto thumbnail = preview.value(QStringLiteral("thumbnail")).toString();
+                    if (!thumbnail.isEmpty()) {
+                        const auto mime = preview.value(QStringLiteral("thumbnail_mime"), QStringLiteral("image/jpeg")).toString();
+                        preview.insert(QStringLiteral("thumbnail_source"),
+                                       QStringLiteral("data:%1;base64,%2").arg(mime, thumbnail));
+                    }
+                    if (preview == m_composerLinkPreview)
+                        return;
+                    m_composerLinkPreview = preview;
+                    emit composerLinkPreviewChanged();
+                });
+}
+
+void RpcClient::clearComposerLinkPreview()
+{
+    m_linkPreviewRequestText.clear();
+    if (m_composerLinkPreview.isEmpty())
+        return;
+    m_composerLinkPreview.clear();
+    emit composerLinkPreviewChanged();
 }
 
 void RpcClient::sendFile(const QString &localUrl, const QString &caption)
@@ -680,8 +766,10 @@ void RpcClient::switchProfile(const QString &profile)
     m_callLogs.clear();
     m_channels.clear();
     m_communities.clear();
+	m_refreshedHistoryChats.clear();
     m_pairingQr.clear();
     m_pairingCode.clear();
+	clearComposerLinkPreview();
     QSettings().setValue(QStringLiteral("accounts/current"), m_profile);
     emit profileChanged();
     emit statusChanged();

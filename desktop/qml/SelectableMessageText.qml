@@ -28,6 +28,7 @@ Item {
     TextEdit {
         id: editor
         objectName: "messageBody"
+        property string activeLink: ""
         anchors.fill: parent
         text: Theme.messageRichText(root.plainText)
         textFormat: TextEdit.RichText
@@ -44,6 +45,12 @@ Item {
         font: root.font
         renderType: Text.NativeRendering
         onLinkActivated: link => Qt.openUrlExternally(link)
+        onLinkHovered: link => activeLink = link
+
+        HoverHandler {
+            objectName: "messageLinkHover"
+            cursorShape: editor.activeLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
+        }
     }
 
     Text {

@@ -11,14 +11,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/shuki/whatsappgo/internal/config"
-	"github.com/shuki/whatsappgo/internal/events"
-	"github.com/shuki/whatsappgo/internal/mediastore"
-	"github.com/shuki/whatsappgo/internal/notify"
-	"github.com/shuki/whatsappgo/internal/rpc"
-	"github.com/shuki/whatsappgo/internal/service"
-	"github.com/shuki/whatsappgo/internal/store"
-	"github.com/shuki/whatsappgo/internal/whatsapp"
+	"github.com/shukiv/whatsappgo/internal/config"
+	"github.com/shukiv/whatsappgo/internal/events"
+	"github.com/shukiv/whatsappgo/internal/mediastore"
+	"github.com/shukiv/whatsappgo/internal/notify"
+	"github.com/shukiv/whatsappgo/internal/rpc"
+	"github.com/shukiv/whatsappgo/internal/service"
+	"github.com/shukiv/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/whatsapp"
 )
 
 var version = "dev"

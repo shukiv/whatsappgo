@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	appEvents "github.com/shuki/whatsappgo/internal/events"
+	appEvents "github.com/shukiv/whatsappgo/internal/events"
 )
 
 type testHandler struct{}

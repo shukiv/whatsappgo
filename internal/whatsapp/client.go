@@ -27,11 +27,12 @@ import (
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 
-	"github.com/shuki/whatsappgo/internal/gateway"
-	"github.com/shuki/whatsappgo/internal/mediastore"
-	"github.com/shuki/whatsappgo/internal/model"
-	"github.com/shuki/whatsappgo/internal/notify"
-	"github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/linkpreview"
+	"github.com/shukiv/whatsappgo/internal/mediastore"
+	"github.com/shukiv/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/notify"
+	"github.com/shukiv/whatsappgo/internal/store"
 )
 
 type Client struct {
@@ -45,13 +46,14 @@ type Client struct {
 	notifier notify.Notifier
 	mediaDir string
 
-	mu              sync.RWMutex
-	status          model.ConnectionStatus
-	nextSub         uint64
-	subs            map[uint64]func(gateway.Event)
-	pairing         bool
-	closed          bool
-	historyRequests map[string]time.Time
+	mu                 sync.RWMutex
+	status             model.ConnectionStatus
+	nextSub            uint64
+	subs               map[uint64]func(gateway.Event)
+	pairing            bool
+	closed             bool
+	historyRequests    map[string]time.Time
+	resolveLinkPreview func(context.Context, string) (model.LinkPreview, error)
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
@@ -77,7 +79,7 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media 
 	// Required for the one-time call-history recovery sync. Without this,
 	// whatsmeow intentionally suppresses generic app-state events on snapshots.
 	wa.EmitAppStateEventsOnFullSync = true
-	c := &Client{wa: wa, container: container, store: st, media: media, notifier: notifier, mediaDir: mediaDir, baseCtx: ctx, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time)}
+	c := &Client{wa: wa, container: container, store: st, media: media, notifier: notifier, mediaDir: mediaDir, baseCtx: ctx, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time), resolveLinkPreview: linkpreview.Resolve}
 	c.status = model.ConnectionStatus{State: "disconnected", LoggedIn: wa.Store.ID != nil, LastChange: model.NowMillis()}
 	if wa.Store.ID != nil {
 		c.status.UserJID = wa.Store.ID.String()
@@ -241,22 +243,32 @@ func (c *Client) Logout(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) SendText(ctx context.Context, chatJID, text, replyTo string) (model.Message, error) {
-	chat, err := types.ParseJID(chatJID)
+func (c *Client) SendText(ctx context.Context, req gateway.TextRequest) (model.Message, error) {
+	chat, err := types.ParseJID(req.ChatJID)
 	if err != nil {
 		return model.Message{}, err
 	}
 	payload := &waE2E.Message{}
-	if replyTo == "" {
-		payload.Conversation = proto.String(text)
+	if req.ReplyTo == "" && req.Preview.URL == "" {
+		payload.Conversation = proto.String(req.Text)
 	} else {
-		payload.ExtendedTextMessage = &waE2E.ExtendedTextMessage{Text: proto.String(text), ContextInfo: c.replyContext(ctx, chatJID, replyTo)}
+		extended := &waE2E.ExtendedTextMessage{Text: proto.String(req.Text), ContextInfo: c.replyContext(ctx, req.ChatJID, req.ReplyTo)}
+		if req.Preview.URL != "" {
+			extended.MatchedText = proto.String(req.Preview.URL)
+			extended.Title = proto.String(req.Preview.Title)
+			extended.Description = proto.String(req.Preview.Description)
+			extended.JPEGThumbnail = req.Preview.Thumbnail
+			if len(req.Preview.Thumbnail) > 0 {
+				extended.PreviewType = waE2E.ExtendedTextMessage_IMAGE.Enum()
+			}
+		}
+		payload.ExtendedTextMessage = extended
 	}
 	resp, err := c.wa.SendMessage(ctx, chat, payload)
 	if err != nil {
 		return model.Message{}, err
 	}
-	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: text, FromMe: true, Status: "sent", ReplyTo: replyTo}, nil
+	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}, nil
 }
 
 func (c *Client) RequestHistory(ctx context.Context, chatJID string, count int) error {
@@ -267,13 +279,31 @@ func (c *Client) RequestHistory(ctx context.Context, chatJID string, count int) 
 		}
 		return err
 	}
-	chat, err := types.ParseJID(oldest.ChatJID)
+	return c.requestHistoryFrom(ctx, oldest, count, "older")
+}
+
+// RefreshHistory asks for the recent page again. This repairs delivery states
+// that were stored before history status import existed, without guessing that
+// a sent message was read: WhatsApp remains the source of truth.
+func (c *Client) RefreshHistory(ctx context.Context, chatJID string, count int) error {
+	newest, err := c.store.NewestMessage(ctx, chatJID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("no local message is available to anchor history refresh")
+		}
+		return err
+	}
+	return c.requestHistoryFrom(ctx, newest, count, "refresh")
+}
+
+func (c *Client) requestHistoryFrom(ctx context.Context, anchor model.Message, count int, purpose string) error {
+	chat, err := types.ParseJID(anchor.ChatJID)
 	if err != nil {
 		return err
 	}
-	sender, err := types.ParseJID(oldest.SenderJID)
+	sender, err := types.ParseJID(anchor.SenderJID)
 	if err != nil || sender.IsEmpty() {
-		if oldest.FromMe {
+		if anchor.FromMe {
 			sender, err = types.ParseJID(c.selfJID())
 		} else {
 			sender, err = chat, nil
@@ -285,7 +315,7 @@ func (c *Client) RequestHistory(ctx context.Context, chatJID string, count int) 
 	if count <= 0 || count > 200 {
 		count = 50
 	}
-	boundary := chat.String() + ":" + oldest.ID
+	boundary := purpose + ":" + chat.String() + ":" + anchor.ID
 	c.mu.Lock()
 	if requestedAt, ok := c.historyRequests[boundary]; ok && time.Since(requestedAt) < 30*time.Second {
 		c.mu.Unlock()
@@ -294,9 +324,9 @@ func (c *Client) RequestHistory(ctx context.Context, chatJID string, count int) 
 	c.historyRequests[boundary] = time.Now()
 	c.mu.Unlock()
 	info := &types.MessageInfo{
-		MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsFromMe: oldest.FromMe, IsGroup: chat.Server == types.GroupServer},
-		ID:            types.MessageID(oldest.ID),
-		Timestamp:     time.UnixMilli(oldest.Timestamp),
+		MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsFromMe: anchor.FromMe, IsGroup: chat.Server == types.GroupServer},
+		ID:            types.MessageID(anchor.ID),
+		Timestamp:     time.UnixMilli(anchor.Timestamp),
 	}
 	_, err = c.wa.SendPeerMessage(ctx, c.wa.BuildHistorySyncRequest(info, count))
 	if err != nil {

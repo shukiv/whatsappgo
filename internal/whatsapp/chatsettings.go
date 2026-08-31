@@ -9,7 +9,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/shuki/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/gateway"
 )
 
 // mutedForever is what WhatsApp stores when a conversation is muted with no

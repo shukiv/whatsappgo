@@ -79,10 +79,15 @@ full-size file; afterwards, clicking the picture opens it in the default Linux
 application.
 
 A message containing a link shows a preview card with the page title,
-description, and picture. WhatsApp resolves that preview on the sending device
-and includes it in the message, so opening a conversation never contacts the
-linked sites. Messages that were synced from your phone's history before this
-version arrived without their preview and keep showing the plain link.
+description, and picture. Normally WhatsApp resolves that preview on the
+sending device and includes it in the message. While composing a new link,
+WhatsAppGo resolves its card so it can be reviewed before sending.
+
+Some historical YouTube messages arrive with generic text but no picture.
+WhatsAppGo performs one background, YouTube-only metadata pass for those rows,
+caches the resulting thumbnail locally, and updates the existing SQLite message
+without changing its time or delivery state. Historical links to other sites
+are not fetched and remain plain when WhatsApp supplied no preview.
 
 Photos and videos that arrived through history synchronisation carry no
 preview either, so the conversation downloads the attachments it is showing, a

@@ -1,4 +1,4 @@
-module github.com/shuki/whatsappgo
+module github.com/shukiv/whatsappgo
 
 go 1.26.0
 
@@ -6,6 +6,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.mau.fi/whatsmeow v0.0.0-20260828224850-0fadda796019
+	golang.org/x/net v0.58.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.57.0
 )
@@ -28,7 +29,6 @@ require (
 	go.mau.fi/util v0.10.1-0.20260820140024-eb612d936fde // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect

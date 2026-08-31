@@ -12,9 +12,18 @@ The current preview protects those files with Unix user permissions, not with a
 second application-level encryption layer. Anyone who can read the user's
 account or an unlocked disk can read the local cache.
 
-Opening a conversation makes no request to any site mentioned in it. Link
-previews are rendered from data the sender included in the message, never by
-fetching the page.
+Opening and scrolling a conversation does not request arbitrary sites mentioned
+in messages. Most link previews are rendered from data the sender included.
+When a user types or pastes a link into the composer, WhatsAppGo requests that
+page and its preview image so the card can be reviewed before sending; the site
+can therefore observe the computer's public IP address.
+
+There is one deliberately narrow historical exception. Once per profile,
+WhatsAppGo sends the URLs of YouTube messages whose stored cards have no image
+to YouTube's public oEmbed endpoint and downloads the returned thumbnails. This
+repairs old YouTube cards in SQLite without crawling arbitrary historical
+links. YouTube can observe the public IP address and requested video URL during
+that pass.
 
 Before reporting a vulnerability, avoid attaching device databases, QR payloads,
 pairing codes, message contents, or logs containing JIDs. Rotate the linked

@@ -22,6 +22,7 @@ type Chat struct {
 	UnreadCount        int    `json:"unread_count"`
 	MutedUntil         int64  `json:"muted_until,omitempty"`
 	Pinned             bool   `json:"pinned"`
+	PinnedAt           int64  `json:"pinned_at,omitempty"`
 	Favorite           bool   `json:"favorite"`
 	Archived           bool   `json:"archived"`
 	IsGroup            bool   `json:"is_group"`
@@ -69,6 +70,17 @@ type Message struct {
 	LinkTitle       string `json:"link_title,omitempty"`
 	LinkDescription string `json:"link_description,omitempty"`
 	LinkThumbnail   string `json:"link_thumbnail,omitempty"`
+}
+
+// LinkPreview is resolved only while composing a message. Thumbnail uses the
+// JSON package's base64 encoding so the local RPC can carry it without a
+// temporary public file or a second HTTP request from QML.
+type LinkPreview struct {
+	URL           string `json:"url,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Thumbnail     []byte `json:"thumbnail,omitempty"`
+	ThumbnailMIME string `json:"thumbnail_mime,omitempty"`
 }
 
 type Reaction struct {

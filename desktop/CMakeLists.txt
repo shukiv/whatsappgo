@@ -35,6 +35,7 @@ qt_add_qml_module(whatsappgo
         qml/ChatListDelegate.qml
         qml/ChatFilterBar.qml
         qml/ChatFilterChip.qml
+        qml/ComposerLinkPreview.qml
         qml/NewChatPane.qml
         qml/MessageDelegate.qml
         qml/SelectableMessageText.qml
@@ -167,7 +168,10 @@ if(BUILD_TESTING)
     )
     set_tests_properties(desktop-pairing-auto-start PROPERTIES TIMEOUT 5)
     set_tests_properties(desktop-backend-lifecycle PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/lifecycle-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/lifecycle-cache;XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/lifecycle-config;XDG_RUNTIME_DIR=${CMAKE_BINARY_DIR}/lifecycle-runtime"
+        # AF_UNIX paths are limited to roughly 108 bytes on Linux. Keep the
+        # runtime root deliberately short so an out-of-tree build directory
+        # cannot make the daemon socket invalid.
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/lifecycle-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/lifecycle-cache;XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/lifecycle-config;XDG_RUNTIME_DIR=${CMAKE_BINARY_DIR}/rt"
         TIMEOUT 10
     )
 endif()

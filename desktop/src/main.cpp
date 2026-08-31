@@ -255,8 +255,9 @@ int main(int argc, char *argv[])
         auto *timestamp = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatTimestamp")));
         auto *badge = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("unreadBadge")));
         auto *preview = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatPreview")));
+        auto *rowBackground = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatRowBackground")));
         auto *chatItem = qobject_cast<QQuickItem *>(chatDelegate.get());
-        if (!timestamp || !badge || !preview || !chatItem)
+        if (!timestamp || !badge || !preview || !chatItem || !rowBackground)
             return EXIT_FAILURE;
         const auto timestampRight = timestamp->mapToItem(chatItem, QPointF(timestamp->width(), 0)).x();
         const auto badgeRight = badge->mapToItem(chatItem, QPointF(badge->width(), 0)).x();
@@ -287,8 +288,17 @@ int main(int argc, char *argv[])
         const auto previewTop = preview->mapToItem(chatItem, QPointF(0, 0)).y();
         qInfo().noquote() << QStringLiteral("chat row height=%1 name/preview gap=%2")
                                  .arg(chatItem->height()).arg(previewTop - titleBottom);
+        auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
+        auto *chatViewport = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListViewport"))) : nullptr;
+        auto *chatListItem = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatList"))) : nullptr;
+        auto *chatScrollBar = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListScrollBar"))) : nullptr;
         return qAbs(timestampRight - badgeRight) <= 2.0
                 && chatItem->height() <= 76.0
+                && chatItem->x() >= 8.0
+                && rowBackground->property("radius").toReal() >= 10.0
+                && chatViewport && chatListItem && chatScrollBar
+                && chatListItem->width() + chatScrollBar->width() <= chatViewport->width()
+                && chatScrollBar->width() <= 8.0
                 && (previewTop - titleBottom) <= 8.0
                 && preview->implicitHeight() <= 22.0
                 && !preview->property("text").toString().contains(QStringLiteral("<br>"))
@@ -641,12 +651,17 @@ int main(int argc, char *argv[])
             }
             const auto width = mark->width();
             const auto seen = mark->property("seen").toBool();
+            const auto separation = mark->property("tickSeparation").toReal();
             qInfo().noquote() << QStringLiteral("receipt %1 width=%2 seen=%3")
                                      .arg(QString::fromLatin1(receiptCase.status)).arg(width).arg(seen);
-            // The double mark is wider than the single one, but the two ticks
-            // overlap, so it is far narrower than twice the width.
-            require(receiptCase.doubleTick ? (width > 11.0 && width < 20.0) : qFuzzyCompare(width, 11.0),
+            // WhatsApp's double mark is a compact, overlapping symbol. Keeping
+            // it at 13 px or less catches the visually separated "✓ ✓" shape
+            // while still leaving the second stroke distinct at 1x scale.
+            require(receiptCase.doubleTick ? (width > 11.0 && width <= 13.0) : qFuzzyCompare(width, 11.0),
                     QStringLiteral("%1 mark is %2 px wide").arg(QString::fromLatin1(receiptCase.status)).arg(width));
+            require(receiptCase.doubleTick ? (separation > 0.0 && separation <= 3.0) : qFuzzyIsNull(separation),
+                    QStringLiteral("%1 tick separation is %2 px")
+                        .arg(QString::fromLatin1(receiptCase.status)).arg(separation));
             require(seen == receiptCase.blue,
                     QStringLiteral("%1 mark colour is wrong").arg(QString::fromLatin1(receiptCase.status)));
         }
@@ -678,9 +693,11 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         auto *card = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("linkPreview")));
         auto *cardImage = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("linkPreviewImage")));
+        auto *linkHover = linkDelegate->findChild<QObject *>(QStringLiteral("messageLinkHover"));
         auto *linkBubble = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         require(card != nullptr && card->isVisible(), QStringLiteral("link preview card is missing"));
         require(cardImage != nullptr && cardImage->isVisible(), QStringLiteral("link preview picture is missing"));
+        require(linkHover != nullptr, QStringLiteral("message links have no pointing-hand hover handler"));
         if (card != nullptr && linkBubble != nullptr) {
             qInfo().noquote() << QStringLiteral("link card width=%1 height=%2 bubble=%3")
                                      .arg(card->width()).arg(card->height()).arg(linkBubble->width());
@@ -688,6 +705,33 @@ int main(int argc, char *argv[])
             require(linkBubble->width() <= paneWidth * 0.70, QStringLiteral("link bubble is too wide"));
         }
         QFile::remove(linkThumbPath);
+
+        // Pasting a URL shows its resolved Open Graph card above the composer
+        // before anything is sent.
+        QQmlComponent composerPreviewComponent(&engine);
+        composerPreviewComponent.setData("import QtQuick\nimport org.whatsappgo\nComposerLinkPreview {}",
+                                         QUrl(QStringLiteral("composer-preview-test.qml")));
+        std::unique_ptr<QObject> composerPreview(composerPreviewComponent.createWithInitialProperties({
+            {QStringLiteral("width"), 720},
+            {QStringLiteral("preview"), QVariantMap{
+                {QStringLiteral("url"), QStringLiteral("https://yahoo.com")},
+                {QStringLiteral("title"), QStringLiteral("Yahoo | Mail, Weather, Search")},
+                {QStringLiteral("description"), QStringLiteral("Latest news coverage and more.")},
+            }},
+        }));
+        if (!composerPreview) {
+            qWarning().noquote() << composerPreviewComponent.errorString();
+            require(false, QStringLiteral("composer link preview could not be created"));
+        } else {
+            QCoreApplication::processEvents();
+            auto *previewItem = qobject_cast<QQuickItem *>(composerPreview.get());
+            auto *previewTitle = composerPreview->findChild<QObject *>(QStringLiteral("composerLinkPreviewTitle"));
+            require(previewItem != nullptr && previewItem->isVisible() && previewItem->height() >= 90.0,
+                    QStringLiteral("pasted link has no composer OG card"));
+            require(previewTitle != nullptr
+                        && previewTitle->property("text").toString().startsWith(QStringLiteral("Yahoo")),
+                    QStringLiteral("composer OG title is missing"));
+        }
 
         // A voice note plays inside the window, so it shows a compact player
         // rather than a row that hands the file to the desktop.
@@ -718,8 +762,11 @@ int main(int argc, char *argv[])
         require(voiceOpen == nullptr || !voiceOpen->isVisible(),
                 QStringLiteral("voice note still offers the desktop open action"));
         auto *voiceProgress = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceProgress")));
+        auto *voiceAvatar = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceAvatar")));
         auto *voiceDuration = voiceDelegate->findChild<QObject *>(QStringLiteral("voiceDuration"));
         require(voiceProgress != nullptr && voiceProgress->isVisible(), QStringLiteral("voice note has no waveform"));
+        require(voiceAvatar != nullptr && voiceAvatar->isVisible() && voiceAvatar->width() >= 40.0,
+                QStringLiteral("voice note has no sender avatar"));
         auto *waveformRow = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceWaveform")));
         if (waveformRow != nullptr) {
             // One rounded bar per amplitude the sender recorded.

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shuki/whatsappgo/internal/gateway"
-	localstore "github.com/shuki/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/gateway"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 // Collecting attachments is the slowest thing this daemon does and the most
