@@ -25,8 +25,8 @@ make desktop
 ./desktop/build/whatsappgo
 ```
 
-`make desktop` builds `bin/whatsappd`, builds the Qt application, and copies
-the backend beside `desktop/build/whatsappgo`.
+`make desktop` builds `bin/whatsappd` and `bin/whatsappctl`, builds the Qt
+application, and copies both Go executables beside `desktop/build/whatsappgo`.
 
 The desktop resolves its helper in this order:
 
@@ -61,6 +61,7 @@ event-to-model transformations without contacting WhatsApp.
 | Path | Responsibility |
 | --- | --- |
 | `cmd/whatsappd` | internal backend entry point and socket listener |
+| `cmd/whatsappctl` | JSON CLI, raw API client, and event stream |
 | `internal/config` | validated XDG/profile paths and permissions |
 | `internal/whatsapp` | whatsmeow client, pairing, events, media, history |
 | `internal/store` | WhatsAppGo SQLite schema, migrations, queries |
@@ -87,8 +88,8 @@ private schema from product code.
 
 Packets are newline-delimited JSON and carry `version: 1`. Add parameter
 structs and strict validation in `internal/service`, implement the operation on
-the gateway/store, then add the `RpcClient` call and QML interaction. Persist
-incoming/outgoing state before publishing an event.
+the gateway/store, add it to `rpc.discover`, then add the desktop or CLI
+interaction. Persist incoming/outgoing state before publishing an event.
 
 Keep socket methods bounded: chat limits max at 500, message pages max at 200,
 and the normal UI page size is 50.
@@ -141,17 +142,18 @@ a real profile database.
 
 ## Packaging
 
-All packages install `whatsappgo` and its internal `whatsappd` helper together
-in the same binary directory. Packages do not require systemd user units.
+All packages install `whatsappgo`, its internal `whatsappd` helper, and
+`whatsappctl` together in the same binary directory. Packages do not require
+systemd user units.
 
 - Flatpak: `packaging/flatpak/org.whatsappgo.Desktop.yml`
 - Debian: `packaging/debian/`
 - RPM: `packaging/rpm/whatsappgo.spec`
 - AppImage: `packaging/appimage/build.sh`
 
-Every package builds the backend to `bin/whatsappd` before configuring the
-desktop project, because `desktop/CMakeLists.txt` installs `../bin/whatsappd`
-next to `whatsappgo`.
+Every package builds the backend and CLI into `bin/` before configuring the
+desktop project, because `desktop/CMakeLists.txt` installs both next to
+`whatsappgo`.
 
 whatsmeow requires Go 1.26. Debian 13 (trixie) ships `golang-any` 2:1.24, so
 `dpkg-buildpackage` needs a Go toolchain from trixie-backports or unstable, or

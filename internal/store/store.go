@@ -49,6 +49,7 @@ func (s *Store) migrate(ctx context.Context) error {
 CREATE TABLE IF NOT EXISTS chats (
   jid TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT '',
+  local_title TEXT NOT NULL DEFAULT '',
   avatar_path TEXT NOT NULL DEFAULT '',
   last_message_id TEXT NOT NULL DEFAULT '',
   last_message_at INTEGER NOT NULL DEFAULT 0,
@@ -132,6 +133,9 @@ CREATE TABLE IF NOT EXISTS metadata (
 		return err
 	}
 	if err := s.ensureColumn(ctx, "chats", "read_through_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "chats", "local_title", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail"} {
@@ -284,13 +288,14 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO chats
-	 (jid,title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group)
-	 SELECT ?,title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group
+	 (jid,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group)
+	 SELECT ?,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group
 	 FROM chats WHERE jid=? ON CONFLICT(jid) DO NOTHING`, canonicalJID, aliasJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE chats SET
 	 title=CASE WHEN title='' THEN COALESCE((SELECT NULLIF(title,'') FROM chats WHERE jid=?),'') ELSE title END,
+	 local_title=CASE WHEN local_title='' THEN COALESCE((SELECT NULLIF(local_title,'') FROM chats WHERE jid=?),'') ELSE local_title END,
 	 avatar_path=CASE WHEN avatar_path='' THEN COALESCE((SELECT NULLIF(avatar_path,'') FROM chats WHERE jid=?),'') ELSE avatar_path END,
 	 last_message_id=CASE WHEN COALESCE((SELECT last_message_at FROM chats WHERE jid=?),0)>last_message_at THEN COALESCE((SELECT last_message_id FROM chats WHERE jid=?),'') ELSE last_message_id END,
 	 last_message_preview=CASE WHEN COALESCE((SELECT last_message_at FROM chats WHERE jid=?),0)>last_message_at THEN COALESCE((SELECT last_message_preview FROM chats WHERE jid=?),'') ELSE last_message_preview END,
@@ -303,7 +308,7 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	 favorite=MAX(favorite,COALESCE((SELECT favorite FROM chats WHERE jid=?),0)),
 	 archived=MIN(archived,COALESCE((SELECT archived FROM chats WHERE jid=?),archived)),
 	 is_group=MAX(is_group,COALESCE((SELECT is_group FROM chats WHERE jid=?),0))
-	 WHERE jid=?`, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID,
+	 WHERE jid=?`, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID,
 		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
 		return err
 	}
@@ -430,9 +435,9 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	AND c.jid NOT LIKE '%@newsletter'
 	AND (m.id IS NOT NULL OR c.pinned=1 OR c.favorite=1)`
 	if strings.TrimSpace(query) != "" {
-		where += " AND (c.title LIKE ? ESCAPE '\\' OR c.jid LIKE ? ESCAPE '\\')"
+		where += " AND (c.local_title LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\' OR c.jid LIKE ? ESCAPE '\\')"
 		q := "%" + escapeLike(strings.TrimSpace(query)) + "%"
-		args = append(args, q, q)
+		args = append(args, q, q, q)
 	}
 	args = append(args, limit, offset)
 	// A conversation that was only ever synced from history often has no name:
@@ -440,7 +445,8 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	// The name the other side publishes is far better than a placeholder built
 	// from their identifier, so it is used when nothing better is stored.
 	rows, err := s.db.QueryContext(ctx, `SELECT c.jid,
- CASE WHEN TRIM(c.title)<>'' AND c.title<>substr(c.jid,1,instr(c.jid,'@')-1) THEN c.title
+	CASE WHEN TRIM(c.local_title)<>'' THEN c.local_title
+	     WHEN TRIM(c.title)<>'' AND c.title<>substr(c.jid,1,instr(c.jid,'@')-1) THEN c.title
       ELSE COALESCE((SELECT TRIM(s.sender_name) FROM messages s
                      WHERE s.chat_jid=c.jid AND s.from_me=0 AND TRIM(s.sender_name)<>''
                      ORDER BY s.timestamp DESC LIMIT 1), c.title) END,
@@ -483,7 +489,7 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 func (s *Store) GetChat(ctx context.Context, jid string) (model.Chat, error) {
 	jid = s.canonicalChatJID(ctx, jid)
 	var c model.Chat
-	err := s.db.QueryRowContext(ctx, `SELECT jid,title,avatar_path,last_message_id,last_message_at,last_message_preview,
+	err := s.db.QueryRowContext(ctx, `SELECT jid,COALESCE(NULLIF(local_title,''),title),avatar_path,last_message_id,last_message_at,last_message_preview,
 	 unread_count,muted_until,pinned,pinned_at,favorite,archived,is_group FROM chats WHERE jid=?`, jid).Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview, &c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup)
 	return c, err
 }
@@ -739,6 +745,19 @@ func (s *Store) UpdateChatTitle(ctx context.Context, jid, title string) error {
 	return err
 }
 
+// SetLocalChatTitle stores an operator-supplied label separately from names
+// synchronized by WhatsApp, so future directory/history updates cannot replace
+// it. The linked-device protocol cannot write the phone's address book.
+func (s *Store) SetLocalChatTitle(ctx context.Context, jid, title string) error {
+	title = strings.TrimSpace(title)
+	if jid == "" || title == "" {
+		return errors.New("jid and title are required")
+	}
+	jid = s.canonicalChatJID(ctx, jid)
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET local_title=? WHERE jid=?`, title, jid)
+	return err
+}
+
 // UpdateChatTitleIfPlaceholder applies a weak identity (for example a push or
 // verified-business name) only while the stored title is still the raw JID.
 // Saved address-book names are stronger and must never be replaced here.
@@ -888,7 +907,7 @@ func (s *Store) ListCallLogs(ctx context.Context, limit int) ([]model.CallLog, e
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT l.id,l.peer_jid,COALESCE(c.title,''),COALESCE(c.avatar_path,''),
+	rows, err := s.db.QueryContext(ctx, `SELECT l.id,l.peer_jid,COALESCE(NULLIF(c.local_title,''),c.title,''),COALESCE(c.avatar_path,''),
  l.timestamp,l.duration,l.incoming,l.video,l.result
  FROM call_logs l LEFT JOIN chats c ON c.jid=l.peer_jid
  ORDER BY l.timestamp DESC,l.id DESC LIMIT ?`, limit)

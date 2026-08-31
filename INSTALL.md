@@ -61,9 +61,9 @@ make desktop
 ./desktop/build/whatsappgo
 ```
 
-`make desktop` builds `bin/whatsappd`, the Qt application, and a runnable copy
-of the helper beside the application. No separate daemon setup or systemd unit
-is required.
+`make desktop` builds `bin/whatsappd`, `bin/whatsappctl`, the Qt application,
+and runnable copies beside the application. No separate daemon setup or systemd
+unit is required.
 
 ## Install for one user
 
@@ -71,7 +71,7 @@ This installs into `~/.local` and does not require root:
 
 ```bash
 make check-desktop-deps
-make daemon
+make tools
 cmake -S desktop -B desktop/build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$HOME/.local"
@@ -85,6 +85,16 @@ Launch it from the application menu or run:
 ~/.local/bin/whatsappgo
 ```
 
+While WhatsAppGo is running, automation can use:
+
+```bash
+~/.local/bin/whatsappctl status
+~/.local/bin/whatsappctl --pretty chats --limit 10
+```
+
+See the [command-line and bot API](docs/API.md) for sending, contact resolution,
+event streaming, profiles, and the raw protocol.
+
 If the command is not found by name, add `~/.local/bin` to `PATH`. You may need
 to sign out and back in before a newly installed application-menu entry appears.
 
@@ -92,7 +102,7 @@ to sign out and back in before a newly installed application-menu entry appears.
 
 ```bash
 make check-desktop-deps
-make daemon
+make tools
 cmake -S desktop -B desktop/build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX=/usr
@@ -124,7 +134,7 @@ the same prefix:
 
 ```bash
 git pull --ff-only
-make daemon
+make tools
 cmake --build desktop/build --parallel
 cmake --install desktop/build
 ```
@@ -138,6 +148,7 @@ Remove the files from the prefix used during installation:
 
 - `bin/whatsappgo`
 - `bin/whatsappd`
+- `bin/whatsappctl`
 - `share/applications/org.whatsappgo.Desktop.desktop`
 - `share/icons/hicolor/scalable/apps/org.whatsappgo.Desktop.svg`
 

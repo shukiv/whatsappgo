@@ -11,7 +11,11 @@ whatsappgo (Qt 6 / QML / Kirigami)
    ├── whatsappd --profile default
    ├── whatsappd --profile work
    │
-   └── JSON-lines RPC over per-profile Unix sockets
+   ├── JSON-lines RPC over per-profile Unix sockets
+   │        ▲
+   │        └── whatsappctl / authorized same-user bots
+   │
+   └── app-owned backend lifecycle
           │
           ▼
        whatsmeow ── encrypted WhatsApp multi-device connection
@@ -170,7 +174,9 @@ messages, reactions, contact resolution, avatars, receipts, typing, statuses,
 calls, channels, and communities. Parameter decoding rejects unknown fields.
 
 The socket exists only below the user's runtime directory and is never exposed
-on the network.
+on the network. `whatsappctl` is a thin same-user client for this protocol; it
+does not start a daemon. `rpc.discover` provides the installed method and event
+catalogue. See [Command-line and bot API](API.md).
 
 ## Event flow
 

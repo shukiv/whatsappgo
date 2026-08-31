@@ -97,7 +97,11 @@ target_compile_definitions(whatsappgo PRIVATE
 )
 
 install(TARGETS whatsappgo RUNTIME DESTINATION bin)
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd DESTINATION bin)
+install(PROGRAMS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd
+    ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappctl
+    DESTINATION bin
+)
 install(FILES ../packaging/applications/org.whatsappgo.Desktop.desktop
         DESTINATION share/applications)
 install(FILES ../assets/org.whatsappgo.Desktop.svg

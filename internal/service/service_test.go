@@ -18,6 +18,7 @@ type fakeGateway struct {
 	historyChat     string
 	refreshedChat   string
 	downloadMessage string
+	resolvedPhone   string
 }
 
 func (f *fakeGateway) Subscribe(func(gateway.Event)) func() { return func() {} }
@@ -40,6 +41,11 @@ func (f *fakeGateway) RefreshHistory(_ context.Context, chat string, _ int) erro
 func (f *fakeGateway) DownloadMedia(_ context.Context, chat, messageID string) (model.Message, error) {
 	f.downloadMessage = messageID
 	return model.Message{ID: messageID, ChatJID: chat, Kind: "document", MediaPath: "/tmp/report.pdf"}, nil
+}
+
+func (f *fakeGateway) ResolvePhone(_ context.Context, phone string) (model.Chat, error) {
+	f.resolvedPhone = phone
+	return model.Chat{JID: "123@lid", Title: "123"}, nil
 }
 
 func TestSendMessagePersistsOutgoingResult(t *testing.T) {
@@ -111,5 +117,63 @@ func TestHistoryAndMediaRequestsReachGateway(t *testing.T) {
 	}
 	if result.(model.Message).MediaPath != "/tmp/report.pdf" {
 		t.Fatalf("unexpected download result: %#v", result)
+	}
+}
+
+func TestContactSaveResolvesAndStoresLocalLabel(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+	result, err := svc.Handle(context.Background(), "contact.save", json.RawMessage(`{"phone":"15551234567","name":"Alice Bot"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := result.(model.Chat)
+	if gw.resolvedPhone != "15551234567" || chat.JID != "123@lid" || chat.Title != "Alice Bot" {
+		t.Fatalf("unexpected saved contact: phone=%q chat=%#v", gw.resolvedPhone, chat)
+	}
+	stored, err := st.GetChat(context.Background(), "123@lid")
+	if err != nil || stored.Title != "Alice Bot" {
+		t.Fatalf("local label not stored: chat=%#v err=%v", stored, err)
+	}
+	if err := st.ApplyChatSnapshot(context.Background(), model.Chat{JID: "123@lid", Title: "Remote Profile Name"}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = st.GetChat(context.Background(), "123@lid")
+	if err != nil || stored.Title != "Alice Bot" {
+		t.Fatalf("remote sync replaced local label: chat=%#v err=%v", stored, err)
+	}
+}
+
+func TestDiscoveryListsCompleteAutomationSurface(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, &fakeGateway{}, events.New())
+	defer svc.Close()
+	result, err := svc.Handle(context.Background(), "rpc.discover", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery := result.(map[string]any)
+	methods := discovery["methods"].([]MethodDescription)
+	seen := make(map[string]bool, len(methods))
+	for _, method := range methods {
+		if seen[method.Name] {
+			t.Fatalf("duplicate method %q", method.Name)
+		}
+		seen[method.Name] = true
+	}
+	for _, required := range []string{"rpc.discover", "message.send", "message.send_media", "messages.list", "contact.save", "chat.set_read"} {
+		if !seen[required] {
+			t.Fatalf("discovery omitted %q", required)
+		}
 	}
 }

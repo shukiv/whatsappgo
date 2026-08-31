@@ -68,6 +68,8 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - native system notifications and a tray/status icon, light/dark/system
   appearance, RTL text, selectable message text, clickable links, and
   accessible controls
+- `whatsappctl` command-line automation with JSON output, live event streams,
+  media sending, contact resolution, and a discoverable local API for bots
 - Flatpak, Debian, RPM, and AppImage packaging definitions
 
 Call records may be displayed when WhatsApp supplies them, but starting voice
@@ -85,6 +87,8 @@ or video calls is not supported.
   packaging, and contribution workflow
 - [Architecture](docs/ARCHITECTURE.md): process lifecycle, storage, event flow,
   identity aliases, memory behavior, and RPC
+- [Command-line and bot API](docs/API.md): `whatsappctl`, events, raw methods,
+  security, and automation examples
 - [Security and privacy](docs/SECURITY.md): local plaintext data, credentials,
   reporting, and account risk
 
@@ -121,8 +125,9 @@ make desktop
 sudo cmake --install desktop/build
 ```
 
-Both `whatsappgo` and its internal `whatsappd` helper are installed together.
-Users launch only `whatsappgo`.
+`whatsappgo`, its internal `whatsappd` helper, and the optional `whatsappctl`
+automation client are installed together. Launch `whatsappgo` first; the CLI
+controls the backend that the desktop owns.
 
 The package definitions under `packaging/` are maintained for release work;
 until signed artifacts are attached to a GitHub release, install from source as
@@ -159,6 +164,7 @@ Unix permissions but no additional application-level encryption.
 
 ```text
 cmd/whatsappd/       internal Go backend executable
+cmd/whatsappctl/     JSON command-line and bot client
 internal/whatsapp/  whatsmeow adapter and event handling
 internal/store/     SQLite message index and migrations
 internal/mediastore/ SQLite attachment storage

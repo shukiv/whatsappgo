@@ -25,6 +25,14 @@ repairs old YouTube cards in SQLite without crawling arbitrary historical
 links. YouTube can observe the public IP address and requested video URL during
 that pass.
 
+The desktop-owned backend accepts commands on a Unix socket below
+`$XDG_RUNTIME_DIR/whatsappgo`. Its directory is mode `0700` and the socket is
+mode `0600`; no TCP or HTTP listener is opened. `whatsappctl` and any other
+process running as the same Unix user can use that socket to read history, send
+messages, or unlink the profile. Do not expose the socket to a network, and do
+not run untrusted programs under the logged-in account. See the
+[command-line and bot API](API.md) for the complete control surface.
+
 Before reporting a vulnerability, avoid attaching device databases, QR payloads,
 pairing codes, message contents, or logs containing JIDs. Rotate the linked
 device from the official WhatsApp application if credentials may be exposed.

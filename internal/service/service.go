@@ -101,9 +101,15 @@ type searchParams struct {
 type phoneParams struct {
 	Phone string `json:"phone"`
 }
+type saveContactParams struct {
+	Phone string `json:"phone"`
+	Name  string `json:"name"`
+}
 
 func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	switch method {
+	case "rpc.discover":
+		return discoveryResult(), nil
 	case "status.get":
 		return s.gateway.Status(), nil
 	case "connection.connect":
@@ -332,6 +338,29 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if err := s.store.UpsertChat(ctx, chat); err != nil {
 			return nil, err
 		}
+		return chat, nil
+	case "contact.save":
+		var p saveContactParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		p.Phone = strings.TrimSpace(p.Phone)
+		p.Name = strings.TrimSpace(p.Name)
+		if p.Phone == "" || p.Name == "" {
+			return nil, errors.New("phone and name are required")
+		}
+		chat, err := s.gateway.ResolvePhone(ctx, p.Phone)
+		if err != nil {
+			return nil, err
+		}
+		chat.Title = p.Name
+		if err := s.store.UpsertChat(ctx, chat); err != nil {
+			return nil, err
+		}
+		if err := s.store.SetLocalChatTitle(ctx, chat.JID, p.Name); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "chat.updated", Data: map[string]string{"jid": chat.JID, "title": p.Name}})
 		return chat, nil
 	case "chat.avatar":
 		var p messageListParams

@@ -13,6 +13,9 @@ The application starts its bundled backend automatically. Do not start
 that it started. Messages and notifications therefore arrive on this computer
 only while the application is open.
 
+`whatsappctl` can control that same app-owned backend from a shell or bot. It
+does not start another daemon. See [Command-line and bot API](API.md).
+
 ## Linking an account
 
 ### QR code

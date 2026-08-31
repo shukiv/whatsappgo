@@ -19,6 +19,7 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
+      - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
 
   desktop:
     runs-on: ubuntu-latest

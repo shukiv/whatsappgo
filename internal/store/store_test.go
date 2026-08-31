@@ -326,6 +326,9 @@ func TestLinkChatAliasesCombinesHistoryAndCanonicalizesFutureMessages(t *testing
 			t.Fatal(err)
 		}
 	}
+	if err := s.SetLocalChatTitle(ctx, phone, "Local label"); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := s.LinkChatAliases(ctx, lid, phone); err != nil {
 		t.Fatal(err)
@@ -341,7 +344,7 @@ func TestLinkChatAliasesCombinesHistoryAndCanonicalizesFutureMessages(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 1 || chats[0].JID != lid {
+	if len(chats) != 1 || chats[0].JID != lid || chats[0].Title != "Local label" {
 		t.Fatalf("alias remained as a duplicate conversation: %#v", chats)
 	}
 	if err := s.UpsertMessage(ctx, model.Message{ID: "future", ChatJID: phone, Timestamp: 39, Kind: "text", Body: "future", Status: "received"}, "", false); err != nil {
