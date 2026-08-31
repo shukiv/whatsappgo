@@ -1,6 +1,7 @@
 #include "rpcclient.h"
 
-#include <QGuiApplication>
+#include <QApplication>
+#include <QAction>
 #include <QClipboard>
 #include <QCommandLineParser>
 #include <QDebug>
@@ -18,10 +19,13 @@
 #include <QWindow>
 #include <QQuickWindow>
 #include <QImage>
+#include <QIcon>
 #include <QFileInfo>
 #include <QFont>
+#include <QMenu>
 #include <QQuickItem>
 #include <QProcess>
+#include <QSystemTrayIcon>
 
 #include <cstdlib>
 
@@ -71,11 +75,14 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsEmpty("QT_QUICK_BACKEND"))
         qputenv("QT_QUICK_BACKEND", QByteArrayLiteral("software"));
 
-    QGuiApplication app(argc, argv);
-    QGuiApplication::setOrganizationName(QStringLiteral("WhatsAppGo"));
-    QGuiApplication::setOrganizationDomain(QStringLiteral("whatsappgo.org"));
-    QGuiApplication::setApplicationName(QStringLiteral("WhatsAppGo"));
-    QGuiApplication::setDesktopFileName(QStringLiteral("org.whatsappgo.Desktop"));
+    QApplication app(argc, argv);
+    QApplication::setOrganizationName(QStringLiteral("WhatsAppGo"));
+    QApplication::setOrganizationDomain(QStringLiteral("whatsappgo.org"));
+    QApplication::setApplicationName(QStringLiteral("WhatsAppGo"));
+    QApplication::setDesktopFileName(QStringLiteral("org.whatsappgo.Desktop"));
+    const QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("org.whatsappgo.Desktop"),
+                                                   QIcon(QStringLiteral(":/org.whatsappgo.Desktop.svg")));
+    QApplication::setWindowIcon(applicationIcon);
     // The same face stack WhatsApp Web asks for, resolved against whatever the
     // system actually has. Leaving it to Qt's default picked a heavier font
     // than the interface is designed around.
@@ -123,6 +130,8 @@ int main(int argc, char *argv[])
     parser.addOption(resizeRenderingTestOption);
     QCommandLineOption messageLayoutTestOption(QStringLiteral("message-layout-test"), QStringLiteral("Verify message bubble width limits, padding, and media previews"));
     parser.addOption(messageLayoutTestOption);
+    QCommandLineOption desktopIntegrationTestOption(QStringLiteral("desktop-integration-test"), QStringLiteral("Verify system tray and notification integration"));
+    parser.addOption(desktopIntegrationTestOption);
     QCommandLineOption screenshotOption(QStringLiteral("screenshot"), QStringLiteral("Render the interface to a PNG and exit"), QStringLiteral("path"));
     parser.addOption(screenshotOption);
     QCommandLineOption themeOption(QStringLiteral("theme"), QStringLiteral("Override the appearance for this run (system, light, or dark)"), QStringLiteral("mode"));
@@ -140,10 +149,11 @@ int main(int argc, char *argv[])
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
     const bool messageLayoutTest = parser.isSet(messageLayoutTestOption);
+    const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
-        || messageLayoutTest || !screenshotPath.isEmpty();
+        || messageLayoutTest || desktopIntegrationTest || !screenshotPath.isEmpty();
 
     auto initialProfile = parser.value(profileOption);
     const QRegularExpression validProfile(QStringLiteral("^[a-z0-9][a-z0-9_-]{0,31}$"));
@@ -172,14 +182,110 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
     }
 
-    RpcClient backend(initialProfile, parser.value(chatOption));
+    const bool trayEnabled = !automatedRun && QSystemTrayIcon::isSystemTrayAvailable();
+    if (!automatedRun)
+        app.setQuitOnLastWindowClosed(!trayEnabled);
+
+    RpcClient backend(initialProfile, parser.value(chatOption), trayEnabled);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
     engine.loadFromModule(QStringLiteral("org.whatsappgo"), QStringLiteral("Main"));
-    if (!engine.rootObjects().isEmpty())
-        installResizeRepaintGuard(qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst()));
+    auto *applicationWindow = engine.rootObjects().isEmpty()
+        ? nullptr
+        : qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
+    if (applicationWindow != nullptr)
+        installResizeRepaintGuard(applicationWindow);
+
+    QString lastNotificationChat;
+    QString lastNotificationTitle;
+    // Qt's offscreen platform has no tray host and some versions crash while
+    // tearing down widget-backed tray menus. Construct this integration only
+    // in an interactive session where the platform reports a real tray.
+    std::unique_ptr<QMenu> trayMenu;
+    std::unique_ptr<QSystemTrayIcon> trayIcon;
+    if (trayEnabled) {
+        trayMenu = std::make_unique<QMenu>();
+        trayMenu->setObjectName(QStringLiteral("whatsappgoTrayMenu"));
+        auto *trayStatusAction = trayMenu->addAction(QStringLiteral("Connecting…"));
+        trayStatusAction->setObjectName(QStringLiteral("trayStatusAction"));
+        trayStatusAction->setEnabled(false);
+        trayMenu->addSeparator();
+        auto *trayToggleAction = trayMenu->addAction(QStringLiteral("Hide WhatsAppGo"));
+        trayToggleAction->setObjectName(QStringLiteral("trayToggleAction"));
+        trayMenu->addSeparator();
+        auto *trayQuitAction = trayMenu->addAction(QStringLiteral("Quit WhatsAppGo"));
+        trayQuitAction->setObjectName(QStringLiteral("trayQuitAction"));
+
+        trayIcon = std::make_unique<QSystemTrayIcon>(applicationIcon);
+        trayIcon->setObjectName(QStringLiteral("whatsappgoTrayIcon"));
+        trayIcon->setContextMenu(trayMenu.get());
+        trayIcon->setToolTip(QStringLiteral("WhatsAppGo"));
+
+        const auto activateWindow = [applicationWindow] {
+            if (applicationWindow == nullptr)
+                return;
+            applicationWindow->show();
+            applicationWindow->raise();
+            applicationWindow->requestActivate();
+        };
+        const auto updateToggleAction = [applicationWindow, trayToggleAction] {
+            trayToggleAction->setText(applicationWindow != nullptr && applicationWindow->isVisible()
+                                          ? QStringLiteral("Hide WhatsAppGo")
+                                          : QStringLiteral("Open WhatsAppGo"));
+        };
+        QObject::connect(trayToggleAction, &QAction::triggered, &app, [applicationWindow, activateWindow, updateToggleAction] {
+            if (applicationWindow == nullptr)
+                return;
+            if (applicationWindow->isVisible())
+                applicationWindow->hide();
+            else
+                activateWindow();
+            updateToggleAction();
+        });
+        QObject::connect(trayQuitAction, &QAction::triggered, &app, &QApplication::quit);
+        if (applicationWindow != nullptr) {
+            QObject::connect(applicationWindow, &QWindow::visibilityChanged, &app,
+                             [updateToggleAction](QWindow::Visibility) { updateToggleAction(); });
+        }
+        QObject::connect(trayIcon.get(), &QSystemTrayIcon::activated, &app,
+                         [activateWindow](QSystemTrayIcon::ActivationReason reason) {
+                             if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+                                 activateWindow();
+                         });
+        QObject::connect(&backend, &RpcClient::notificationRequested, &app,
+                         [icon = trayIcon.get(), &applicationIcon, &lastNotificationChat, &lastNotificationTitle]
+                         (const QString &chatJid, const QString &title, const QString &body) {
+                             lastNotificationChat = chatJid;
+                             lastNotificationTitle = title;
+                             icon->showMessage(title, body, applicationIcon, 8000);
+                         });
+        QObject::connect(trayIcon.get(), &QSystemTrayIcon::messageClicked, &app,
+                         [&backend, activateWindow, &lastNotificationChat, &lastNotificationTitle] {
+                             if (!lastNotificationChat.isEmpty())
+                                 backend.openChat(lastNotificationChat, lastNotificationTitle);
+                             activateWindow();
+                         });
+        const auto updateTrayStatus = [&backend, icon = trayIcon.get(), trayStatusAction] {
+            const auto status = backend.status();
+            const bool connected = status.value(QStringLiteral("connected")).toBool();
+            const auto label = connected ? QStringLiteral("Connected") : QStringLiteral("Disconnected");
+            trayStatusAction->setText(label);
+            icon->setToolTip(QStringLiteral("WhatsAppGo — %1").arg(label));
+        };
+        QObject::connect(&backend, &RpcClient::statusChanged, &app, updateTrayStatus);
+        QObject::connect(&backend, &RpcClient::daemonConnectedChanged, &app, updateTrayStatus);
+        QObject::connect(&app, &QCoreApplication::aboutToQuit, trayIcon.get(), &QSystemTrayIcon::hide);
+        updateToggleAction();
+        updateTrayStatus();
+        trayIcon->show();
+    }
+
+    if (desktopIntegrationTest) {
+        return !applicationIcon.isNull() && !trayEnabled && trayIcon == nullptr && trayMenu == nullptr
+            ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
     if (resizeRenderingTest) {
         if (engine.rootObjects().isEmpty())
             return EXIT_FAILURE;

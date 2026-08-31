@@ -3,11 +3,15 @@ package notify
 import (
 	"context"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -19,6 +23,9 @@ const (
 	notificationService   = "org.freedesktop.Notifications"
 	notificationInterface = "org.freedesktop.Notifications"
 	notificationPath      = "/org/freedesktop/Notifications"
+	portalService         = "org.freedesktop.portal.Desktop"
+	portalInterface       = "org.freedesktop.portal.Notification"
+	portalPath            = "/org/freedesktop/portal/desktop"
 )
 
 type Notifier interface {
@@ -33,9 +40,15 @@ type Desktop struct {
 	done              chan struct{}
 	actions           map[uint32]string
 	actionOrder       []uint32
+	portalActions     map[string]string
+	portalActionOrder []string
+	nextPortalID      uint64
 	profile           string
 	notificationOwner string
+	portalOwner       string
+	usePortal         bool
 	launcher          string
+	uiSocket          string
 	closeOnce         sync.Once
 }
 
@@ -44,25 +57,42 @@ func NewDesktop(profile string) (*Desktop, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), profile: profile}
+	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), profile: profile}
 	var owner string
 	if err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&owner); err != nil {
-		log.Printf("notification click actions disabled: %s has no owner on the session bus: %v", notificationService, err)
+		var portalOwner string
+		if portalErr := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, portalService).Store(&portalOwner); portalErr != nil {
+			log.Printf("desktop notifications unavailable: neither %s nor %s has an owner", notificationService, portalService)
+		} else {
+			d.portalOwner = portalOwner
+			d.usePortal = true
+			log.Printf("using the desktop notification portal because %s is unavailable", notificationService)
+		}
 	}
 	d.notificationOwner = owner
 	d.launcher = resolveDesktopExecutable(os.Executable, exec.LookPath)
-	if d.launcher == "" {
-		log.Printf("notification click actions disabled: %s was not found beside the backend or on PATH", desktopExecutableName)
-	}
+	d.uiSocket = desktopSocketPath(profile)
 	// Signals are not restricted to the owner of an interface name, so the
 	// match rules pin the sender and every delivered signal is checked against
 	// the current owner of the notification service. Otherwise any process on
 	// the session bus could forge a click and make this daemon spawn windows.
-	for _, member := range []string{"ActionInvoked", "NotificationClosed"} {
+	if d.notificationOwner != "" {
+		for _, member := range []string{"ActionInvoked", "NotificationClosed"} {
+			if err := conn.AddMatchSignal(
+				dbus.WithMatchInterface(notificationInterface),
+				dbus.WithMatchMember(member),
+				dbus.WithMatchSender(notificationService),
+			); err != nil {
+				conn.Close()
+				return nil, err
+			}
+		}
+	}
+	if d.portalOwner != "" {
 		if err := conn.AddMatchSignal(
-			dbus.WithMatchInterface(notificationInterface),
-			dbus.WithMatchMember(member),
-			dbus.WithMatchSender(notificationService),
+			dbus.WithMatchInterface(portalInterface),
+			dbus.WithMatchMember("ActionInvoked"),
+			dbus.WithMatchSender(portalService),
 		); err != nil {
 			conn.Close()
 			return nil, err
@@ -79,8 +109,11 @@ func NewDesktop(profile string) (*Desktop, error) {
 const maxTrackedNotifications = 256
 
 func (d *Desktop) Notify(ctx context.Context, chatJID, title, body string) error {
+	if d.usePortal {
+		return d.notifyPortal(ctx, chatJID, title, body)
+	}
 	actions := []string{}
-	if d.launcher != "" {
+	if d.canOpenChat() {
 		actions = []string{"default", "Open"}
 	}
 	hints := map[string]dbus.Variant{
@@ -103,6 +136,34 @@ func (d *Desktop) Notify(ctx context.Context, chatJID, title, body string) error
 	defer d.mu.Unlock()
 	d.trackActionLocked(id, chatJID)
 	return nil
+}
+
+func (d *Desktop) notifyPortal(ctx context.Context, chatJID, title, body string) error {
+	d.mu.Lock()
+	d.nextPortalID++
+	id := "whatsappgo-" + strconv.FormatInt(time.Now().UnixMilli(), 10) + "-" + strconv.FormatUint(d.nextPortalID, 10)
+	if d.canOpenChat() {
+		d.trackPortalActionLocked(id, chatJID)
+	}
+	d.mu.Unlock()
+
+	notification := map[string]dbus.Variant{
+		"title":    dbus.MakeVariant(title),
+		"body":     dbus.MakeVariant(body),
+		"category": dbus.MakeVariant("im.received"),
+		"priority": dbus.MakeVariant("normal"),
+	}
+	if d.canOpenChat() {
+		notification["default-action"] = dbus.MakeVariant("open")
+	}
+	call := d.conn.Object(portalService, dbus.ObjectPath(portalPath)).CallWithContext(
+		ctx, portalInterface+".AddNotification", 0, id, notification)
+	if call.Err != nil {
+		d.mu.Lock()
+		d.forgetPortalActionLocked(id)
+		d.mu.Unlock()
+	}
+	return call.Err
 }
 
 func (d *Desktop) trackActionLocked(id uint32, chatJID string) {
@@ -129,6 +190,30 @@ func (d *Desktop) forgetActionLocked(id uint32) {
 	}
 }
 
+func (d *Desktop) trackPortalActionLocked(id, chatJID string) {
+	if _, exists := d.portalActions[id]; !exists {
+		d.portalActionOrder = append(d.portalActionOrder, id)
+	}
+	d.portalActions[id] = chatJID
+	for len(d.portalActionOrder) > maxTrackedNotifications {
+		delete(d.portalActions, d.portalActionOrder[0])
+		d.portalActionOrder = d.portalActionOrder[1:]
+	}
+}
+
+func (d *Desktop) forgetPortalActionLocked(id string) {
+	if _, exists := d.portalActions[id]; !exists {
+		return
+	}
+	delete(d.portalActions, id)
+	for i, tracked := range d.portalActionOrder {
+		if tracked == id {
+			d.portalActionOrder = append(d.portalActionOrder[:i], d.portalActionOrder[i+1:]...)
+			break
+		}
+	}
+}
+
 func (d *Desktop) watchActions() {
 	for {
 		select {
@@ -138,7 +223,29 @@ func (d *Desktop) watchActions() {
 			if !ok {
 				return
 			}
-			if len(signal.Body) < 1 || !d.signalIsTrusted(signal.Sender) {
+			if len(signal.Body) < 1 {
+				continue
+			}
+			if signal.Name == portalInterface+".ActionInvoked" {
+				if !d.portalSignalIsTrusted(signal.Sender) {
+					continue
+				}
+				id, ok := signal.Body[0].(string)
+				if !ok {
+					continue
+				}
+				d.mu.Lock()
+				chatJID, owned := d.portalActions[id]
+				if owned {
+					d.forgetPortalActionLocked(id)
+				}
+				d.mu.Unlock()
+				if owned {
+					d.launchChat(chatJID)
+				}
+				continue
+			}
+			if !d.signalIsTrusted(signal.Sender) {
 				continue
 			}
 			id, ok := signal.Body[0].(uint32)
@@ -168,7 +275,14 @@ func (d *Desktop) signalIsTrusted(sender string) bool {
 	return d.notificationOwner != "" && sender == d.notificationOwner
 }
 
+func (d *Desktop) portalSignalIsTrusted(sender string) bool {
+	return d.portalOwner != "" && sender == d.portalOwner
+}
+
 func (d *Desktop) launchChat(chatJID string) {
+	if openRunningDesktop(d.uiSocket, chatJID) {
+		return
+	}
 	launcher := d.launcher
 	// The path is re-validated immediately before running it so a binary that
 	// was replaced after startup is not executed.
@@ -184,6 +298,35 @@ func (d *Desktop) launchChat(chatJID string) {
 	if command.Start() == nil {
 		_ = command.Process.Release()
 	}
+}
+
+func (d *Desktop) canOpenChat() bool {
+	return d.uiSocket != "" || d.launcher != ""
+}
+
+func desktopSocketPath(profile string) string {
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		runtimeDir = filepath.Join("/run/user", strconv.Itoa(os.Geteuid()))
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	return filepath.Join(runtimeDir, "whatsappgo", "ui-"+profile+".sock")
+}
+
+func openRunningDesktop(socketPath, chatJID string) bool {
+	if socketPath == "" || chatJID == "" || strings.ContainsAny(chatJID, "\r\n") {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", socketPath, 250*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(250 * time.Millisecond))
+	_, err = conn.Write([]byte(chatJID + "\n"))
+	return err == nil
 }
 
 // resolveDesktopExecutable locates the desktop application for notification

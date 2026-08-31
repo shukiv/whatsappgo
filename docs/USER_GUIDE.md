@@ -152,13 +152,17 @@ with a known-good GPU driver may launch with `QT_QUICK_BACKEND=rhi`.
 
 ## Notifications and presence
 
-Incoming messages use the freedesktop notification service unless the chat is
-muted. Opening a chat sends read receipts for its incoming messages. Typing and
-presence updates depend on what the other account and WhatsApp expose.
+Incoming messages use native system notifications unless the chat is muted.
+Clicking a notification opens its conversation. When the desktop provides a
+system tray, WhatsAppGo also places its icon there with connection status,
+**Open/Hide**, and **Quit WhatsAppGo** actions. Opening a chat sends read
+receipts for its incoming messages. Typing and presence updates depend on what
+the other account and WhatsApp expose.
 
-Because the backend belongs to the desktop lifecycle, closing WhatsAppGo stops
-desktop notifications and disconnects its linked-device sockets until the next
-launch. This does not unlink the device.
+With a tray available, closing the window hides it and keeps notifications and
+the linked-device connection active. Use **Quit WhatsAppGo** in the tray menu to
+stop the application and its backend. Without a tray host, closing the window
+still quits normally. Neither action unlinks the device.
 
 ## Logging out and local data
 

@@ -41,8 +41,8 @@ QString daemonExecutable()
 }
 }
 
-RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, QObject *parent)
-    : QObject(parent)
+RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, bool desktopNotifications, QObject *parent)
+    : QObject(parent), m_desktopNotifications(desktopNotifications)
 {
     m_initialChat = initialChat;
     QSettings settings;
@@ -148,7 +148,9 @@ void RpcClient::startBackendForCurrentProfile()
     auto *process = new QProcess(this);
     process->setObjectName(QStringLiteral("whatsappBackend-%1").arg(profile));
     process->setProgram(executable);
-    process->setArguments({QStringLiteral("--profile"), profile});
+    process->setArguments({QStringLiteral("--profile"), profile,
+                           m_desktopNotifications ? QStringLiteral("--notifications=false")
+                                                  : QStringLiteral("--notifications=true")});
     if (qEnvironmentVariableIntValue("WHATSAPPGO_BACKEND_LOGS") > 0) {
         process->setProcessChannelMode(QProcess::ForwardedChannels);
     } else {
@@ -332,8 +334,13 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
 		}
 		if (m_waitingRemoteHistory && !m_selectedChat.isEmpty())
 			loadRemoteHistoryPage();
-	} else if (name == QStringLiteral("call.upsert") || name == QStringLiteral("calls.synced")) {
+    } else if (name == QStringLiteral("call.upsert") || name == QStringLiteral("calls.synced")) {
 		refreshCalls();
+    } else if (name == QStringLiteral("notification.received")) {
+        const auto payload = data.toObject();
+        emit notificationRequested(payload.value(QStringLiteral("chat_jid")).toString(),
+                                   payload.value(QStringLiteral("title")).toString(),
+                                   payload.value(QStringLiteral("body")).toString());
     } else if (name == QStringLiteral("daemon.error") || name == QStringLiteral("pairing.error")) {
         emit errorOccurred(data.toObject().value(QStringLiteral("message")).toString());
     }

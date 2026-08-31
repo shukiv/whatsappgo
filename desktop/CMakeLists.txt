@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Network Multimedia)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 Network Multimedia)
 find_package(KF6Kirigami 6.0 REQUIRED)
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -18,6 +18,12 @@ qt_add_executable(whatsappgo
     src/messagemodel.h
     src/rpcclient.cpp
     src/rpcclient.h
+)
+
+qt_add_resources(whatsappgo "desktop-assets"
+    PREFIX "/"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/../assets"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/org.whatsappgo.Desktop.svg"
 )
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
@@ -81,7 +87,7 @@ qt_add_qml_module(whatsappgo
 )
 
 target_link_libraries(whatsappgo PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia
     KF6::Kirigami
 )
 
@@ -142,6 +148,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-resize-rendering COMMAND whatsappgo --resize-rendering-test)
     add_test(NAME desktop-message-layout COMMAND whatsappgo --message-layout-test)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
+    add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
@@ -167,6 +174,10 @@ if(BUILD_TESTING)
         TIMEOUT 10
     )
     set_tests_properties(desktop-pairing-auto-start PROPERTIES TIMEOUT 5)
+    set_tests_properties(desktop-system-integration PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 10
+    )
     set_tests_properties(desktop-backend-lifecycle PROPERTIES
         # AF_UNIX paths are limited to roughly 108 bytes on Linux. Keep the
         # runtime root deliberately short so an out-of-tree build directory

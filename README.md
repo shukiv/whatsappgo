@@ -35,8 +35,9 @@ make desktop
 
 `make desktop` builds the Go backend, builds the Qt application, and places the
 backend beside the desktop executable. Starting the desktop executable starts
-the backend automatically; closing the application stops every backend process
-that it owns.
+the backend automatically. On desktops with a system tray, closing the window
+keeps WhatsAppGo connected in the tray; choose **Quit WhatsAppGo** from its tray
+menu to stop the application and every backend process that it owns.
 
 To link an account, open WhatsApp on the phone and choose **Settings → Linked
 devices → Link a device**, then scan the QR code. Phone-code pairing accepts an
@@ -64,8 +65,9 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - image copy/paste, native media preview, downloads, and cached avatars
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
-- freedesktop notifications, light/dark/system appearance, RTL text, selectable
-  message text, clickable links, and accessible controls
+- native system notifications and a tray/status icon, light/dark/system
+  appearance, RTL text, selectable message text, clickable links, and
+  accessible controls
 - Flatpak, Debian, RPM, and AppImage packaging definitions
 
 Call records may be displayed when WhatsApp supplies them, but starting voice
@@ -91,7 +93,8 @@ or video calls is not supported.
 - Go 1.26 or newer; an older Go installation with `GOTOOLCHAIN=auto` can fetch
   the required toolchain
 - CMake 3.22 or newer and a C++20 compiler
-- Qt 6.5 or newer: Core, Gui, Quick, Quick Controls 2, Network, and Multimedia
+- Qt 6.5 or newer: Core, Gui, Widgets, Quick, Quick Controls 2, Network, and
+  Multimedia
 - KDE Frameworks 6 Kirigami
 
 Check native dependencies without changing the system:

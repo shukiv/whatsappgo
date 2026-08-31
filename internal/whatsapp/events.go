@@ -410,6 +410,11 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 			notifyTitle = displayJID(msg.ChatJID)
 		}
 		if !muted {
+			c.emit(gateway.Event{Name: "notification.received", Data: map[string]string{
+				"chat_jid": msg.ChatJID,
+				"title":    notifyTitle,
+				"body":     notificationBody(msg, evt.Info.IsGroup),
+			}})
 			go c.notifier.Notify(context.Background(), msg.ChatJID, notifyTitle, notificationBody(msg, evt.Info.IsGroup))
 		}
 	}

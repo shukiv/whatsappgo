@@ -7,5 +7,6 @@ Icon=org.whatsappgo.Desktop
 Terminal=false
 Categories=Network;InstantMessaging;Chat;
 StartupNotify=true
+X-GNOME-UsesNotifications=true
 DBusActivatable=false
 Keywords=WhatsApp;Chat;Messages;

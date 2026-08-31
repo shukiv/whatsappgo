@@ -13,8 +13,8 @@ The desktop application and its Go backend are installed together. Start only
 - Go 1.26 or newer
 - CMake 3.22 or newer
 - a C++20 compiler and `pkg-config`
-- Qt 6.5 or newer: Base, Declarative/Quick, Quick Controls, Network, and
-  Multimedia
+- Qt 6.5 or newer: Base (including Widgets), Declarative/Quick, Quick Controls,
+  Network, and Multimedia
 - KDE Frameworks 6 Kirigami
 
 If an older Go installation supports toolchain selection, leave
@@ -101,6 +101,15 @@ sudo cmake --install desktop/build
 ```
 
 Then run `whatsappgo` or select WhatsAppGo in the application menu.
+
+### GNOME top-bar icon
+
+WhatsAppGo registers a standard Linux system-tray/status icon. GNOME Shell does
+not display status icons by itself; enable a StatusNotifier/AppIndicator shell
+extension if your GNOME installation does not already provide one. Other
+desktops with a standard system tray normally show the icon without extra
+configuration. The application continues to use the desktop notification
+service or portal when no tray host is available.
 
 ## First start
 

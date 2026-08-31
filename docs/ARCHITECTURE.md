@@ -40,7 +40,8 @@ but normal packages do not install or require systemd user units.
 - renders virtualized chat/message lists and native controls
 - keeps only visible/paged message data in memory
 - sends typed RPC requests and consumes live events
-- manages account tabs, theme preference, clipboard, and file dialogs
+- manages account tabs, theme preference, clipboard, file dialogs, system tray,
+  and interactive desktop notifications
 
 ### Backend
 
@@ -49,7 +50,8 @@ but normal packages do not install or require systemd user units.
 - imports history and app-state records
 - persists messages before emitting UI events
 - extracts the preview picture embedded in each media message
-- uploads/downloads media and sends desktop notifications
+- uploads/downloads media and emits notification events; it uses the desktop
+  notification service or portal when no desktop tray host is available
 - exposes a small local RPC API; it does not expose HTTP or a network port
 
 ## Account isolation
@@ -176,7 +178,7 @@ Incoming message:
 
 ```text
 WhatsApp → whatsmeow event → normalize identity/model → SQLite transaction
-         → media cache/notification → RPC event → QML model → message bubble
+         → media cache/notification event → RPC → tray/QML message bubble
 ```
 
 Outgoing message:

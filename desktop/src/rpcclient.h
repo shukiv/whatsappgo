@@ -42,7 +42,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
 
 public:
-    explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
+    explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), bool desktopNotifications = false, QObject *parent = nullptr);
     ~RpcClient() override;
 
     bool daemonConnected() const;
@@ -131,6 +131,7 @@ signals:
     void clipboardChanged();
     void composerLinkPreviewChanged();
     void noticeOccurred(const QString &message);
+    void notificationRequested(const QString &chatJid, const QString &title, const QString &body);
     // A message's file is cached and can be played or opened.
     void mediaReady(const QString &messageId, const QString &path);
 
@@ -177,6 +178,7 @@ private:
     QString m_profile = QStringLiteral("default");
     QStringList m_profiles{QStringLiteral("default")};
     bool m_busy = false;
+    bool m_desktopNotifications = false;
     QHash<QString, QProcess *> m_ownedBackends;
     bool m_shuttingDown = false;
     QString m_initialChat;

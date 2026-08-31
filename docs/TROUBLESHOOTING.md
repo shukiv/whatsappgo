@@ -116,11 +116,21 @@ a **Download** action.
 
 ## Clicking a notification does not open the conversation
 
-The backend only launches a `whatsappgo` that is installed next to it and that
-no other account can replace. In a development tree whose directory is shared
-with another user, notification actions are disabled on purpose and the backend
-logs the reason. Installed packages place both programs in a root-owned
-directory, where the action works normally.
+When the system tray is available, the desktop owns notifications and clicking
+one reopens its conversation directly. Without a tray, the backend uses the
+desktop notification service or portal. A click first activates the running
+WhatsAppGo instance. If no instance is listening, it can launch only a
+`whatsappgo` installed next to the backend that no other account can replace.
+If neither activation route is safe, the backend logs the reason and does not
+attach an action to the notification.
+
+## The WhatsAppGo icon is missing from the GNOME top bar
+
+GNOME Shell requires a StatusNotifier/AppIndicator extension to display tray
+icons. Enable that extension and restart WhatsAppGo. The icon should then offer
+connection status, **Open/Hide**, and **Quit WhatsAppGo**. If the desktop exposes
+no tray host, WhatsAppGo intentionally quits when its last window closes and
+falls back to the desktop notification service or portal.
 
 ## A voice note or video opens a web browser
 
