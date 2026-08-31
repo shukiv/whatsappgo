@@ -3,6 +3,8 @@ package whatsapp
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"math"
 	"mime"
 	"os"
@@ -80,6 +82,8 @@ func (c *Client) handleEvent(raw any) {
 		c.handleMessage(evt)
 	case *waEvents.Receipt:
 		c.handleReceipt(evt)
+	case *waEvents.MediaRetry:
+		c.handleMediaRetry(evt)
 	case *waEvents.ChatPresence:
 		c.emit(gateway.Event{Name: "chat.presence", Data: map[string]any{"chat_jid": evt.Chat.String(), "sender_jid": evt.Sender.String(), "state": string(evt.State), "media": string(evt.Media)}})
 	case *waEvents.Presence:
@@ -410,7 +414,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		}
 	}
 	if downloadable := downloadableFromMessage(evt.Message); downloadable != nil && !evt.IsViewOnce {
-		go c.cacheMedia(msg, downloadable)
+		go c.cacheMedia(msg, downloadable, evt.Message)
 	}
 }
 
@@ -589,8 +593,8 @@ func (c *Client) rememberMediaPayload(msg model.Message, raw *waE2E.Message) {
 	}
 }
 
-func (c *Client) cacheMedia(msg model.Message, media whatsmeow.DownloadableMessage) {
-	_, _ = c.downloadMedia(context.Background(), msg, media)
+func (c *Client) cacheMedia(msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message) {
+	_, _ = c.downloadMedia(context.Background(), msg, media, raw)
 }
 
 // cachePath is where a message's file is materialised for the desktop to read.
@@ -598,7 +602,7 @@ func (c *Client) cachePath(msg model.Message) string {
 	return filepath.Join(c.mediaDir, msg.Kind, safeName(msg.ChatJID+"-"+msg.ID)+extensionForMIME(msg.MediaMIME))
 }
 
-func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage) (model.Message, error) {
+func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message) (model.Message, error) {
 	dir := filepath.Join(c.mediaDir, msg.Kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return model.Message{}, err
@@ -616,8 +620,47 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 			os.Remove(tmpName)
 		}
 	}()
-	if err := c.wa.DownloadToFile(ctx, media, tmp); err != nil {
-		return model.Message{}, err
+	download := c.downloadToFile
+	if download == nil {
+		download = c.wa.DownloadToFile
+	}
+	if err := download(ctx, media, tmp); err != nil {
+		if raw == nil || !isExpiredMediaDownload(err) {
+			return model.Message{}, err
+		}
+		requestPath := c.requestMediaRetryPath
+		if requestPath == nil {
+			requestPath = c.awaitMediaRetryPath
+		}
+		freshPath, retryErr := requestPath(ctx, msg, media)
+		if retryErr != nil {
+			return model.Message{}, fmt.Errorf("refresh expired media: %w", retryErr)
+		}
+		if !setMediaDirectPath(raw, freshPath) {
+			return model.Message{}, errors.New("refresh expired media: unsupported message type")
+		}
+		payload, marshalErr := proto.Marshal(raw)
+		if marshalErr != nil {
+			return model.Message{}, fmt.Errorf("save refreshed media path: %w", marshalErr)
+		}
+		if saveErr := c.store.SaveMediaPayload(ctx, msg.ChatJID, msg.ID, payload); saveErr != nil {
+			return model.Message{}, fmt.Errorf("save refreshed media path: %w", saveErr)
+		}
+		if resetErr := tmp.Truncate(0); resetErr != nil {
+			return model.Message{}, resetErr
+		}
+		if _, resetErr := tmp.Seek(0, io.SeekStart); resetErr != nil {
+			return model.Message{}, resetErr
+		}
+		downloadFresh := c.downloadWithPathToFile
+		if downloadFresh == nil {
+			downloadFresh = func(ctx context.Context, directPath string, media whatsmeow.DownloadableMessage, file whatsmeow.File) error {
+				return c.wa.DownloadMediaWithPathToFile(ctx, directPath, media.GetFileEncSHA256(), media.GetFileSHA256(), media.GetMediaKey(), whatsmeow.GetMediaType(media), "", false, file)
+			}
+		}
+		if retryErr := downloadFresh(ctx, freshPath, media, tmp); retryErr != nil {
+			return model.Message{}, retryErr
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		return model.Message{}, err

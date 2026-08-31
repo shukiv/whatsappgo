@@ -54,6 +54,13 @@ type Client struct {
 	closed             bool
 	historyRequests    map[string]time.Time
 	resolveLinkPreview func(context.Context, string) (model.LinkPreview, error)
+	mediaRetries       map[types.MessageID]*mediaRetryWaiter
+
+	// These hooks keep the expired-media recovery path deterministic in tests.
+	// Production clients leave them nil and use the whatsmeow methods below.
+	downloadToFile         func(context.Context, whatsmeow.DownloadableMessage, whatsmeow.File) error
+	requestMediaRetryPath  func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error)
+	downloadWithPathToFile func(context.Context, string, whatsmeow.DownloadableMessage, whatsmeow.File) error
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
@@ -79,7 +86,7 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media 
 	// Required for the one-time call-history recovery sync. Without this,
 	// whatsmeow intentionally suppresses generic app-state events on snapshots.
 	wa.EmitAppStateEventsOnFullSync = true
-	c := &Client{wa: wa, container: container, store: st, media: media, notifier: notifier, mediaDir: mediaDir, baseCtx: ctx, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time), resolveLinkPreview: linkpreview.Resolve}
+	c := &Client{wa: wa, container: container, store: st, media: media, notifier: notifier, mediaDir: mediaDir, baseCtx: ctx, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time), mediaRetries: make(map[types.MessageID]*mediaRetryWaiter), resolveLinkPreview: linkpreview.Resolve}
 	c.status = model.ConnectionStatus{State: "disconnected", LoggedIn: wa.Store.ID != nil, LastChange: model.NowMillis()}
 	if wa.Store.ID != nil {
 		c.status.UserJID = wa.Store.ID.String()
@@ -377,7 +384,7 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 		if downloadable == nil {
 			return model.Message{}, errors.New("stored message does not contain downloadable media")
 		}
-		return c.downloadMedia(ctx, msg, downloadable)
+		return c.downloadMedia(ctx, msg, downloadable, &raw)
 	}
 	chat, err := types.ParseJID(chatJID)
 	if err != nil {
@@ -779,6 +786,11 @@ func (c *Client) Close() error {
 		return nil
 	}
 	c.closed = true
+	for id, waiter := range c.mediaRetries {
+		delete(c.mediaRetries, id)
+		waiter.err = errors.New("WhatsApp client closed while refreshing media")
+		close(waiter.done)
+	}
 	c.mu.Unlock()
 	c.wa.Disconnect()
 	return c.container.Close()
