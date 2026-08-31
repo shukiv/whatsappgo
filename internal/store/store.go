@@ -158,7 +158,45 @@ CREATE TABLE IF NOT EXISTS metadata (
 			return err
 		}
 	}
-	return nil
+	return s.repairHistoricalUnreadReplay(ctx)
+}
+
+const unreadReplayRepairMetadataKey = "unread_full_sync_repair_v1"
+
+// v5 of the chat-settings backfill treated historical markChatAsRead app-state
+// entries as the current unread list. WhatsApp replays the last explicit action
+// there, even if a chat was later read normally, so that migration could create
+// stale badges and synthetic read boundaries. Clear that derived cache once;
+// missed messages and receipts are replayed by WhatsApp after connection and
+// rebuild the live unread state.
+func (s *Store) repairHistoricalUnreadReplay(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var repaired, affected bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM metadata WHERE key=?)`, unreadReplayRepairMetadataKey).Scan(&repaired); err != nil {
+		return err
+	}
+	if repaired {
+		return tx.Commit()
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM metadata WHERE key='chat_settings_app_state_backfill_v5')`).Scan(&affected); err != nil {
+		return err
+	}
+	if affected {
+		if _, err := tx.ExecContext(ctx, `UPDATE chats SET unread_count=0,read_through_at=0`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET status='received' WHERE from_me=0 AND status IN ('read','played')`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?)`, unreadReplayRepairMetadataKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // packWaveform stores the amplitude bars compactly. Each bar is a percentage,

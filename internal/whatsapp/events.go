@@ -101,16 +101,16 @@ func (c *Client) handleEvent(raw any) {
 		}
 	case *waEvents.MarkChatAsRead:
 		if evt.Action != nil {
+			// A full app-state snapshot contains the last explicit
+			// mark-read/mark-unread action for a chat, even when the chat was
+			// subsequently read normally. Replaying those old actions as current
+			// state resurrects unread badges. Current cross-device changes arrive
+			// as live app-state events or receipts (including offline replay).
+			if evt.FromFullSync {
+				return
+			}
 			if evt.Action.GetRead() {
-				if evt.FromFullSync {
-					readThrough := evt.Timestamp.UnixMilli()
-					if messageRange := evt.Action.GetMessageRange(); messageRange != nil && messageRange.GetLastMessageTimestamp() > 0 {
-						readThrough = messageRange.GetLastMessageTimestamp() * 1000
-					}
-					_ = c.store.MarkChatReadThrough(context.Background(), evt.JID.String(), readThrough)
-				} else {
-					_ = c.store.MarkChatRead(context.Background(), evt.JID.String())
-				}
+				_ = c.store.MarkChatRead(context.Background(), evt.JID.String())
 			} else {
 				_ = c.store.MarkChatUnread(context.Background(), evt.JID.String())
 			}
@@ -138,7 +138,7 @@ func (c *Client) handleEvent(raw any) {
 }
 
 const callLogBackfillMetadataKey = "call_logs_app_state_backfill_v1"
-const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v5"
+const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v6"
 
 func (c *Client) backfillCallLogs() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

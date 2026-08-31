@@ -125,7 +125,7 @@ func TestMarkChatAsReadAppStateEventUpdatesUnreadCount(t *testing.T) {
 	}
 }
 
-func TestHistoricalReadReplayKeepsMessagesAfterReadRangeUnread(t *testing.T) {
+func TestFullAppStateReplayDoesNotReplaceCurrentUnreadState(t *testing.T) {
 	st, err := localstore.OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -142,21 +142,23 @@ func TestHistoricalReadReplayKeepsMessagesAfterReadRangeUnread(t *testing.T) {
 		}
 	}
 	c := &Client{store: st}
-	c.handleEvent(&waEvents.MarkChatAsRead{
-		JID:          jid,
-		Timestamp:    time.Unix(10, 0),
-		FromFullSync: true,
-		Action: &waSyncAction.MarkChatAsReadAction{
-			Read:         proto.Bool(true),
-			MessageRange: &waSyncAction.SyncActionMessageRange{LastMessageTimestamp: proto.Int64(1)},
-		},
-	})
+	for _, read := range []bool{true, false} {
+		c.handleEvent(&waEvents.MarkChatAsRead{
+			JID:          jid,
+			Timestamp:    time.Unix(10, 0),
+			FromFullSync: true,
+			Action: &waSyncAction.MarkChatAsReadAction{
+				Read:         proto.Bool(read),
+				MessageRange: &waSyncAction.SyncActionMessageRange{LastMessageTimestamp: proto.Int64(1)},
+			},
+		})
+	}
 	chat, err := st.GetChat(ctx, jid.String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if chat.UnreadCount != 1 {
-		t.Fatalf("historical read range left %d unread messages, want 1", chat.UnreadCount)
+	if chat.UnreadCount != 2 {
+		t.Fatalf("historical app-state replay changed unread count to %d, want 2", chat.UnreadCount)
 	}
 }
 

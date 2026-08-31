@@ -512,6 +512,70 @@ func TestMarkChatReadClearsSnapshotWithoutLocalMessages(t *testing.T) {
 	}
 }
 
+func TestRepairHistoricalUnreadReplayRunsOnceForAffectedProfiles(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, unreadReplayRepairMetadataKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMetadata(ctx, "chat_settings_app_state_backfill_v5", "done"); err != nil {
+		t.Fatal(err)
+	}
+	for _, msg := range []model.Message{
+		{ID: "incoming", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "hello", Status: "read"},
+		{ID: "outgoing", ChatJID: jid, Timestamp: 200, Kind: "text", Body: "reply", FromMe: true, Status: "read"},
+	} {
+		if err := s.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 200, UnreadCount: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE chats SET read_through_at=100 WHERE jid=?`, jid); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repairHistoricalUnreadReplay(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("repair left unread count %d", chat.UnreadCount)
+	}
+	var readThrough int64
+	var incomingStatus, outgoingStatus string
+	if err := s.db.QueryRowContext(ctx, `SELECT read_through_at FROM chats WHERE jid=?`, jid).Scan(&readThrough); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM messages WHERE chat_jid=? AND id='incoming'`, jid).Scan(&incomingStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM messages WHERE chat_jid=? AND id='outgoing'`, jid).Scan(&outgoingStatus); err != nil {
+		t.Fatal(err)
+	}
+	if readThrough != 0 || incomingStatus != "received" || outgoingStatus != "read" {
+		t.Fatalf("unexpected repaired state: boundary=%d incoming=%q outgoing=%q", readThrough, incomingStatus, outgoingStatus)
+	}
+
+	if err := s.MarkChatUnread(ctx, jid); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repairHistoricalUnreadReplay(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chat, err = s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("second repair cleared live unread count: %d", chat.UnreadCount)
+	}
+}
+
 func TestIncomingPushNameDoesNotReplaceResolvedContactName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
