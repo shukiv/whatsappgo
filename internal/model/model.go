@@ -49,6 +49,26 @@ type Message struct {
 	MediaThumbnail string     `json:"media_thumbnail,omitempty"`
 	MediaSize      int64      `json:"media_size,omitempty"`
 	Reactions      []Reaction `json:"reactions,omitempty"`
+
+	// Voice notes carry the amplitude bars their sender recorded, plus the
+	// length of the recording, so the bubble can draw a real waveform.
+	MediaDuration int   `json:"media_duration,omitempty"`
+	AudioWaveform []int `json:"audio_waveform,omitempty"`
+
+	// A shared contact and a shared place, as the sender wrote them.
+	ContactName  string  `json:"contact_name,omitempty"`
+	ContactPhone string  `json:"contact_phone,omitempty"`
+	ContactCount int     `json:"contact_count,omitempty"`
+	Latitude     float64 `json:"latitude,omitempty"`
+	Longitude    float64 `json:"longitude,omitempty"`
+
+	// Link preview, as supplied by the sender inside the message. WhatsApp
+	// resolves the page when the message is composed, so no page is fetched
+	// here and no request leaks to the sites people link to.
+	LinkURL         string `json:"link_url,omitempty"`
+	LinkTitle       string `json:"link_title,omitempty"`
+	LinkDescription string `json:"link_description,omitempty"`
+	LinkThumbnail   string `json:"link_thumbnail,omitempty"`
 }
 
 type Reaction struct {

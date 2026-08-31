@@ -13,6 +13,9 @@ Popup {
     padding: 0
     modal: false
     focus: true
+    // Nothing may paint outside the card. Without this the emoji grid drew
+    // past the rounded background and over the conversation behind it.
+    clip: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     property int selectedCategory: 0
@@ -168,7 +171,6 @@ Popup {
         color: Theme.surfaceRaised
         radius: 12
         border.color: Theme.border
-        layer.enabled: true
     }
 
     contentItem: ColumnLayout {

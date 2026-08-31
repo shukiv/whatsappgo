@@ -38,6 +38,10 @@ type Gateway interface {
 	FetchAvatar(context.Context, string) (string, error)
 	MarkRead(context.Context, string, string, []string, int64) error
 	SetTyping(context.Context, string, bool) error
+	SetChatPinned(context.Context, string, bool) error
+	SetChatMuted(context.Context, string, bool) error
+	SetChatArchived(context.Context, string, bool) error
+	SetChatRead(context.Context, string, bool) error
 	ListChannels(context.Context) ([]model.Channel, error)
 	ListCommunities(context.Context) ([]model.Community, error)
 	Subscribe(func(Event)) (unsubscribe func())
@@ -79,6 +83,10 @@ func (Unavailable) MarkRead(context.Context, string, string, []string, int64) er
 	return ErrUnavailable
 }
 func (Unavailable) SetTyping(context.Context, string, bool) error         { return ErrUnavailable }
+func (Unavailable) SetChatPinned(context.Context, string, bool) error     { return ErrUnavailable }
+func (Unavailable) SetChatMuted(context.Context, string, bool) error      { return ErrUnavailable }
+func (Unavailable) SetChatArchived(context.Context, string, bool) error   { return ErrUnavailable }
+func (Unavailable) SetChatRead(context.Context, string, bool) error       { return ErrUnavailable }
 func (Unavailable) ListChannels(context.Context) ([]model.Channel, error) { return nil, ErrUnavailable }
 func (Unavailable) ListCommunities(context.Context) ([]model.Community, error) {
 	return nil, ErrUnavailable

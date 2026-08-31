@@ -43,3 +43,21 @@ func TestResolveProfileRejectsUnsafeName(t *testing.T) {
 		t.Fatal("expected unsafe profile to be rejected")
 	}
 }
+
+func TestResolveProfileSeparatesAttachmentDatabase(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/tmp/wago-data")
+	t.Setenv("XDG_CACHE_HOME", "/tmp/wago-cache")
+	t.Setenv("XDG_RUNTIME_DIR", "/tmp/wago-runtime")
+	p, err := ResolveProfile("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Attachments are large; keeping them out of messages.db protects the
+	// message index that the user guide tells people to back up.
+	if got, want := p.MediaDB, filepath.Join("/tmp/wago-data", "whatsappgo", "profiles", "work", "media.db"); got != want {
+		t.Fatalf("media db=%q want %q", got, want)
+	}
+	if p.MediaDB == p.MessageDB {
+		t.Fatal("attachments share the message database")
+	}
+}

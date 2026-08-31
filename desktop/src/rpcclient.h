@@ -1,5 +1,8 @@
 #pragma once
 
+#include "messagemodel.h"
+
+#include <QAbstractItemModel>
 #include <QHash>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -21,7 +24,9 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY statusChanged)
     Q_PROPERTY(QVariantMap status READ status NOTIFY statusChanged)
     Q_PROPERTY(QVariantList chats READ chats NOTIFY chatsChanged)
-    Q_PROPERTY(QVariantList messages READ messages NOTIFY messagesChanged)
+    Q_PROPERTY(QVariantList archivedChats READ archivedChats NOTIFY archivedChatsChanged)
+    Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChatsChanged)
+    Q_PROPERTY(QAbstractItemModel *messages READ messages CONSTANT)
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
     Q_PROPERTY(QString pairingQr READ pairingQr NOTIFY pairingQrChanged)
     Q_PROPERTY(QString pairingCode READ pairingCode NOTIFY pairingCodeChanged)
@@ -43,7 +48,9 @@ public:
     bool loggedIn() const;
     QVariantMap status() const { return m_status; }
     QVariantList chats() const { return m_chats; }
-    QVariantList messages() const { return m_messages; }
+    QVariantList archivedChats() const { return m_archivedChats; }
+    int archivedCount() const { return m_archivedCount; }
+    QAbstractItemModel *messages() { return &m_messages; }
     QVariantMap selectedChat() const { return m_selectedChat; }
     QString pairingQr() const { return m_pairingQr; }
     QString pairingCode() const { return m_pairingCode; }
@@ -60,6 +67,11 @@ public:
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshChats(const QString &query = {});
+    Q_INVOKABLE void refreshArchived();
+    Q_INVOKABLE void setChatPinned(const QString &jid, bool pinned);
+    Q_INVOKABLE void setChatMuted(const QString &jid, bool muted);
+    Q_INVOKABLE void setChatArchived(const QString &jid, bool archived);
+    Q_INVOKABLE void setChatRead(const QString &jid, bool read);
     Q_INVOKABLE void openChat(const QString &jid, const QString &title);
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void loadOlderMessages();
@@ -79,10 +91,16 @@ public:
     Q_INVOKABLE void searchMessages(const QString &query);
     Q_INVOKABLE void openFile(const QString &path);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
+    // Fetches a picture that has no preview, a few at a time.
+    Q_INVOKABLE void ensureMedia(const QString &messageId);
+    // The voice note that follows the given message, when the conversation
+    // continues with one.
+    Q_INVOKABLE QVariantMap nextAudioAfter(const QString &messageId) const;
     Q_INVOKABLE QString prepareClipboardImage();
     Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {});
     Q_INVOKABLE void discardClipboardImage(const QString &localUrl);
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
+    Q_INVOKABLE void copyText(const QString &text);
     Q_INVOKABLE void refreshStatuses();
     Q_INVOKABLE void refreshCalls();
     Q_INVOKABLE void refreshChannels();
@@ -92,7 +110,7 @@ signals:
     void daemonConnectedChanged();
     void statusChanged();
     void chatsChanged();
-    void messagesChanged();
+    void archivedChatsChanged();
     void selectedChatChanged();
     void pairingQrChanged();
     void pairingCodeChanged();
@@ -108,6 +126,8 @@ signals:
     void communitiesChanged();
     void clipboardChanged();
     void noticeOccurred(const QString &message);
+    // A message's file is cached and can be played or opened.
+    void mediaReady(const QString &messageId, const QString &path);
 
 private:
     using Callback = std::function<void(const QJsonValue &, const QJsonObject &)>;
@@ -120,6 +140,7 @@ private:
     void upsertMessage(const QVariantMap &message);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
+    void pumpMediaQueue();
     bool copyImageFile(const QString &path);
     QString clipboardDirectory() const;
     bool isClipboardFile(const QString &path) const;
@@ -134,7 +155,9 @@ private:
     QHash<QString, Callback> m_pending;
     QVariantMap m_status;
     QVariantList m_chats;
-    QVariantList m_messages;
+    QVariantList m_archivedChats;
+    int m_archivedCount = 0;
+    MessageListModel m_messages;
     QVariantMap m_selectedChat;
     QVariantList m_searchResults;
     QVariantList m_statusUpdates;
@@ -155,4 +178,7 @@ private:
     QSet<QString> m_requestedHistoryBoundaries;
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
+    QSet<QString> m_requestedMedia;
+    QStringList m_mediaQueue;
+    int m_mediaInFlight = 0;
 };

@@ -49,6 +49,12 @@ international number without `+`, spaces, or a leading zero.
 - SQLite-backed history with 50-message pagination and message search
 - phone-number/LID identity consolidation so one contact has one history
 - inline photo, video, and sticker previews before the full file is fetched
+- voice notes with the sender's waveform that play in place and run on to the next
+- built-in audio and video playback; no browser or external player
+- link previews with the title, description, and picture the sender's client resolved
+- shared contacts and places as cards, with a phone number to message and a map
+- attachments fetched automatically for the conversation on screen
+- attachments stored in a database, so clearing the media cache loses nothing
 - image copy/paste, native media preview, downloads, and cached avatars
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
@@ -122,6 +128,7 @@ Each account has isolated state:
 | --- | --- | --- |
 | Device keys/session | `$XDG_DATA_HOME/whatsappgo/device.db` | `$XDG_DATA_HOME/whatsappgo/profiles/<name>/device.db` |
 | Chats/messages | `$XDG_DATA_HOME/whatsappgo/messages.db` | `$XDG_DATA_HOME/whatsappgo/profiles/<name>/messages.db` |
+| Attachments | `$XDG_DATA_HOME/whatsappgo/media.db` | `$XDG_DATA_HOME/whatsappgo/profiles/<name>/media.db` |
 | Media cache | `$XDG_CACHE_HOME/whatsappgo/media/` | `$XDG_CACHE_HOME/whatsappgo/profiles/<name>/media/` |
 | Runtime socket | `$XDG_RUNTIME_DIR/whatsappgo/whatsappd.sock` | `$XDG_RUNTIME_DIR/whatsappgo/whatsappd-<name>.sock` |
 
@@ -139,6 +146,7 @@ Unix permissions but no additional application-level encryption.
 cmd/whatsappd/       internal Go backend executable
 internal/whatsapp/  whatsmeow adapter and event handling
 internal/store/     SQLite message index and migrations
+internal/mediastore/ SQLite attachment storage
 internal/rpc/       local JSON-lines RPC transport
 internal/service/   application operations exposed to the desktop
 desktop/            Qt/Kirigami application and UI tests

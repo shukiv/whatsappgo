@@ -121,25 +121,81 @@ CREATE TABLE IF NOT EXISTS metadata (
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	// Existing profiles predate chat filters. Keep migrations additive so their
-	// message history and device identity remain untouched.
-	return s.ensureChatFavoriteColumn(ctx)
+	// Existing profiles predate chat filters and link previews. Keep migrations
+	// additive so their message history and device identity remain untouched.
+	if err := s.ensureColumn(ctx, "chats", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail"} {
+		if err := s.ensureColumn(ctx, "messages", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	if err := s.ensureColumn(ctx, "messages", "media_duration", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "messages", "audio_waveform", "BLOB"); err != nil {
+		return err
+	}
+	for _, column := range []string{"contact_name", "contact_phone"} {
+		if err := s.ensureColumn(ctx, "messages", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	if err := s.ensureColumn(ctx, "messages", "contact_count", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	for _, column := range []string{"latitude", "longitude"} {
+		if err := s.ensureColumn(ctx, "messages", column, "REAL NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (s *Store) ensureChatFavoriteColumn(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(chats)`)
+// packWaveform stores the amplitude bars compactly. Each bar is a percentage,
+// so one byte each is enough.
+func packWaveform(bars []int) []byte {
+	if len(bars) == 0 {
+		return nil
+	}
+	packed := make([]byte, 0, len(bars))
+	for _, bar := range bars {
+		if bar < 0 {
+			bar = 0
+		}
+		if bar > 100 {
+			bar = 100
+		}
+		packed = append(packed, byte(bar))
+	}
+	return packed
+}
+
+func unpackWaveform(packed []byte) []int {
+	if len(packed) == 0 {
+		return nil
+	}
+	bars := make([]int, 0, len(packed))
+	for _, value := range packed {
+		bars = append(bars, int(value))
+	}
+	return bars
+}
+
+// ensureColumn adds a column when an older profile database lacks it.
+func (s *Store) ensureColumn(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, dataType string
-		var defaultValue sql.NullString
-		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return err
 		}
-		if name == "favorite" {
+		if name == column {
 			return nil
 		}
 	}
@@ -149,7 +205,8 @@ func (s *Store) ensureChatFavoriteColumn(ctx context.Context) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `ALTER TABLE chats ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`)
+	// The table and column names are constants in this file, never user input.
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition)
 	return err
 }
 
@@ -264,8 +321,8 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messages
- (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(chat_jid,id) DO UPDATE SET
   sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,timestamp=excluded.timestamp,
 	  kind=excluded.kind,body=excluded.body,from_me=excluded.from_me,
@@ -281,9 +338,22 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
   -- already downloaded file or an extracted preview.
   media_path=CASE WHEN excluded.media_path<>'' THEN excluded.media_path ELSE messages.media_path END,
   media_thumbnail=CASE WHEN excluded.media_thumbnail<>'' THEN excluded.media_thumbnail ELSE messages.media_thumbnail END,
-  media_size=excluded.media_size`,
+  media_size=excluded.media_size,
+  link_url=CASE WHEN excluded.link_url<>'' THEN excluded.link_url ELSE messages.link_url END,
+  link_title=CASE WHEN excluded.link_url<>'' THEN excluded.link_title ELSE messages.link_title END,
+  link_description=CASE WHEN excluded.link_url<>'' THEN excluded.link_description ELSE messages.link_description END,
+  link_thumbnail=CASE WHEN excluded.link_thumbnail<>'' THEN excluded.link_thumbnail ELSE messages.link_thumbnail END,
+  media_duration=CASE WHEN excluded.media_duration>0 THEN excluded.media_duration ELSE messages.media_duration END,
+  audio_waveform=CASE WHEN excluded.audio_waveform IS NOT NULL THEN excluded.audio_waveform ELSE messages.audio_waveform END,
+  contact_name=CASE WHEN excluded.contact_name<>'' THEN excluded.contact_name ELSE messages.contact_name END,
+  contact_phone=CASE WHEN excluded.contact_phone<>'' THEN excluded.contact_phone ELSE messages.contact_phone END,
+  contact_count=MAX(messages.contact_count,excluded.contact_count),
+  latitude=CASE WHEN excluded.latitude<>0 THEN excluded.latitude ELSE messages.latitude END,
+  longitude=CASE WHEN excluded.longitude<>0 THEN excluded.longitude ELSE messages.longitude END`,
 		msg.ID, msg.ChatJID, msg.SenderJID, msg.SenderName, msg.Timestamp, msg.Kind, msg.Body, msg.FromMe, msg.Status,
-		msg.ReplyTo, msg.Edited, msg.Revoked, msg.MediaMIME, msg.MediaName, msg.MediaPath, msg.MediaThumbnail, msg.MediaSize)
+		msg.ReplyTo, msg.Edited, msg.Revoked, msg.MediaMIME, msg.MediaName, msg.MediaPath, msg.MediaThumbnail, msg.MediaSize,
+		msg.LinkURL, msg.LinkTitle, msg.LinkDescription, msg.LinkThumbnail, msg.MediaDuration, packWaveform(msg.AudioWaveform),
+		msg.ContactName, msg.ContactPhone, msg.ContactCount, msg.Latitude, msg.Longitude)
 	if err != nil {
 		return err
 	}
@@ -291,14 +361,23 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 }
 
 func (s *Store) ListChats(ctx context.Context, limit, offset int, query string) ([]model.Chat, error) {
+	return s.listChats(ctx, limit, offset, query, false)
+}
+
+// ListArchivedChats returns the conversations that were put away.
+func (s *Store) ListArchivedChats(ctx context.Context, limit, offset int, query string) ([]model.Chat, error) {
+	return s.listChats(ctx, limit, offset, query, true)
+}
+
+func (s *Store) listChats(ctx context.Context, limit, offset int, query string, archived bool) ([]model.Chat, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	args := []any{}
-	where := `WHERE c.archived=0
+	args := []any{archived}
+	where := `WHERE c.archived=? 
  AND c.jid NOT LIKE '%@broadcast'
 	AND c.jid NOT LIKE '%@newsletter'
 	AND (m.id IS NOT NULL OR c.pinned=1 OR c.favorite=1)`
@@ -308,7 +387,16 @@ func (s *Store) ListChats(ctx context.Context, limit, offset int, query string) 
 		args = append(args, q, q)
 	}
 	args = append(args, limit, offset)
-	rows, err := s.db.QueryContext(ctx, `SELECT c.jid,c.title,c.avatar_path,COALESCE(m.id,''),COALESCE(m.timestamp,c.last_message_at),
+	// A conversation that was only ever synced from history often has no name:
+	// the address book never knew the number, and no live message has set one.
+	// The name the other side publishes is far better than a placeholder built
+	// from their identifier, so it is used when nothing better is stored.
+	rows, err := s.db.QueryContext(ctx, `SELECT c.jid,
+ CASE WHEN TRIM(c.title)<>'' AND c.title<>substr(c.jid,1,instr(c.jid,'@')-1) THEN c.title
+      ELSE COALESCE((SELECT TRIM(s.sender_name) FROM messages s
+                     WHERE s.chat_jid=c.jid AND s.from_me=0 AND TRIM(s.sender_name)<>''
+                     ORDER BY s.timestamp DESC LIMIT 1), c.title) END,
+ c.avatar_path,COALESCE(m.id,''),COALESCE(m.timestamp,c.last_message_at),
  CASE
 	  WHEN m.id IS NULL THEN ''
   WHEN m.revoked=1 THEN 'Message deleted'
@@ -324,7 +412,7 @@ func (s *Store) ListChats(ctx context.Context, limit, offset int, query string) 
 	FROM chats c
 	LEFT JOIN messages m ON m.chat_jid=c.jid AND m.id=(
   SELECT latest.id FROM messages latest
-  WHERE latest.chat_jid=c.jid AND latest.kind NOT IN ('unknown','system')
+  WHERE latest.chat_jid=c.jid AND latest.kind NOT IN ('unknown','system','')
   ORDER BY latest.timestamp DESC,latest.id DESC LIMIT 1
  ) `+where+`
 	ORDER BY c.pinned DESC,COALESCE(m.timestamp,c.last_message_at) DESC LIMIT ? OFFSET ?`, args...)
@@ -365,9 +453,11 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
  m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
+ m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
+ m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,
  COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0)
  FROM messages m LEFT JOIN messages q ON q.chat_jid=m.chat_jid AND q.id=m.reply_to
- WHERE m.chat_jid=? AND m.timestamp<? AND m.kind<>'unknown' ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, limit+1)
+ WHERE m.chat_jid=? AND m.timestamp<? AND m.kind NOT IN ('unknown','') ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, limit+1)
 	if err != nil {
 		return model.MessagePage{}, err
 	}
@@ -376,11 +466,15 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 	for rows.Next() {
 		var m model.Message
 		var quotedBody, quotedKind string
+		var waveform []byte
 		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe,
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize,
+			&m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
+			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
 			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe); err != nil {
 			return model.MessagePage{}, err
 		}
+		m.AudioWaveform = unpackWaveform(waveform)
 		if m.ReplyTo != "" {
 			m.ReplyPreview = preview(model.Message{Kind: quotedKind, Body: quotedBody})
 		}
@@ -412,9 +506,14 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (model.Message, error) {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	var m model.Message
+	var waveform []byte
 	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
- reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size
- FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize)
+ reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
+ link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
+ contact_name,contact_phone,contact_count,latitude,longitude
+ FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
+		&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude)
+	m.AudioWaveform = unpackWaveform(waveform)
 	return m, err
 }
 
@@ -423,10 +522,29 @@ func (s *Store) OldestMessage(ctx context.Context, chatJID string) (model.Messag
 	var m model.Message
 	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
  reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size
- FROM messages WHERE chat_jid=? AND kind<>'unknown' ORDER BY timestamp ASC,id ASC LIMIT 1`, chatJID).Scan(
+ FROM messages WHERE chat_jid=? AND kind NOT IN ('unknown','') ORDER BY timestamp ASC,id ASC LIMIT 1`, chatJID).Scan(
 		&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status,
 		&m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize)
 	return m, err
+}
+
+// NewestMessage is the anchor WhatsApp wants when a conversation is archived
+// or marked read: its app-state patches carry the last message's key.
+func (s *Store) NewestMessage(ctx context.Context, chatJID string) (model.Message, error) {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	var m model.Message
+	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,timestamp,from_me
+ FROM messages WHERE chat_jid=? AND kind NOT IN ('unknown','') ORDER BY timestamp DESC,id DESC LIMIT 1`, chatJID).Scan(
+		&m.ID, &m.ChatJID, &m.SenderJID, &m.Timestamp, &m.FromMe)
+	return m, err
+}
+
+// ArchivedChatCount reports how many conversations are put away.
+func (s *Store) ArchivedChatCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM chats c WHERE c.archived=1
+ AND c.jid NOT LIKE '%@broadcast' AND c.jid NOT LIKE '%@newsletter'`).Scan(&count)
+	return count, err
 }
 
 func (s *Store) SaveMediaPayload(ctx context.Context, chatJID, messageID string, payload []byte) error {
@@ -478,6 +596,14 @@ const chatSnapshotUpsertSQL = chatIdentityUpsertSQL + `,
 // resolution do not know the current mute, pin, archive, or unread state, so
 // those settings are preserved on existing rows. Use ApplyChatSnapshot for
 // authoritative conversation state from WhatsApp.
+// MarkChatUnread puts one unread message back so the conversation shows as
+// unread, which is what "mark as unread" means in the interface.
+func (s *Store) MarkChatUnread(ctx context.Context, chatJID string) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET unread_count=MAX(unread_count,1) WHERE jid=?`, chatJID)
+	return err
+}
+
 func (s *Store) UpsertChat(ctx context.Context, chat model.Chat) error {
 	return s.upsertChat(ctx, chat, chatIdentityUpsertSQL)
 }
@@ -526,6 +652,26 @@ func (s *Store) UpdateChatPinned(ctx context.Context, jid string, pinned bool) e
 	jid = s.canonicalChatJID(ctx, jid)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,pinned) VALUES(?,?,?)
  ON CONFLICT(jid) DO UPDATE SET pinned=excluded.pinned`, jid, displayJID(jid), pinned)
+	return err
+}
+
+func (s *Store) UpdateChatMuted(ctx context.Context, jid string, mutedUntil int64) error {
+	if jid == "" {
+		return errors.New("chat jid is required")
+	}
+	jid = s.canonicalChatJID(ctx, jid)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,muted_until) VALUES(?,?,?)
+ ON CONFLICT(jid) DO UPDATE SET muted_until=excluded.muted_until`, jid, displayJID(jid), mutedUntil)
+	return err
+}
+
+func (s *Store) UpdateChatArchived(ctx context.Context, jid string, archived bool) error {
+	if jid == "" {
+		return errors.New("chat jid is required")
+	}
+	jid = s.canonicalChatJID(ctx, jid)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,archived) VALUES(?,?,?)
+ ON CONFLICT(jid) DO UPDATE SET archived=excluded.archived`, jid, displayJID(jid), archived)
 	return err
 }
 
@@ -782,6 +928,49 @@ func (s *Store) MessagesMissingThumbnails(ctx context.Context, after MediaCursor
 	for rows.Next() {
 		var item PendingThumbnail
 		if err := rows.Scan(&item.ChatJID, &item.MessageID, &item.Payload); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// MessageCursor marks how far a newest-first scan has progressed.
+type MessageCursor struct {
+	Timestamp int64
+	MessageID string
+}
+
+// PendingMedia is an attachment that has not been downloaded yet.
+type PendingMedia struct {
+	ChatJID   string
+	MessageID string
+	Timestamp int64
+	Kind      string
+	Size      int64
+}
+
+// MessagesMissingMedia returns attachments with no local file, newest first,
+// so the most useful ones are collected before the oldest.
+func (s *Store) MessagesMissingMedia(ctx context.Context, after MessageCursor, limit int) ([]PendingMedia, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if after.Timestamp <= 0 {
+		after.Timestamp = 1 << 62
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT chat_jid,id,timestamp,kind,media_size FROM messages
+ WHERE media_path='' AND kind IN ('image','video','audio','document','sticker')
+  AND (timestamp,id) < (?,?)
+ ORDER BY timestamp DESC,id DESC LIMIT ?`, after.Timestamp, after.MessageID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]PendingMedia, 0, limit)
+	for rows.Next() {
+		var item PendingMedia
+		if err := rows.Scan(&item.ChatJID, &item.MessageID, &item.Timestamp, &item.Kind, &item.Size); err != nil {
 			return nil, err
 		}
 		result = append(result, item)

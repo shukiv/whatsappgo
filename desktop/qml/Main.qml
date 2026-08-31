@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtMultimedia
 import QtCore
 import org.kde.kirigami as Kirigami
 import org.whatsappgo
@@ -34,6 +35,7 @@ Kirigami.ApplicationWindow {
     property string replyPreview: ""
     property string chatFilter: "all"
     property bool newChatOpen: false
+    property bool showArchived: false
     property string activeSection: {
         const allowed = ["chats", "status", "calls", "channels", "communities", "profile"]
         const args = Qt.application.arguments
@@ -150,6 +152,9 @@ Kirigami.ApplicationWindow {
             if (backend.daemonConnected && window.activeSection !== "chats")
                 window.showSection(window.activeSection)
         }
+        function onMediaReady(messageId, path) {
+            Playback.fileReady(messageId, path)
+        }
     }
     Timer { id: errorTimer; interval: 5000; onTriggered: window.transientError = "" }
     Timer { id: noticeTimer; interval: 3000; onTriggered: window.transientNotice = "" }
@@ -205,7 +210,7 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: Qt.resolvedUrl("icons/chats.svg")
                     iconTint: window.activeSection === "chats" ? Theme.text : Theme.icon
@@ -213,7 +218,7 @@ Kirigami.ApplicationWindow {
                     Accessible.checked: window.activeSection === "chats"
                     onClicked: window.showSection("chats")
                     background: Rectangle {
-                        radius: 16
+                        radius: 24
                         color: window.activeSection === "chats" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
                     }
                     Rectangle {
@@ -241,14 +246,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: "calls.svg"
                     iconTint: window.activeSection === "calls" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Calls")
                     onClicked: window.showSection("calls")
                     background: Rectangle {
-                        radius: 16
+                        radius: 24
                         color: window.activeSection === "calls" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -257,14 +262,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: "status.svg"
                     iconTint: window.activeSection === "status" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Status")
                     onClicked: window.showSection("status")
                     background: Rectangle {
-                        radius: 16
+                        radius: 24
                         color: window.activeSection === "status" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -273,14 +278,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: "channels.svg"
                     iconTint: window.activeSection === "channels" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Channels")
                     onClicked: window.showSection("channels")
                     background: Rectangle {
-                        radius: 16
+                        radius: 24
                         color: window.activeSection === "channels" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -289,14 +294,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: "communities.svg"
                     iconTint: window.activeSection === "communities" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Communities")
                     onClicked: window.showSection("communities")
                     background: Rectangle {
-                        radius: 16
+                        radius: 24
                         color: window.activeSection === "communities" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -305,24 +310,24 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: Qt.resolvedUrl("icons/search.svg")
                     Accessible.name: qsTr("Search chats")
 					onClicked: window.openChatSearch()
-                    background: Rectangle { radius: 16; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    background: Rectangle { radius: 24; color: parent.hovered ? Theme.hoverRow : "transparent" }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                 }
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: Qt.resolvedUrl("icons/new-chat.svg")
                     Accessible.name: qsTr("Start a new chat")
                     onClicked: window.openNewChat()
-                    background: Rectangle { radius: 16; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    background: Rectangle { radius: 24; color: parent.hovered ? Theme.hoverRow : "transparent" }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                 }
@@ -331,14 +336,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: "profile.svg"
                     iconTint: window.activeSection === "profile" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Profile")
                     onClicked: window.showSection("profile")
                     background: Rectangle {
-                        radius: 16
+                        radius: 24
                         color: window.activeSection === "profile" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -347,13 +352,13 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 56
+                    Layout.preferredWidth: 48
                     Layout.preferredHeight: 48
                     iconSource: Theme.dark ? Qt.resolvedUrl("icons/sun.svg") : Qt.resolvedUrl("icons/moon.svg")
                     iconSize: 21
                     Accessible.name: Theme.dark ? qsTr("Switch to light mode") : qsTr("Switch to dark mode")
                     onClicked: Theme.preferredMode = Theme.dark ? "light" : "dark"
-                    background: Rectangle { radius: 16; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    background: Rectangle { radius: 24; color: parent.hovered ? Theme.hoverRow : "transparent" }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                 }
@@ -581,10 +586,50 @@ Kirigami.ApplicationWindow {
                     }
                 }
 
+                // Conversations that were put away live behind this row, the
+                // way they do on WhatsApp Web.
+                ItemDelegate {
+                    id: archivedRow
+                    objectName: "archivedRow"
+                    Layout.fillWidth: true
+                    visible: backend.archivedCount > 0 || window.showArchived
+                    height: visible ? 54 : 0
+                    leftPadding: 12
+                    rightPadding: 12
+                    Accessible.name: window.showArchived ? qsTr("Back to chats") : qsTr("Archived chats")
+                    onClicked: window.showArchived = !window.showArchived
+                    background: Rectangle {
+                        color: archivedRow.hovered ? Theme.hoverRow : Theme.surface
+                    }
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon {
+                            Layout.preferredWidth: 22
+                            Layout.preferredHeight: 22
+                            Layout.leftMargin: 14
+                            source: Qt.resolvedUrl(window.showArchived ? "icons/back.svg" : "icons/archive.svg")
+                            tint: Theme.icon
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: window.showArchived ? qsTr("Back to chats") : qsTr("Archived")
+                            color: Theme.text
+                            font.pixelSize: 15
+                        }
+                        Label {
+                            visible: !window.showArchived && backend.archivedCount > 0
+                            text: backend.archivedCount
+                            color: Theme.textMuted
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+
                 ChatFilterBar {
                     id: chatFilterBar
+                    visible: !window.showArchived
                     Layout.fillWidth: true
-                    Layout.preferredHeight: implicitHeight
+                    Layout.preferredHeight: visible ? implicitHeight : 0
                     selectedFilter: window.chatFilter
                     unreadCount: window.totalUnreadCount
                     onFilterSelected: filter => window.chatFilter = filter
@@ -596,7 +641,7 @@ Kirigami.ApplicationWindow {
                     id: chatList
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    model: window.visibleChats
+                    model: window.showArchived ? backend.archivedChats : window.visibleChats
                     spacing: 0
                     clip: true
                     reuseItems: true
@@ -832,11 +877,35 @@ Kirigami.ApplicationWindow {
                                 composer.forceActiveFocus()
                             }
                         }
-                        onContentYChanged: if (contentY < 80) backend.loadOlderMessages()
+                        // Following the tail only while the reader is already at
+                        // the bottom keeps an incoming message from yanking the
+                        // view away from older history they are reading.
+                        property bool followTail: true
+                        onContentYChanged: {
+                            followTail = atYEnd
+                            if (contentY < 80)
+                                backend.loadOlderMessages()
+                        }
+                        // Pictures and waveforms settle after the page is
+                        // shown, which used to leave the view a message short
+                        // of the bottom. Following the growth keeps it there.
+                        onContentHeightChanged: {
+                            if (followTail)
+                                Qt.callLater(() => messageList.positionViewAtEnd())
+                        }
                         onCountChanged: {
                             if (count > 0 && initialPositionPending) {
                                 initialPositionPending = false
+                                followTail = true
                                 Qt.callLater(() => positionViewAtEnd())
+                            }
+                        }
+
+                        Connections {
+                            target: backend.messages
+                            function onAppended() {
+                                if (messageList.followTail)
+                                    Qt.callLater(() => messageList.positionViewAtEnd())
                             }
                         }
                     }
@@ -921,8 +990,12 @@ Kirigami.ApplicationWindow {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            implicitHeight: Math.max(52, composer.implicitHeight + 8)
-                            radius: height / 2
+                            // The box grows with the message and then stops and
+                            // scrolls. Sizing it to the text's unbounded height
+                            // let a long message inflate it to fill the window,
+                            // and a radius of half that turned it into a blob.
+                            implicitHeight: Math.max(52, Math.min(composer.implicitHeight, 148) + 8)
+                            radius: Math.min(height / 2, 22)
                             color: Theme.composer
                             border.color: Theme.dark ? "transparent" : Theme.border
 
@@ -957,12 +1030,18 @@ Kirigami.ApplicationWindow {
                                     ToolTip.text: Accessible.name
                                 }
 
+                                ScrollView {
+                                    objectName: "composerScroll"
+                                    Layout.fillWidth: true
+                                    Layout.minimumHeight: 44
+                                    Layout.maximumHeight: 140
+                                    clip: true
+                                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                    ScrollBar.vertical: OverlayScrollBar {}
+
                                 TextArea {
                                     id: composer
                                     objectName: "messageComposer"
-                                    Layout.fillWidth: true
-                                    Layout.minimumHeight: 44
-                                    Layout.maximumHeight: 120
                                     leftPadding: 10
                                     rightPadding: 10
                                     topPadding: 11
@@ -986,6 +1065,7 @@ Kirigami.ApplicationWindow {
                                         }
                                     }
                                     background: Item {}
+                                }
                                 }
 
                                 ThemedToolButton {
@@ -1041,6 +1121,133 @@ Kirigami.ApplicationWindow {
             Layout.fillHeight: true
             visible: window.activeSection !== "chats"
             section: window.activeSection
+        }
+    }
+
+    // Videos and voice notes play inside the window. Handing them to the
+    // desktop opened a web browser on systems with no registered player.
+    //
+    // The overlay is loaded only while a video plays: declaring a VideoOutput
+    // up front starts the FFmpeg backend during application startup, which
+    // prints hardware-decoder probing warnings before anything is played.
+    Loader {
+        id: videoOverlay
+        objectName: "videoOverlay"
+        anchors.fill: parent
+        z: 60
+        active: Playback.videoActive
+        visible: active
+        sourceComponent: Rectangle {
+            color: "#F2000000"
+
+            Component.onCompleted: Playback.videoSurface = videoSurface
+            Component.onDestruction: Playback.videoSurface = null
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: Playback.toggle()
+            }
+
+            VideoOutput {
+                id: videoSurface
+                anchors.fill: parent
+                anchors.margins: 24
+                anchors.bottomMargin: 84
+                fillMode: VideoOutput.PreserveAspectFit
+            }
+
+            ThemedToolButton {
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 12
+                width: 44
+                height: 44
+                iconSource: Qt.resolvedUrl("icons/close.svg")
+                iconTint: "#FFFFFF"
+                Accessible.name: qsTr("Close the video")
+                background: Rectangle { radius: 22; color: parent.hovered ? "#33FFFFFF" : "transparent" }
+                onClicked: Playback.stop()
+            }
+
+            RowLayout {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 20
+                spacing: 12
+
+                ThemedToolButton {
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 44
+                    Accessible.name: Playback.playing ? qsTr("Pause") : qsTr("Play")
+                    contentItem: Label {
+                        text: Playback.playing ? "❚❚" : "▶"
+                        color: "#FFFFFF"
+                        font.pixelSize: 17
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle { radius: 22; color: parent.hovered ? "#33FFFFFF" : "transparent" }
+                    onClicked: Playback.toggle()
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 16
+                    Rectangle {
+                        id: videoTrack
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: 4
+                        radius: 2
+                        color: "#55FFFFFF"
+                        Rectangle {
+                            width: parent.width * (Playback.duration > 0 ? Playback.position / Playback.duration : 0)
+                            height: parent.height
+                            radius: parent.radius
+                            color: Theme.primary
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: Playback.duration > 0
+                        onClicked: mouse => Playback.seek(Playback.duration * (mouse.x / Math.max(1, width)))
+                    }
+                }
+
+                Label {
+                    text: {
+                        const clock = value => {
+                            const total = Math.max(0, Math.round(value / 1000))
+                            const minutes = Math.floor(total / 60)
+                            const seconds = total % 60
+                            return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
+                        }
+                        return clock(Playback.position) + " / " + clock(Playback.duration)
+                    }
+                    color: "#FFFFFF"
+                    font.pixelSize: 12
+                }
+            }
+
+            Keys.onEscapePressed: Playback.stop()
+        }
+    }
+
+    Connections {
+        target: Playback
+        function onDownloadRequested(messageId) {
+            backend.downloadMedia(messageId)
+        }
+        function onFailed(message) {
+            window.transientError = message
+            errorTimer.restart()
+        }
+        function onFinished(messageId) {
+            const next = backend.nextAudioAfter(messageId)
+            if (next && next.id)
+                Playback.start(next.id, next.media_path || "", false)
         }
     }
 

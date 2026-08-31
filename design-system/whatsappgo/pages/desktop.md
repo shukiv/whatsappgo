@@ -30,8 +30,9 @@ pane width, and at 620 px on a wide window. Every icon-only action has an
 accessible name.
 
 The desktop shell follows the current spacious WhatsApp Web geometry: an 80 px
-navigation rail, 72–80 px headers, 84 px chat rows, at least 44 px toolbar hit
-areas, a 52–56 px avatar, pill-shaped searches, and a persistent composer.
+navigation rail, 72–80 px headers, 72 px chat rows, at least 44 px toolbar hit
+areas, a 49 px avatar, pill-shaped searches, and a composer that grows with the
+message and then scrolls.
 Navigation uses a pale rounded selected tile with a dark active glyph. Bundled
 line icons share a two-pixel rounded stroke. Profile images are circularized once
 in the media cache rather than masked per frame. The chat wallpaper is shown only

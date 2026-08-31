@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/shuki/whatsappgo/internal/gateway"
+	"github.com/shuki/whatsappgo/internal/mediastore"
 	"github.com/shuki/whatsappgo/internal/model"
 	localstore "github.com/shuki/whatsappgo/internal/store"
 )
@@ -39,12 +40,25 @@ func (c *Client) handleEvent(raw any) {
 				s.UserName = c.wa.Store.PushName
 			}
 		})
+		// Extracting previews only reads local data, so it runs on its own
+		// rather than queueing behind directory and app-state synchronisation,
+		// which wait on the network and can take minutes.
+		go c.backfillThumbnails()
 		go func() {
 			_ = c.wa.SendPresence(context.Background(), types.PresenceAvailable)
 			c.syncDirectory()
 			c.backfillCallLogs()
 			c.backfillChatSettings()
-			c.backfillThumbnails()
+			// Older messages and their attachments are collected side by
+			// side. Queueing the files behind the whole history would leave
+			// pictures missing for hours; both streams are slow enough on
+			// their own that running them together is still gentle.
+			ctx := c.baseCtx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			go c.collectMedia(ctx)
+			c.collectHistory(ctx)
 		}()
 	case *waEvents.Disconnected:
 		c.setStatus(func(s *model.ConnectionStatus) { s.State = "disconnected"; s.Connected = false })
@@ -76,6 +90,16 @@ func (c *Client) handleEvent(raw any) {
 			_ = c.store.UpdateChatPinned(context.Background(), evt.JID.String(), evt.Action.GetPinned())
 			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]any{"jid": evt.JID.String(), "pinned": evt.Action.GetPinned()}})
 		}
+	case *waEvents.Mute:
+		if evt.Action != nil {
+			_ = c.store.UpdateChatMuted(context.Background(), evt.JID.String(), normalizeMuteTime(uint64(evt.Action.GetMuteEndTimestamp())))
+			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]string{"jid": evt.JID.String()}})
+		}
+	case *waEvents.Archive:
+		if evt.Action != nil {
+			_ = c.store.UpdateChatArchived(context.Background(), evt.JID.String(), evt.Action.GetArchived())
+			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]string{"jid": evt.JID.String()}})
+		}
 	case *waEvents.JoinedGroup:
 		_ = c.store.UpsertChat(context.Background(), model.Chat{JID: evt.JID.String(), Title: evt.Name, IsGroup: true})
 		c.emit(gateway.Event{Name: "chat.updated", Data: map[string]string{"jid": evt.JID.String(), "title": evt.Name}})
@@ -88,7 +112,7 @@ func (c *Client) handleEvent(raw any) {
 }
 
 const callLogBackfillMetadataKey = "call_logs_app_state_backfill_v1"
-const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v2"
+const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v3"
 
 func (c *Client) backfillCallLogs() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -249,6 +273,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		return
 	}
 	msg = c.withCachedThumbnail(msg, evt.Message)
+	msg = c.withCachedLinkPreview(msg, evt.Message)
 	title := evt.Info.PushName
 	if evt.Info.IsGroup {
 		title = ""
@@ -351,6 +376,7 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 				continue
 			}
 			msg = c.withCachedThumbnail(msg, parsed.Message)
+			msg = c.withCachedLinkPreview(msg, parsed.Message)
 			if err := c.store.UpsertMessage(context.Background(), msg, title, false); err == nil {
 				c.rememberMediaPayload(msg, parsed.Message)
 				total++
@@ -414,13 +440,17 @@ func (c *Client) cacheMedia(msg model.Message, media whatsmeow.DownloadableMessa
 	_, _ = c.downloadMedia(context.Background(), msg, media)
 }
 
+// cachePath is where a message's file is materialised for the desktop to read.
+func (c *Client) cachePath(msg model.Message) string {
+	return filepath.Join(c.mediaDir, msg.Kind, safeName(msg.ChatJID+"-"+msg.ID)+extensionForMIME(msg.MediaMIME))
+}
+
 func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage) (model.Message, error) {
-	ext := extensionForMIME(msg.MediaMIME)
 	dir := filepath.Join(c.mediaDir, msg.Kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return model.Message{}, err
 	}
-	path := filepath.Join(dir, safeName(msg.ChatJID+"-"+msg.ID)+ext)
+	path := c.cachePath(msg)
 	tmp, err := os.CreateTemp(dir, "download-*")
 	if err != nil {
 		return model.Message{}, err
@@ -446,6 +476,12 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 	msg.MediaPath = path
 	if info, err := os.Stat(path); err == nil {
 		msg.MediaSize = info.Size()
+	}
+	if c.media != nil {
+		info := mediastore.Info{MIME: msg.MediaMIME, Name: msg.MediaName, Size: msg.MediaSize}
+		if err := c.media.PutFile(ctx, msg.ChatJID, msg.ID, info, path); err != nil {
+			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store attachment: " + err.Error()}})
+		}
 	}
 	if err := c.store.UpsertMessage(ctx, msg, "", false); err != nil {
 		return model.Message{}, err
@@ -475,9 +511,11 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		m.Kind = "text"
 		m.Body = msg.GetConversation()
 	case msg.GetExtendedTextMessage() != nil:
+		v := msg.GetExtendedTextMessage()
 		m.Kind = "text"
-		m.Body = msg.GetExtendedTextMessage().GetText()
-		applyContext(&m, msg.GetExtendedTextMessage().GetContextInfo())
+		m.Body = v.GetText()
+		applyContext(&m, v.GetContextInfo())
+		applyLinkPreview(&m, v)
 	case msg.GetImageMessage() != nil:
 		v := msg.GetImageMessage()
 		m.Kind = "image"
@@ -497,6 +535,12 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		m.Kind = "audio"
 		m.MediaMIME = v.GetMimetype()
 		m.MediaSize = int64(v.GetFileLength())
+		m.MediaDuration = int(v.GetSeconds())
+		// The sender's client recorded these amplitude bars, so the waveform
+		// shown is the real shape of the recording and needs no decoding here.
+		for _, bar := range v.GetWaveform() {
+			m.AudioWaveform = append(m.AudioWaveform, int(bar))
+		}
 		applyContext(&m, v.GetContextInfo())
 	case msg.GetDocumentMessage() != nil:
 		v := msg.GetDocumentMessage()
@@ -513,19 +557,38 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		m.MediaSize = int64(v.GetFileLength())
 		applyContext(&m, v.GetContextInfo())
 	case msg.GetContactMessage() != nil:
+		v := msg.GetContactMessage()
 		m.Kind = "contact"
-		m.Body = firstNonEmpty(msg.GetContactMessage().GetDisplayName(), "Contact")
+		m.ContactName = firstNonEmpty(v.GetDisplayName(), nameFromVCard(v.GetVcard()), "Contact")
+		m.ContactPhone = phoneFromVCard(v.GetVcard())
+		m.ContactCount = 1
+		m.Body = m.ContactName
+		applyContext(&m, v.GetContextInfo())
 	case msg.GetContactsArrayMessage() != nil:
+		v := msg.GetContactsArrayMessage()
 		m.Kind = "contact"
-		m.Body = firstNonEmpty(msg.GetContactsArrayMessage().GetDisplayName(), "Contacts")
+		m.ContactCount = len(v.GetContacts())
+		m.ContactName = firstNonEmpty(v.GetDisplayName(), "Contacts")
+		if first := v.GetContacts(); len(first) > 0 {
+			m.ContactName = firstNonEmpty(first[0].GetDisplayName(), nameFromVCard(first[0].GetVcard()), m.ContactName)
+			m.ContactPhone = phoneFromVCard(first[0].GetVcard())
+		}
+		m.Body = m.ContactName
+		applyContext(&m, v.GetContextInfo())
 	case msg.GetLocationMessage() != nil:
+		v := msg.GetLocationMessage()
 		m.Kind = "location"
-		m.Body = firstNonEmpty(msg.GetLocationMessage().GetName(), msg.GetLocationMessage().GetAddress(), "Location")
-		applyContext(&m, msg.GetLocationMessage().GetContextInfo())
+		m.Latitude = v.GetDegreesLatitude()
+		m.Longitude = v.GetDegreesLongitude()
+		m.Body = firstNonEmpty(v.GetName(), v.GetAddress(), "Location")
+		applyContext(&m, v.GetContextInfo())
 	case msg.GetLiveLocationMessage() != nil:
+		v := msg.GetLiveLocationMessage()
 		m.Kind = "location"
-		m.Body = firstNonEmpty(msg.GetLiveLocationMessage().GetCaption(), "Live location")
-		applyContext(&m, msg.GetLiveLocationMessage().GetContextInfo())
+		m.Latitude = v.GetDegreesLatitude()
+		m.Longitude = v.GetDegreesLongitude()
+		m.Body = firstNonEmpty(v.GetCaption(), "Live location")
+		applyContext(&m, v.GetContextInfo())
 	case firstNonNilPoll(msg) != nil:
 		m.Kind = "poll"
 		m.Body = firstNonEmpty(firstNonNilPoll(msg).GetName(), "Poll")
@@ -549,6 +612,40 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 	return m
 }
 
+// phoneFromVCard returns the first telephone number in a shared contact card.
+// A vCard line looks like "TEL;type=CELL;waid=15551234567:+1 555 123 4567", so
+// the number is whatever follows the last colon.
+func phoneFromVCard(card string) string {
+	for _, line := range strings.Split(card, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if !strings.HasPrefix(strings.ToUpper(line), "TEL") {
+			continue
+		}
+		if colon := strings.LastIndex(line, ":"); colon >= 0 && colon+1 < len(line) {
+			if number := strings.TrimSpace(line[colon+1:]); number != "" {
+				return number
+			}
+		}
+	}
+	return ""
+}
+
+// nameFromVCard reads the formatted name a contact card carries.
+func nameFromVCard(card string) string {
+	for _, line := range strings.Split(card, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if !strings.HasPrefix(strings.ToUpper(line), "FN") {
+			continue
+		}
+		if colon := strings.Index(line, ":"); colon >= 0 && colon+1 < len(line) {
+			if name := strings.TrimSpace(line[colon+1:]); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 func firstNonNilPoll(msg *waE2E.Message) *waE2E.PollCreationMessage {
 	for _, poll := range []*waE2E.PollCreationMessage{
 		msg.GetPollCreationMessage(), msg.GetPollCreationMessageV2(), msg.GetPollCreationMessageV3(),
@@ -559,6 +656,19 @@ func firstNonNilPoll(msg *waE2E.Message) *waE2E.PollCreationMessage {
 		}
 	}
 	return nil
+}
+
+// applyLinkPreview copies the preview the sender's client resolved when the
+// message was written. Nothing is fetched here, so opening a conversation
+// never contacts the sites that were linked.
+func applyLinkPreview(m *model.Message, v *waE2E.ExtendedTextMessage) {
+	url := strings.TrimSpace(v.GetMatchedText())
+	if url == "" {
+		return
+	}
+	m.LinkURL = url
+	m.LinkTitle = strings.TrimSpace(v.GetTitle())
+	m.LinkDescription = strings.TrimSpace(v.GetDescription())
 }
 
 func applyContext(m *model.Message, ctx *waE2E.ContextInfo) {

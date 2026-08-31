@@ -76,7 +76,42 @@ Photos, videos, and stickers appear as pictures as soon as the conversation
 loads. WhatsApp sends a small preview inside the message itself, so the image
 is visible before the full file is fetched. **Download** on the preview gets the
 full-size file; afterwards, clicking the picture opens it in the default Linux
-application. Videos show a play badge and open in the system video player.
+application.
+
+A message containing a link shows a preview card with the page title,
+description, and picture. WhatsApp resolves that preview on the sending device
+and includes it in the message, so opening a conversation never contacts the
+linked sites. Messages that were synced from your phone's history before this
+version arrived without their preview and keep showing the plain link.
+
+Photos and videos that arrived through history synchronisation carry no
+preview either, so the conversation downloads the attachments it is showing, a
+few at a time: pictures up to 8 MB, videos and documents up to 25 MB. Anything
+larger keeps its **Download** action. Voice notes are fetched when you play them.
+
+Pinned conversations stay at the top of the list with a pin beside their time.
+Right-click a conversation to archive it, mute it, pin it, or mark it read or
+unread; each change is sent to WhatsApp, so it applies to your phone too.
+Archived conversations live behind the **Archived** row above the filters.
+
+Beyond what is on screen, the application keeps collecting in the background:
+older messages first, then the attachments belonging to them. Both run slowly on
+purpose and continue across restarts, so a freshly linked account fills in over
+hours rather than all at once.
+
+A shared contact appears as a card with the name and number from the card the
+sender sent, and a **Message** action that opens a conversation with that
+number. A shared place appears with the map picture the sender included;
+clicking it opens the location in your usual map site.
+
+Voice notes and audio messages play in the conversation. The bubble draws the
+waveform the sender recorded, with its length beside the timestamp. Press the
+play control; the waveform can be clicked to seek. When a recording ends, the
+next one in the conversation plays automatically, and the run stops as soon as
+the conversation returns to text. Videos play in the
+window: click the preview to open the player, then use the controls at the
+bottom or press **Escape** to close it. One recording plays at a time, and
+starting another stops the previous one. Nothing is handed to a web browser.
 
 Paste a copied image into the composer to open the media preview. The preview
 supports a caption and basic rotation before sending. Downloaded documents and
@@ -125,9 +160,14 @@ launch. This does not unlink the device.
 Logging out asks WhatsApp to unlink that profile. Back up `device.db` and
 `messages.db` together while WhatsAppGo is closed for a consistent local copy.
 
-Deleting the cache removes downloaded media and avatars but not text history or
-linked-device credentials. Never share either database, a QR payload, pairing
-code, or logs containing full JIDs.
+Attachments are kept in `media.db` next to the message history. The media cache
+directory only holds copies that the interface reads, so deleting it frees disk
+space without losing pictures, voice notes, or documents: they are written back
+from the database the next time they are opened. Deleting the cache also removes
+downloaded avatars, which are fetched again.
+
+Back up `device.db`, `messages.db`, and `media.db` together. Never share any of
+them, a QR payload, a pairing code, or logs containing full JIDs.
 
 See [Troubleshooting](TROUBLESHOOTING.md) for common problems and
 [Security and privacy](SECURITY.md) before using a sensitive account.

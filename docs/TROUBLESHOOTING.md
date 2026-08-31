@@ -122,6 +122,13 @@ with another user, notification actions are disabled on purpose and the backend
 logs the reason. Installed packages place both programs in a root-owned
 directory, where the action works normally.
 
+## A voice note or video opens a web browser
+
+Older builds handed media to `xdg-open`. On a system with no registered handler
+for Opus audio that falls through to the default browser. Current builds play
+audio and video inside the window and never call out to the desktop for them.
+Rebuild with `make desktop`.
+
 ## A media item says Download but does not open
 
 Press **Download** and wait for the message to update to a cached path. Old

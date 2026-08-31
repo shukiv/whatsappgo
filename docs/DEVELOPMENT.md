@@ -64,9 +64,10 @@ event-to-model transformations without contacting WhatsApp.
 | `internal/config` | validated XDG/profile paths and permissions |
 | `internal/whatsapp` | whatsmeow client, pairing, events, media, history |
 | `internal/store` | WhatsAppGo SQLite schema, migrations, queries |
+| `internal/mediastore` | chunked attachment database |
 | `internal/service` | validation and application operations |
 | `internal/rpc` | versioned JSON-lines server |
-| `desktop/src` | lifecycle-aware RPC client and application entry point |
+| `desktop/src` | lifecycle-aware RPC client, conversation model, entry point |
 | `desktop/qml` | theme, pages, delegates, menus, and media UI |
 | `desktop/tests` | Qt integration tests |
 | `packaging` | Flatpak, Debian, RPM, AppImage, desktop metadata |
@@ -99,6 +100,11 @@ virtualized, cap media dimensions, preserve RTL/Unicode text, and add accessible
 names for icon-only controls. Avoid transformed negative-z primitives in list
 delegates; some software/hybrid-GPU scene graphs render them as unbounded
 stripes.
+
+Declare QtMultimedia objects inside a `Loader` that is inactive until they are
+needed. A `MediaPlayer` or `VideoOutput` created at startup initialises the
+FFmpeg backend and prints hardware-decoder probing warnings, which
+`ctest -R desktop-clean-startup` rejects.
 
 A message bubble sizes itself from its content, so nothing inside it may size
 itself from the bubble. Width limits inside `MessageDelegate.qml` derive from

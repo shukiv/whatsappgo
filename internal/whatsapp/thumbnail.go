@@ -41,6 +41,8 @@ func thumbnailFromMessage(msg *waE2E.Message) ([]byte, string) {
 		return msg.GetStickerMessage().GetPngThumbnail(), ".png"
 	case msg.GetDocumentMessage() != nil:
 		return msg.GetDocumentMessage().GetJPEGThumbnail(), ".jpg"
+	case msg.GetLocationMessage() != nil:
+		return msg.GetLocationMessage().GetJPEGThumbnail(), ".jpg"
 	}
 	return nil, ""
 }
@@ -49,7 +51,30 @@ func thumbnailFromMessage(msg *waE2E.Message) ([]byte, string) {
 // empty result means the message carries no usable preview.
 func (c *Client) cacheThumbnail(msg model.Message, raw *waE2E.Message) string {
 	data, ext := thumbnailFromMessage(raw)
-	if len(data) == 0 || len(data) > maxInlineThumbnail {
+	return c.writeThumbnail(msg.ChatJID+"-"+msg.ID, data, ext)
+}
+
+// linkThumbnailFromMessage returns the picture a sender's link preview carries.
+func linkThumbnailFromMessage(msg *waE2E.Message) []byte {
+	if extended := msg.GetExtendedTextMessage(); extended != nil {
+		return extended.GetJPEGThumbnail()
+	}
+	return nil
+}
+
+// withCachedLinkPreview stores the picture that belongs to a link preview.
+func (c *Client) withCachedLinkPreview(msg model.Message, raw *waE2E.Message) model.Message {
+	if msg.LinkURL == "" || msg.LinkThumbnail != "" {
+		return msg
+	}
+	if path := c.writeThumbnail(msg.ChatJID+"-"+msg.ID+"-link", linkThumbnailFromMessage(raw), ".jpg"); path != "" {
+		msg.LinkThumbnail = path
+	}
+	return msg
+}
+
+func (c *Client) writeThumbnail(key string, data []byte, ext string) string {
+	if len(data) == 0 || len(data) > maxInlineThumbnail || ext == "" {
 		return ""
 	}
 	// A truncated or unrecognised payload would render as a broken picture.
@@ -60,7 +85,7 @@ func (c *Client) cacheThumbnail(msg model.Message, raw *waE2E.Message) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return ""
 	}
-	path := filepath.Join(dir, safeName(msg.ChatJID+"-"+msg.ID)+ext)
+	path := filepath.Join(dir, safeName(key)+ext)
 	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
 		return path
 	}

@@ -19,6 +19,7 @@
 #include <QQuickWindow>
 #include <QImage>
 #include <QFileInfo>
+#include <QFont>
 #include <QQuickItem>
 #include <QProcess>
 
@@ -75,6 +76,20 @@ int main(int argc, char *argv[])
     QGuiApplication::setOrganizationDomain(QStringLiteral("whatsappgo.org"));
     QGuiApplication::setApplicationName(QStringLiteral("WhatsAppGo"));
     QGuiApplication::setDesktopFileName(QStringLiteral("org.whatsappgo.Desktop"));
+    // The same face stack WhatsApp Web asks for, resolved against whatever the
+    // system actually has. Leaving it to Qt's default picked a heavier font
+    // than the interface is designed around.
+    {
+        QFont interfaceFont = QGuiApplication::font();
+        interfaceFont.setFamilies({
+            QStringLiteral("Segoe UI"), QStringLiteral("Helvetica Neue"), QStringLiteral("Helvetica"),
+            QStringLiteral("Lucida Grande"), QStringLiteral("Ubuntu"), QStringLiteral("Cantarell"),
+            QStringLiteral("Fira Sans"), QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans"),
+            QStringLiteral("Arial"),
+        });
+        interfaceFont.setPixelSize(14);
+        QGuiApplication::setFont(interfaceFont);
+    }
     // Kirigami's desktop integration supplies the matching platform theme on
     // every Linux desktop; it does not require running the Plasma shell.
     // Users can still override it with QT_QUICK_CONTROLS_STYLE.
@@ -266,9 +281,15 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         auto *bubble = qobject_cast<QQuickItem *>(messageDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *tail = qobject_cast<QQuickItem *>(messageDelegate->findChild<QObject *>(QStringLiteral("messageTail")));
-        return qAbs(timestampRight - badgeRight) <= 1.0
-                && qAbs(badge->width() - 24.0) <= 1.0
-                && qAbs(badge->height() - 24.0) <= 1.0
+        // Name and preview sit on consecutive lines, so the gap between them is
+        // small; the row is no taller than WhatsApp Web's.
+        const auto titleBottom = timestamp->mapToItem(chatItem, QPointF(0, timestamp->height())).y();
+        const auto previewTop = preview->mapToItem(chatItem, QPointF(0, 0)).y();
+        qInfo().noquote() << QStringLiteral("chat row height=%1 name/preview gap=%2")
+                                 .arg(chatItem->height()).arg(previewTop - titleBottom);
+        return qAbs(timestampRight - badgeRight) <= 2.0
+                && chatItem->height() <= 76.0
+                && (previewTop - titleBottom) <= 8.0
                 && preview->implicitHeight() <= 22.0
                 && !preview->property("text").toString().contains(QStringLiteral("<br>"))
                 && preview->property("text").toString().contains(QStringLiteral("line Second"))
@@ -345,6 +366,85 @@ int main(int argc, char *argv[])
         require(rtlBubble->width() - rtlRight >= 8.0,
                 QStringLiteral("RTL right padding %1 is below 8").arg(rtlBubble->width() - rtlRight));
 
+        // Bubbles must hug their text. Emoji, links, and quoted replies are
+        // the shapes that previously stretched to the full conversation width.
+        struct Shape {
+            const char *name;
+            QVariantMap message;
+        };
+        const QList<Shape> shapes{
+            {"emoji", {{QStringLiteral("id"), QStringLiteral("s1")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                       {QStringLiteral("body"), QStringLiteral("\U0001F60A")}}},
+            {"short", {{QStringLiteral("id"), QStringLiteral("s2")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                       {QStringLiteral("body"), QStringLiteral("ok")}}},
+            {"link", {{QStringLiteral("id"), QStringLiteral("s3")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                      {QStringLiteral("body"), QStringLiteral("https://www.youtube.com/watch?v=5DdABvSTA0I")}}},
+            {"reply", {{QStringLiteral("id"), QStringLiteral("s4")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                       {QStringLiteral("body"), QStringLiteral("yes")},
+                       {QStringLiteral("reply_to"), QStringLiteral("s3")},
+                       {QStringLiteral("reply_preview"), QStringLiteral("https://www.youtube.com/watch?v=5DdABvSTA0I")}}},
+            {"reaction", {{QStringLiteral("id"), QStringLiteral("s5")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                          {QStringLiteral("body"), QStringLiteral("hi")},
+                          {QStringLiteral("reactions"), QVariantList{QVariantMap{{QStringLiteral("emoji"), QStringLiteral("\U0001F44D")}}}}}},
+        };
+        for (const auto &shape : shapes) {
+            auto payload = shape.message;
+            payload.insert(QStringLiteral("timestamp"), 0);
+            payload.insert(QStringLiteral("status"), QStringLiteral("received"));
+            payload.insert(QStringLiteral("from_me"), false);
+            std::unique_ptr<QObject> shapeDelegate(component.createWithInitialProperties({
+                {QStringLiteral("width"), paneWidth},
+                {QStringLiteral("modelData"), payload},
+            }));
+            if (!shapeDelegate)
+                return EXIT_FAILURE;
+            QCoreApplication::processEvents();
+            auto *shapeBubble = qobject_cast<QQuickItem *>(shapeDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
+            if (shapeBubble == nullptr)
+                return EXIT_FAILURE;
+            qInfo().noquote() << QStringLiteral("shape %1 bubble=%2").arg(QString::fromLatin1(shape.name)).arg(shapeBubble->width());
+            require(shapeBubble->width() <= 420.0,
+                    QStringLiteral("%1 bubble is %2 px wide; it should hug its text")
+                        .arg(QString::fromLatin1(shape.name)).arg(shapeBubble->width()));
+        }
+
+        // A delegate is reused for messages from either side. Rebinding it must
+        // not leave the bubble stretched across the conversation.
+        QVariantMap outgoing{
+            {QStringLiteral("id"), QStringLiteral("reuse-1")}, {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("a message that is long enough to need most of the bubble width")},
+            {QStringLiteral("from_me"), true}, {QStringLiteral("timestamp"), 0}, {QStringLiteral("status"), QStringLiteral("read")},
+        };
+        std::unique_ptr<QObject> reused(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), outgoing},
+        }));
+        if (!reused)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *reusedBubble = qobject_cast<QQuickItem *>(reused->findChild<QObject *>(QStringLiteral("messageBubble")));
+        if (reusedBubble == nullptr)
+            return EXIT_FAILURE;
+        const auto outgoingWidth = reusedBubble->width();
+        for (int round = 0; round < 4; ++round) {
+            QVariantMap rebound{
+                {QStringLiteral("id"), QStringLiteral("reuse-%1").arg(round + 2)},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("ok")},
+                {QStringLiteral("from_me"), round % 2 == 0},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            };
+            reused->setProperty("modelData", rebound);
+            QCoreApplication::processEvents();
+            qInfo().noquote() << QStringLiteral("reuse round %1 from_me=%2 bubble=%3")
+                                     .arg(round).arg(round % 2 == 0).arg(reusedBubble->width());
+            require(reusedBubble->width() <= 120.0,
+                    QStringLiteral("after reuse the bubble is %1 px wide for a two-letter message")
+                        .arg(reusedBubble->width()));
+        }
+        Q_UNUSED(outgoingWidth);
+
         // A photo that has only its inline thumbnail must still be shown,
         // rather than reduced to a download row.
         QImage thumbnail(64, 48, QImage::Format_ARGB32_Premultiplied);
@@ -394,6 +494,259 @@ int main(int argc, char *argv[])
                 QStringLiteral("video thumbnail is not displayed"));
         require(playBadge != nullptr && playBadge->isVisible(),
                 QStringLiteral("video play badge is missing"));
+
+        // The other person's name belongs above group messages only.
+        for (const auto &chatJid : {QStringLiteral("123@s.whatsapp.net"), QStringLiteral("456@g.us")}) {
+            const bool group = chatJid.endsWith(QStringLiteral("@g.us"));
+            const QVariantMap incoming{
+                {QStringLiteral("id"), QStringLiteral("sender-%1").arg(chatJid)},
+                {QStringLiteral("chat_jid"), chatJid},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("hello")},
+                {QStringLiteral("sender_name"), QStringLiteral("Zone Yalo")},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            };
+            std::unique_ptr<QObject> senderDelegate(component.createWithInitialProperties({
+                {QStringLiteral("width"), paneWidth},
+                {QStringLiteral("modelData"), incoming},
+            }));
+            if (!senderDelegate)
+                return EXIT_FAILURE;
+            QCoreApplication::processEvents();
+            bool shown = false;
+            for (auto *label : senderDelegate->findChildren<QQuickItem *>()) {
+                if (label->property("text").toString() == QStringLiteral("Zone Yalo") && label->isVisible())
+                    shown = true;
+            }
+            qInfo().noquote() << QStringLiteral("sender name in %1 shown=%2").arg(chatJid).arg(shown);
+            require(shown == group,
+                    group ? QStringLiteral("a group message does not name its sender")
+                          : QStringLiteral("a one-to-one message repeats the other person's name"));
+        }
+
+        // A shared contact and a shared place get cards, not bare rows.
+        const QVariantMap sharedContact{
+            {QStringLiteral("id"), QStringLiteral("contact-1")},
+            {QStringLiteral("kind"), QStringLiteral("contact")},
+            {QStringLiteral("body"), QStringLiteral("Adony Robles")},
+            {QStringLiteral("contact_name"), QStringLiteral("Adony Robles")},
+            {QStringLiteral("contact_phone"), QStringLiteral("+57 311 2522689")},
+            {QStringLiteral("contact_count"), 1},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 0},
+            {QStringLiteral("status"), QStringLiteral("received")},
+        };
+        std::unique_ptr<QObject> contactDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), sharedContact},
+        }));
+        if (!contactDelegate)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *sharedCard = qobject_cast<QQuickItem *>(contactDelegate->findChild<QObject *>(QStringLiteral("contactCard")));
+        auto *sharedCardAction = qobject_cast<QQuickItem *>(contactDelegate->findChild<QObject *>(QStringLiteral("contactAction")));
+        auto *contactFallback = qobject_cast<QQuickItem *>(contactDelegate->findChild<QObject *>(QStringLiteral("mediaAction")));
+        require(sharedCard != nullptr && sharedCard->isVisible() && sharedCard->height() > 40.0,
+                QStringLiteral("shared contact has no card"));
+        require(sharedCardAction != nullptr && sharedCardAction->isVisible(),
+                QStringLiteral("shared contact offers no way to message them"));
+        require(contactFallback == nullptr || !contactFallback->isVisible(),
+                QStringLiteral("shared contact still shows the plain attachment row"));
+
+        QImage mapThumb(120, 80, QImage::Format_ARGB32_Premultiplied);
+        mapThumb.fill(QColor(QStringLiteral("#8FBF7F")));
+        const auto mapPath = QDir(QDir::tempPath()).filePath(QStringLiteral("whatsappgo-map.jpg"));
+        if (!mapThumb.save(mapPath, "JPG"))
+            return EXIT_FAILURE;
+        const QVariantMap sharedPlace{
+            {QStringLiteral("id"), QStringLiteral("place-1")},
+            {QStringLiteral("kind"), QStringLiteral("location")},
+            {QStringLiteral("body"), QStringLiteral("Bogot\u00E1")},
+            {QStringLiteral("latitude"), 4.60971},
+            {QStringLiteral("longitude"), -74.08175},
+            {QStringLiteral("media_thumbnail"), mapPath},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 0},
+            {QStringLiteral("status"), QStringLiteral("received")},
+        };
+        std::unique_ptr<QObject> placeDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), sharedPlace},
+        }));
+        if (!placeDelegate)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *placeCard = qobject_cast<QQuickItem *>(placeDelegate->findChild<QObject *>(QStringLiteral("locationCard")));
+        auto *placeMap = qobject_cast<QQuickItem *>(placeDelegate->findChild<QObject *>(QStringLiteral("locationMap")));
+        require(placeCard != nullptr && placeCard->isVisible() && placeCard->height() > 100.0,
+                QStringLiteral("shared place has no card"));
+        require(placeMap != nullptr && placeMap->isVisible(), QStringLiteral("shared place shows no map"));
+        QFile::remove(mapPath);
+
+        // A short message keeps its timestamp on the same line.
+        const QVariantMap shortMessage{
+            {QStringLiteral("id"), QStringLiteral("short-1")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("No")},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 0},
+            {QStringLiteral("status"), QStringLiteral("received")},
+        };
+        std::unique_ptr<QObject> shortDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), shortMessage},
+        }));
+        if (!shortDelegate)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *shortBubble = qobject_cast<QQuickItem *>(shortDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
+        auto *shortBody = qobject_cast<QQuickItem *>(shortDelegate->findChild<QObject *>(QStringLiteral("messageBody")));
+        if (shortBubble != nullptr && shortBody != nullptr) {
+            qInfo().noquote() << QStringLiteral("short message bubble=%1 height=%2 body height=%3")
+                                     .arg(shortBubble->width()).arg(shortBubble->height()).arg(shortBody->height());
+            // One line of text plus padding, not two lines.
+            require(shortBubble->height() <= shortBody->height() + 26.0,
+                    QStringLiteral("a short message spends a second line on its timestamp"));
+        }
+
+        // Delivery marks are one overlapping symbol, not two spaced ticks.
+        struct ReceiptCase {
+            const char *status;
+            bool doubleTick;
+            bool blue;
+        };
+        for (const auto &receiptCase : {ReceiptCase{"sent", false, false}, ReceiptCase{"delivered", true, false},
+                                        ReceiptCase{"read", true, true}, ReceiptCase{"played", true, true}}) {
+            const QVariantMap sent{
+                {QStringLiteral("id"), QStringLiteral("receipt-%1").arg(QString::fromLatin1(receiptCase.status))},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("ok")},
+                {QStringLiteral("from_me"), true},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QString::fromLatin1(receiptCase.status)},
+            };
+            std::unique_ptr<QObject> receiptDelegate(component.createWithInitialProperties({
+                {QStringLiteral("width"), paneWidth},
+                {QStringLiteral("modelData"), sent},
+            }));
+            if (!receiptDelegate)
+                return EXIT_FAILURE;
+            QCoreApplication::processEvents();
+            auto *mark = qobject_cast<QQuickItem *>(receiptDelegate->findChild<QObject *>(QStringLiteral("readReceipt")));
+            if (mark == nullptr) {
+                require(false, QStringLiteral("delivery mark is missing"));
+                continue;
+            }
+            const auto width = mark->width();
+            const auto seen = mark->property("seen").toBool();
+            qInfo().noquote() << QStringLiteral("receipt %1 width=%2 seen=%3")
+                                     .arg(QString::fromLatin1(receiptCase.status)).arg(width).arg(seen);
+            // The double mark is wider than the single one, but the two ticks
+            // overlap, so it is far narrower than twice the width.
+            require(receiptCase.doubleTick ? (width > 11.0 && width < 20.0) : qFuzzyCompare(width, 11.0),
+                    QStringLiteral("%1 mark is %2 px wide").arg(QString::fromLatin1(receiptCase.status)).arg(width));
+            require(seen == receiptCase.blue,
+                    QStringLiteral("%1 mark colour is wrong").arg(QString::fromLatin1(receiptCase.status)));
+        }
+
+        // A link preview shows the page the sender's client resolved.
+        QImage linkThumb(120, 63, QImage::Format_ARGB32_Premultiplied);
+        linkThumb.fill(QColor(QStringLiteral("#1DAA61")));
+        const auto linkThumbPath = QDir(QDir::tempPath()).filePath(QStringLiteral("whatsappgo-link.jpg"));
+        if (!linkThumb.save(linkThumbPath, "JPG"))
+            return EXIT_FAILURE;
+        const QVariantMap linkMessage{
+            {QStringLiteral("id"), QStringLiteral("link-1")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("https://www.youtube.com/watch?v=5DdABvSTA0I")},
+            {QStringLiteral("link_url"), QStringLiteral("https://www.youtube.com/watch?v=5DdABvSTA0I")},
+            {QStringLiteral("link_title"), QStringLiteral("A video title")},
+            {QStringLiteral("link_description"), QStringLiteral("The description the sender's client resolved.")},
+            {QStringLiteral("link_thumbnail"), linkThumbPath},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 0},
+            {QStringLiteral("status"), QStringLiteral("received")},
+        };
+        std::unique_ptr<QObject> linkDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), linkMessage},
+        }));
+        if (!linkDelegate)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *card = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("linkPreview")));
+        auto *cardImage = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("linkPreviewImage")));
+        auto *linkBubble = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
+        require(card != nullptr && card->isVisible(), QStringLiteral("link preview card is missing"));
+        require(cardImage != nullptr && cardImage->isVisible(), QStringLiteral("link preview picture is missing"));
+        if (card != nullptr && linkBubble != nullptr) {
+            qInfo().noquote() << QStringLiteral("link card width=%1 height=%2 bubble=%3")
+                                     .arg(card->width()).arg(card->height()).arg(linkBubble->width());
+            require(card->height() > 60.0, QStringLiteral("link preview card has no height"));
+            require(linkBubble->width() <= paneWidth * 0.70, QStringLiteral("link bubble is too wide"));
+        }
+        QFile::remove(linkThumbPath);
+
+        // A voice note plays inside the window, so it shows a compact player
+        // rather than a row that hands the file to the desktop.
+        const QVariantMap voice{
+            {QStringLiteral("id"), QStringLiteral("voice-1")},
+            {QStringLiteral("kind"), QStringLiteral("audio")},
+            {QStringLiteral("media_path"), QStringLiteral("/tmp/whatsappgo-voice.ogg")},
+            {QStringLiteral("media_mime"), QStringLiteral("audio/ogg")},
+            {QStringLiteral("media_duration"), 9},
+            {QStringLiteral("audio_waveform"), QVariantList{10, 40, 90, 55, 20, 70, 35, 80}},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 0},
+            {QStringLiteral("status"), QStringLiteral("received")},
+        };
+        std::unique_ptr<QObject> voiceDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), voice},
+        }));
+        if (!voiceDelegate)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *voiceRow = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceRow")));
+        auto *voicePlay = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voicePlayButton")));
+        auto *voiceOpen = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("mediaAction")));
+        auto *voiceBubble = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
+        require(voiceRow != nullptr && voiceRow->isVisible(), QStringLiteral("voice note has no player row"));
+        require(voicePlay != nullptr && voicePlay->isVisible(), QStringLiteral("voice note has no play control"));
+        require(voiceOpen == nullptr || !voiceOpen->isVisible(),
+                QStringLiteral("voice note still offers the desktop open action"));
+        auto *voiceProgress = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceProgress")));
+        auto *voiceDuration = voiceDelegate->findChild<QObject *>(QStringLiteral("voiceDuration"));
+        require(voiceProgress != nullptr && voiceProgress->isVisible(), QStringLiteral("voice note has no waveform"));
+        auto *waveformRow = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceWaveform")));
+        if (waveformRow != nullptr) {
+            // One rounded bar per amplitude the sender recorded.
+            const auto bars = waveformRow->childItems();
+            int drawn = 0;
+            for (auto *bar : bars) {
+                if (bar->width() > 0 && bar->height() >= 3)
+                    ++drawn;
+            }
+            qInfo().noquote() << QStringLiteral("waveform row %1x%2 children=%3 drawn=%4")
+                                     .arg(waveformRow->width()).arg(waveformRow->height()).arg(bars.size()).arg(drawn);
+            require(drawn >= 8, QStringLiteral("waveform drew %1 bars, expected one per amplitude").arg(drawn));
+        } else {
+            require(false, QStringLiteral("waveform row is missing"));
+        }
+        require(voiceDuration != nullptr && voiceDuration->property("visible").toBool()
+                    && voiceDuration->property("text").toString() == QStringLiteral("0:09"),
+                QStringLiteral("voice note does not show its length"));
+        if (voiceRow != nullptr) {
+            qInfo().noquote() << QStringLiteral("voice row height=%1").arg(voiceRow->height());
+            require(voiceRow->height() <= 56.0,
+                    QStringLiteral("voice row is %1 px tall, expected a compact control").arg(voiceRow->height()));
+        }
+        if (voiceBubble != nullptr) {
+            require(voiceBubble->width() <= paneWidth * 0.70,
+                    QStringLiteral("voice bubble %1 exceeds 70%% of the pane").arg(voiceBubble->width()));
+        }
 
         // Without any local file a document still offers its download action.
         const QVariantMap document{

@@ -7,11 +7,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/shuki/whatsappgo/internal/config"
 	"github.com/shuki/whatsappgo/internal/events"
+	"github.com/shuki/whatsappgo/internal/mediastore"
 	"github.com/shuki/whatsappgo/internal/notify"
 	"github.com/shuki/whatsappgo/internal/rpc"
 	"github.com/shuki/whatsappgo/internal/service"
@@ -36,6 +38,21 @@ func main() {
 	}
 }
 
+// restrictDatabase limits a database to its owner. Write-ahead logging creates
+// two companion files that hold the same decrypted content as the database
+// itself, and SQLite creates them using the process umask rather than the
+// permissions of the database.
+func restrictDatabase(path string) {
+	for _, companion := range []string{path, path + "-wal", path + "-shm"} {
+		if _, err := os.Stat(companion); err != nil {
+			continue
+		}
+		if err := os.Chmod(companion, 0o600); err != nil {
+			log.Printf("could not restrict %s: %v", filepath.Base(companion), err)
+		}
+	}
+}
+
 func run(socketOverride, profile string) error {
 	paths, err := config.ResolveProfile(profile)
 	if err != nil {
@@ -52,7 +69,14 @@ func run(socketOverride, profile string) error {
 		return fmt.Errorf("open message store: %w", err)
 	}
 	defer messageStore.Close()
-	_ = os.Chmod(paths.MessageDB, 0o600)
+	restrictDatabase(paths.MessageDB)
+
+	mediaStore, err := mediastore.Open(paths.MediaDB)
+	if err != nil {
+		return fmt.Errorf("open attachment store: %w", err)
+	}
+	defer mediaStore.Close()
+	restrictDatabase(paths.MediaDB)
 
 	// notifier must stay an interface value. Assigning a nil *notify.Desktop
 	// to it would produce a non-nil interface wrapping a nil pointer, which
@@ -67,12 +91,12 @@ func run(socketOverride, profile string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	wa, err := whatsapp.New(ctx, paths.DeviceDB, paths.MediaDir, messageStore, notifier)
+	wa, err := whatsapp.New(ctx, paths.DeviceDB, paths.MediaDir, messageStore, mediaStore, notifier)
 	if err != nil {
 		return fmt.Errorf("initialize WhatsApp: %w", err)
 	}
 	defer wa.Close()
-	_ = os.Chmod(paths.DeviceDB, 0o600)
+	restrictDatabase(paths.DeviceDB)
 	broker := events.New()
 	app := service.New(messageStore, wa, broker)
 	defer app.Close()

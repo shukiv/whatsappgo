@@ -517,3 +517,233 @@ func TestMessagesMissingThumbnailsPagesWithCursor(t *testing.T) {
 		t.Fatalf("message with a preview is still pending: %#v", remaining)
 	}
 }
+
+func TestLinkPreviewSurvivesRoundTripAndRepeatedDelivery(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const chat = "alice@s.whatsapp.net"
+	withPreview := model.Message{ID: "link-1", ChatJID: chat, Timestamp: 5, Kind: "text", Status: "received",
+		Body: "see https://example.com", LinkURL: "https://example.com", LinkTitle: "Example",
+		LinkDescription: "A page", LinkThumbnail: "/cache/thumbnails/link-1.jpg"}
+	if err := s.UpsertMessage(ctx, withPreview, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.ListMessages(ctx, chat, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 {
+		t.Fatalf("unexpected page: %#v", page.Messages)
+	}
+	got := page.Messages[0]
+	if got.LinkURL != withPreview.LinkURL || got.LinkTitle != "Example" || got.LinkDescription != "A page" || got.LinkThumbnail == "" {
+		t.Fatalf("link preview did not round-trip: %#v", got)
+	}
+	// The same message arriving again without preview fields must not clear it.
+	repeated := model.Message{ID: "link-1", ChatJID: chat, Timestamp: 5, Kind: "text", Status: "received", Body: withPreview.Body}
+	if err := s.UpsertMessage(ctx, repeated, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetMessage(ctx, chat, "link-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.LinkURL == "" || stored.LinkTitle != "Example" || stored.LinkThumbnail == "" {
+		t.Fatalf("repeated delivery cleared the link preview: %#v", stored)
+	}
+}
+
+func TestListChatsNamesConversationsFromTheirSender(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const business = "8772@lid"
+	// History synchronisation left this conversation without a name, so the
+	// stored title is just the identifier.
+	if err := s.UpsertMessage(ctx, model.Message{ID: "b1", ChatJID: business, SenderName: "Bancolombia",
+		Timestamp: 10, Kind: "text", Body: "hello", Status: "received"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	chats, err := s.ListChats(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 || chats[0].Title != "Bancolombia" {
+		t.Fatalf("conversation was not named after its sender: %#v", chats)
+	}
+
+	// A real stored name always wins over the sender's published name.
+	if err := s.UpdateChatTitle(ctx, business, "Saved name"); err != nil {
+		t.Fatal(err)
+	}
+	chats, err = s.ListChats(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chats[0].Title != "Saved name" {
+		t.Fatalf("stored name was overridden: %q", chats[0].Title)
+	}
+
+	// Nothing to fall back to leaves the conversation as it was.
+	if err := s.UpsertMessage(ctx, model.Message{ID: "o1", ChatJID: "9999@lid", Timestamp: 5, Kind: "text",
+		Body: "mine", FromMe: true, Status: "sent"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	chats, err = s.ListChats(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chat := range chats {
+		if chat.JID == "9999@lid" && chat.Title != "9999" {
+			t.Fatalf("unexpected fallback title: %q", chat.Title)
+		}
+	}
+}
+
+func TestListMessagesHidesEnvelopesWithNoKind(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const chat = "c@s.whatsapp.net"
+	// Older builds stored transport envelopes before they were recognised as
+	// such. They have no kind and no body, and rendered as empty bubbles.
+	for _, message := range []model.Message{
+		{ID: "envelope", ChatJID: chat, Timestamp: 1, Kind: "", Status: "received"},
+		{ID: "visible", ChatJID: chat, Timestamp: 2, Kind: "text", Body: "hello", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, message, "Contact", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ListMessages(ctx, chat, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].ID != "visible" {
+		t.Fatalf("empty envelope is still shown: %#v", page.Messages)
+	}
+	// History paging must not anchor on one either, or it would ask WhatsApp
+	// for messages older than something that is not a message.
+	oldest, err := s.OldestMessage(ctx, chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldest.ID != "visible" {
+		t.Fatalf("history anchored on an envelope: %#v", oldest)
+	}
+	chats, err := s.ListChats(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 || chats[0].LastMessageID != "visible" {
+		t.Fatalf("chat list previewed an envelope: %#v", chats)
+	}
+}
+
+func TestSharedContactAndPlaceRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const chat = "c@s.whatsapp.net"
+	contact := model.Message{ID: "c1", ChatJID: chat, Timestamp: 1, Kind: "contact", Status: "received",
+		Body: "Adony Robles", ContactName: "Adony Robles", ContactPhone: "+57 311 2522689", ContactCount: 1}
+	place := model.Message{ID: "l1", ChatJID: chat, Timestamp: 2, Kind: "location", Status: "received",
+		Body: "Bogotá", Latitude: 4.60971, Longitude: -74.08175}
+	for _, message := range []model.Message{contact, place} {
+		if err := s.UpsertMessage(ctx, message, "C", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ListMessages(ctx, chat, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 2 {
+		t.Fatalf("unexpected page: %#v", page.Messages)
+	}
+	if page.Messages[0].ContactName != "Adony Robles" || page.Messages[0].ContactPhone != "+57 311 2522689" ||
+		page.Messages[0].ContactCount != 1 {
+		t.Fatalf("contact details lost: %#v", page.Messages[0])
+	}
+	if page.Messages[1].Latitude == 0 || page.Messages[1].Longitude == 0 {
+		t.Fatalf("coordinates lost: %#v", page.Messages[1])
+	}
+	// A repeat delivery without the details must not erase them.
+	if err := s.UpsertMessage(ctx, model.Message{ID: "c1", ChatJID: chat, Timestamp: 1, Kind: "contact", Status: "received", Body: "Adony Robles"}, "C", false); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetMessage(ctx, chat, "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ContactPhone != "+57 311 2522689" {
+		t.Fatalf("repeat delivery cleared the contact: %#v", stored)
+	}
+}
+
+func TestMessagesMissingMediaScansNewestFirst(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const chat = "c@s.whatsapp.net"
+	for _, message := range []model.Message{
+		{ID: "old-photo", ChatJID: chat, Timestamp: 10, Kind: "image", Status: "received", MediaSize: 1000},
+		{ID: "new-video", ChatJID: chat, Timestamp: 30, Kind: "video", Status: "received", MediaSize: 2000},
+		{ID: "mid-doc", ChatJID: chat, Timestamp: 20, Kind: "document", Status: "received"},
+		{ID: "already-here", ChatJID: chat, Timestamp: 40, Kind: "image", Status: "received", MediaPath: "/cache/x.jpg"},
+		{ID: "just-text", ChatJID: chat, Timestamp: 50, Kind: "text", Body: "hi", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, message, "C", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, err := s.MessagesMissingMedia(ctx, MessageCursor{}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 3 {
+		t.Fatalf("expected the three attachments with no file, got %#v", pending)
+	}
+	if pending[0].MessageID != "new-video" || pending[2].MessageID != "old-photo" {
+		t.Fatalf("scan is not newest first: %#v", pending)
+	}
+	if pending[0].Kind != "video" || pending[0].Size != 2000 {
+		t.Fatalf("attachment details missing: %#v", pending[0])
+	}
+	// Continuing from a cursor must not repeat what was already handled.
+	next, err := s.MessagesMissingMedia(ctx, MessageCursor{Timestamp: pending[0].Timestamp, MessageID: pending[0].MessageID}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != 2 || next[0].MessageID != "mid-doc" {
+		t.Fatalf("cursor did not continue the scan: %#v", next)
+	}
+}
+
+func TestUpdateChatMutedAndArchived(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const chat = "c@s.whatsapp.net"
+	if err := s.UpsertChat(ctx, model.Chat{JID: chat, Title: "Contact"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateChatMuted(ctx, chat, 9_999_999_999_999); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateChatArchived(ctx, chat, true); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetChat(ctx, chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.MutedUntil != 9_999_999_999_999 || !stored.Archived || stored.Title != "Contact" {
+		t.Fatalf("mute and archive were not applied: %#v", stored)
+	}
+	if err := s.UpdateChatArchived(ctx, chat, false); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = s.GetChat(ctx, chat)
+	if stored.Archived {
+		t.Fatal("unarchiving did not take effect")
+	}
+	if err := s.UpdateChatMuted(ctx, "", 1); err == nil {
+		t.Fatal("an empty conversation id should be rejected")
+	}
+}

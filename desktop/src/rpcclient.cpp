@@ -77,6 +77,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         emit daemonConnectedChanged();
         refreshStatus();
         refreshChats();
+        refreshArchived();
         if (!m_initialChat.isEmpty()) {
             const auto chat = m_initialChat;
             m_initialChat.clear();
@@ -292,16 +293,32 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
             refreshStatuses();
         if (message.value(QStringLiteral("chat_jid")) == m_selectedChat.value(QStringLiteral("jid")))
             upsertMessage(message);
+        const auto cached = message.value(QStringLiteral("media_path")).toString();
+        if (!cached.isEmpty())
+            emit mediaReady(message.value(QStringLiteral("id")).toString(), cached);
 		if (!m_pendingCopyImageId.isEmpty()
 			&& message.value(QStringLiteral("id")).toString() == m_pendingCopyImageId
 			&& copyImageFile(message.value(QStringLiteral("media_path")).toString()))
 			m_pendingCopyImageId.clear();
+        refreshChats();
+    } else if (name == QStringLiteral("message.receipt")) {
+        // Receipts were stored but never reached the open conversation, so a
+        // sent message kept its single mark until the chat was reopened.
+        const auto payload = data.toObject();
+        if (payload.value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString()) {
+            QStringList ids;
+            const auto reported = payload.value(QStringLiteral("message_ids")).toArray();
+            for (const auto &id : reported)
+                ids.append(id.toString());
+            m_messages.applyReceipt(ids, payload.value(QStringLiteral("status")).toString());
+        }
         refreshChats();
     } else if (name == QStringLiteral("message.revoked") || name == QStringLiteral("message.reaction") || name == QStringLiteral("message.edited")) {
         if (data.toObject().value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
             openChat(m_selectedChat.value(QStringLiteral("jid")).toString(), m_selectedChat.value(QStringLiteral("title")).toString());
     } else if (name == QStringLiteral("chat.updated") || name == QStringLiteral("directory.synced")) {
         refreshChats();
+        refreshArchived();
     } else if (name == QStringLiteral("history.synced")) {
         refreshChats();
         refreshStatuses();
@@ -356,30 +373,71 @@ void RpcClient::refreshChats(const QString &query)
                 });
 }
 
+void RpcClient::refreshArchived()
+{
+    sendRequest(QStringLiteral("chats.list"),
+                {{QStringLiteral("limit"), 200}, {QStringLiteral("offset"), 0},
+                 {QStringLiteral("query"), QString()}, {QStringLiteral("archived"), true}},
+                [this](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty())
+                        return;
+                    m_archivedChats = result.toArray().toVariantList();
+                    m_archivedCount = static_cast<int>(m_archivedChats.size());
+                    emit archivedChatsChanged();
+                });
+}
+
+// Pinning, muting, archiving and read state belong to the account, so each is
+// asked of the daemon and the lists are refreshed from what it reports.
+void RpcClient::setChatPinned(const QString &jid, bool pinned)
+{
+    sendRequest(QStringLiteral("chat.pin"), {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("value"), pinned}},
+                [this](const QJsonValue &, const QJsonObject &) { refreshChats(); });
+}
+
+void RpcClient::setChatMuted(const QString &jid, bool muted)
+{
+    sendRequest(QStringLiteral("chat.mute"), {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("value"), muted}},
+                [this](const QJsonValue &, const QJsonObject &) { refreshChats(); });
+}
+
+void RpcClient::setChatArchived(const QString &jid, bool archived)
+{
+    sendRequest(QStringLiteral("chat.archive"), {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("value"), archived}},
+                [this](const QJsonValue &, const QJsonObject &) { refreshChats(); refreshArchived(); });
+}
+
+void RpcClient::setChatRead(const QString &jid, bool read)
+{
+    sendRequest(QStringLiteral("chat.set_read"), {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("value"), read}},
+                [this](const QJsonValue &, const QJsonObject &) { refreshChats(); });
+}
+
 void RpcClient::openChat(const QString &jid, const QString &title)
 {
 	m_waitingRemoteHistory = false;
+    m_mediaQueue.clear();
+    m_requestedMedia.clear();
     m_selectedChat = {{QStringLiteral("jid"), jid}, {QStringLiteral("title"), title}};
     m_messages.clear();
     m_hasMore = false;
     m_nextBefore = 0;
     emit selectedChatChanged();
-    emit messagesChanged();
     sendRequest(QStringLiteral("messages.list"),
                 {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), 50}},
                 [this](const QJsonValue &result, const QJsonObject &error) {
                     if (!error.isEmpty())
                         return;
                     const auto page = result.toObject();
-                    m_messages = page.value(QStringLiteral("messages")).toArray().toVariantList();
+                    m_messages.reset(page.value(QStringLiteral("messages")).toArray().toVariantList());
                     m_hasMore = page.value(QStringLiteral("has_more")).toBool();
                     m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
-                    emit messagesChanged();
 					if (!m_messages.isEmpty() && !m_hasMore)
 						requestRemoteHistory();
                     QHash<QString, QJsonArray> unreadBySender;
                     QHash<QString, qint64> latestBySender;
-                    for (const auto &entry : std::as_const(m_messages)) {
+                    const auto loaded = m_messages.items();
+                    for (const auto &entry : loaded) {
                         const auto message = entry.toMap();
                         if (message.value(QStringLiteral("from_me")).toBool())
                             continue;
@@ -417,7 +475,6 @@ void RpcClient::closeChat()
     m_messages.clear();
     emit selectedChatChanged();
     emit searchResultsChanged();
-    emit messagesChanged();
 }
 
 void RpcClient::loadOlderMessages()
@@ -437,12 +494,9 @@ void RpcClient::loadOlderMessages()
                     if (!error.isEmpty())
                         return;
                     const auto page = result.toObject();
-                    auto older = page.value(QStringLiteral("messages")).toArray().toVariantList();
-                    older.append(m_messages);
-                    m_messages = older;
+                    m_messages.prepend(page.value(QStringLiteral("messages")).toArray().toVariantList());
                     m_hasMore = page.value(QStringLiteral("has_more")).toBool();
                     m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
-                    emit messagesChanged();
 					if (!m_hasMore)
 						requestRemoteHistory();
                 });
@@ -452,7 +506,7 @@ void RpcClient::requestRemoteHistory()
 {
 	if (m_waitingRemoteHistory || m_messages.isEmpty() || m_selectedChat.isEmpty())
 		return;
-	const auto oldest = m_messages.constFirst().toMap();
+	const auto oldest = m_messages.oldest();
 	const auto boundary = m_selectedChat.value(QStringLiteral("jid")).toString()
 		+ QStringLiteral(":") + oldest.value(QStringLiteral("id")).toString();
 	if (m_requestedHistoryBoundaries.contains(boundary))
@@ -484,12 +538,9 @@ void RpcClient::loadRemoteHistoryPage()
 			if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
 				return;
 			const auto page = result.toObject();
-			auto older = page.value(QStringLiteral("messages")).toArray().toVariantList();
-			older.append(m_messages);
-			m_messages = older;
+			m_messages.prepend(page.value(QStringLiteral("messages")).toArray().toVariantList());
 			m_hasMore = page.value(QStringLiteral("has_more")).toBool();
 			m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
-			emit messagesChanged();
 		});
 }
 
@@ -635,7 +686,6 @@ void RpcClient::switchProfile(const QString &profile)
     emit profileChanged();
     emit statusChanged();
     emit chatsChanged();
-    emit messagesChanged();
     emit selectedChatChanged();
     emit searchResultsChanged();
     emit statusUpdatesChanged();
@@ -686,6 +736,49 @@ void RpcClient::openFile(const QString &path)
         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
+// ensureMedia fetches media that arrived without a preview. History
+// synchronisation strips the small picture WhatsApp normally embeds in a
+// message, so old photos can only be shown by downloading them. Requests are
+// limited to a few at a time: a conversation can hold thousands of pictures,
+// and the view asks for every one it shows.
+void RpcClient::ensureMedia(const QString &messageId)
+{
+    if (messageId.isEmpty() || m_selectedChat.isEmpty() || !daemonConnected())
+        return;
+    if (m_requestedMedia.contains(messageId))
+        return;
+    m_requestedMedia.insert(messageId);
+    m_mediaQueue.append(messageId);
+    pumpMediaQueue();
+}
+
+void RpcClient::pumpMediaQueue()
+{
+    constexpr int concurrentDownloads = 3;
+    while (m_mediaInFlight < concurrentDownloads && !m_mediaQueue.isEmpty()) {
+        const auto messageId = m_mediaQueue.takeFirst();
+        const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+        if (chatJid.isEmpty())
+            return;
+        ++m_mediaInFlight;
+        sendRequest(QStringLiteral("message.download"),
+            {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("message_id"), messageId}},
+            [this](const QJsonValue &result, const QJsonObject &error) {
+                --m_mediaInFlight;
+                if (error.isEmpty()) {
+                    const auto message = result.toObject().toVariantMap();
+                    upsertMessage(message);
+                }
+                pumpMediaQueue();
+            });
+    }
+}
+
+QVariantMap RpcClient::nextAudioAfter(const QString &messageId) const
+{
+    return ::nextAudioAfter(m_messages.items(), messageId);
+}
+
 void RpcClient::downloadMedia(const QString &messageId)
 {
 	if (m_selectedChat.isEmpty() || messageId.isEmpty())
@@ -698,9 +791,12 @@ void RpcClient::downloadMedia(const QString &messageId)
 				return;
 			const auto message = result.toObject().toVariantMap();
 			upsertMessage(message);
+			// Downloading only makes the file available. What happens next is
+			// the caller's decision: audio and video play inside the window,
+			// documents are opened with their desktop application.
 			const auto path = message.value(QStringLiteral("media_path")).toString();
 			if (!path.isEmpty())
-				openFile(path);
+				emit mediaReady(message.value(QStringLiteral("id")).toString(), path);
 		});
 }
 
@@ -799,6 +895,14 @@ void RpcClient::copyImage(const QString &messageId, const QString &path)
 		});
 }
 
+void RpcClient::copyText(const QString &text)
+{
+	if (text.isEmpty())
+		return;
+	QGuiApplication::clipboard()->setText(text);
+	emit noticeOccurred(tr("Text copied"));
+}
+
 void RpcClient::refreshStatuses()
 {
     sendRequest(QStringLiteral("statuses.list"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
@@ -849,14 +953,5 @@ void RpcClient::setBusy(bool value)
 
 void RpcClient::upsertMessage(const QVariantMap &message)
 {
-    const auto id = message.value(QStringLiteral("id"));
-    for (qsizetype i = 0; i < m_messages.size(); ++i) {
-        if (m_messages.at(i).toMap().value(QStringLiteral("id")) == id) {
-            m_messages[i] = message;
-            emit messagesChanged();
-            return;
-        }
-    }
-    m_messages.append(message);
-    emit messagesChanged();
+    m_messages.upsert(message);
 }

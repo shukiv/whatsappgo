@@ -28,6 +28,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 
 	"github.com/shuki/whatsappgo/internal/gateway"
+	"github.com/shuki/whatsappgo/internal/mediastore"
 	"github.com/shuki/whatsappgo/internal/model"
 	"github.com/shuki/whatsappgo/internal/notify"
 	"github.com/shuki/whatsappgo/internal/store"
@@ -37,8 +38,12 @@ type Client struct {
 	wa        *whatsmeow.Client
 	container *sqlstore.Container
 	store     *store.Store
-	notifier  notify.Notifier
-	mediaDir  string
+	media     *mediastore.Store
+	// baseCtx ends when the daemon shuts down, so background collection stops
+	// with it rather than outliving the process's other work.
+	baseCtx  context.Context
+	notifier notify.Notifier
+	mediaDir string
 
 	mu              sync.RWMutex
 	status          model.ConnectionStatus
@@ -49,7 +54,7 @@ type Client struct {
 	historyRequests map[string]time.Time
 }
 
-func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, notifier notify.Notifier) (*Client, error) {
+func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
 	if notifier == nil {
 		notifier = notify.Noop{}
 	}
@@ -72,7 +77,7 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, notifi
 	// Required for the one-time call-history recovery sync. Without this,
 	// whatsmeow intentionally suppresses generic app-state events on snapshots.
 	wa.EmitAppStateEventsOnFullSync = true
-	c := &Client{wa: wa, container: container, store: st, notifier: notifier, mediaDir: mediaDir, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time)}
+	c := &Client{wa: wa, container: container, store: st, media: media, notifier: notifier, mediaDir: mediaDir, baseCtx: ctx, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time)}
 	c.status = model.ConnectionStatus{State: "disconnected", LoggedIn: wa.Store.ID != nil, LastChange: model.NowMillis()}
 	if wa.Store.ID != nil {
 		c.status.UserJID = wa.Store.ID.String()
@@ -312,6 +317,23 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 			return msg, nil
 		}
 	}
+	// The attachment database is the durable copy. Clearing the media cache
+	// therefore loses nothing: the file is written back from storage instead of
+	// being fetched from WhatsApp again, which may no longer be possible.
+	if c.media != nil {
+		path := c.cachePath(msg)
+		if restored, restoreErr := c.media.Materialise(ctx, msg.ChatJID, msg.ID, path); restoreErr == nil && restored {
+			msg.MediaPath = path
+			if info, statErr := os.Stat(path); statErr == nil {
+				msg.MediaSize = info.Size()
+			}
+			if err := c.store.UpsertMessage(ctx, msg, "", false); err != nil {
+				return model.Message{}, err
+			}
+			c.emit(gateway.Event{Name: "message.upsert", Data: msg})
+			return msg, nil
+		}
+	}
 	payload, available, err := c.store.MediaPayload(ctx, chatJID, messageID)
 	if err != nil {
 		return model.Message{}, err
@@ -432,6 +454,12 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 	localPath := req.Path
 	if cached, err := c.cacheOutgoing(req.Path, chat.String(), string(resp.ID), kind); err == nil {
 		localPath = cached
+	}
+	if c.media != nil {
+		info := mediastore.Info{MIME: mimeType, Name: filepath.Base(req.Path), Size: stat.Size()}
+		if err := c.media.PutFile(ctx, chat.String(), string(resp.ID), info, localPath); err != nil {
+			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store sent attachment: " + err.Error()}})
+		}
 	}
 	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size()}, nil
 }

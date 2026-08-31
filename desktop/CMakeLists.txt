@@ -14,11 +14,14 @@ qt_policy(SET QTP0004 NEW)
 
 qt_add_executable(whatsappgo
     src/main.cpp
+    src/messagemodel.cpp
+    src/messagemodel.h
     src/rpcclient.cpp
     src/rpcclient.h
 )
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/Playback.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(whatsappgo
     URI org.whatsappgo
@@ -27,6 +30,7 @@ qt_add_qml_module(whatsappgo
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
+        qml/Playback.qml
         qml/PairingPage.qml
         qml/ChatListDelegate.qml
         qml/ChatFilterBar.qml
@@ -39,6 +43,7 @@ qt_add_qml_module(whatsappgo
         qml/TintedIcon.qml
         qml/ThemedToolButton.qml
         qml/OverlayScrollBar.qml
+        qml/ReadReceipt.qml
         qml/EmojiPicker.qml
         qml/WhatsAppMenuPopup.qml
         qml/WhatsAppMenuItem.qml
@@ -64,6 +69,10 @@ qt_add_qml_module(whatsappgo
         qml/icons/rotate-left.svg
         qml/icons/rotate-right.svg
         qml/icons/user.svg
+        qml/icons/pin.svg
+        qml/icons/archive.svg
+        qml/icons/back.svg
+        qml/icons/mute.svg
         qml/icons/chats.svg
         qml/icons/sun.svg
         qml/icons/moon.svg
@@ -91,11 +100,23 @@ include(CTest)
 if(BUILD_TESTING)
     qt_add_executable(pairing-auto-start-test
         tests/PairingAutoStart.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
         src/rpcclient.cpp
         src/rpcclient.h
     )
     target_include_directories(pairing-auto-start-test PRIVATE src)
     target_link_libraries(pairing-auto-start-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
+    qt_add_executable(message-model-test
+        tests/MessageModel.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+    )
+    target_include_directories(message-model-test PRIVATE src)
+    target_link_libraries(message-model-test PRIVATE Qt6::Core)
+    add_test(NAME desktop-message-model COMMAND message-model-test)
+    set_tests_properties(desktop-message-model PROPERTIES TIMEOUT 10)
 
     add_test(NAME desktop-qml-smoke COMMAND whatsappgo --smoke-test)
     set_tests_properties(desktop-qml-smoke PROPERTIES

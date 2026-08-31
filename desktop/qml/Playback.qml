@@ -1,0 +1,126 @@
+pragma Singleton
+import QtQuick
+import QtMultimedia
+
+// Playback owns the one media player the application uses.
+//
+// Voice notes, audio files, and videos play inside the window. Handing them to
+// the desktop instead opened a browser on systems without a registered handler
+// for Opus audio, which is not a media player.
+//
+// A single shared player also means starting one voice note stops the previous
+// one, and only one decoder exists no matter how long the conversation is.
+Item {
+    id: root
+
+    // Identity of the message being played, so a delegate can show its own
+    // progress without holding a player of its own.
+    property string currentId: ""
+    property string currentPath: ""
+    property bool isVideo: false
+    // Set by the window to the surface video frames are drawn on.
+    property var videoSurface: null
+    // The message waiting for its file to finish downloading.
+    property string pendingId: ""
+    property bool pendingIsVideo: false
+
+    readonly property bool active: currentId !== ""
+    readonly property bool playing: loader.item ? loader.item.playbackState === MediaPlayer.PlayingState : false
+    readonly property int position: loader.item ? loader.item.position : 0
+    readonly property int duration: loader.item ? loader.item.duration : 0
+    readonly property bool videoActive: active && isVideo
+
+    signal downloadRequested(string messageId)
+    signal failed(string message)
+    // Emitted when a recording reaches its end, so the conversation can move
+    // on to the next one the way WhatsApp plays a run of voice notes.
+    signal finished(string messageId)
+
+    function isCurrent(messageId) {
+        return messageId !== "" && messageId === currentId
+    }
+
+    // start plays a message, downloading it first when it is not cached yet.
+    function start(messageId, path, video) {
+        if (!messageId)
+            return
+        if (isCurrent(messageId)) {
+            toggle()
+            return
+        }
+        if (!path) {
+            pendingId = messageId
+            pendingIsVideo = Boolean(video)
+            downloadRequested(messageId)
+            return
+        }
+        pendingId = ""
+        currentId = messageId
+        currentPath = String(path)
+        isVideo = Boolean(video)
+        loader.active = true
+        if (!loader.item)
+            return
+        loader.item.source = "file://" + currentPath
+        loader.item.play()
+    }
+
+    // fileReady resumes a start() that was waiting for a download.
+    function fileReady(messageId, path) {
+        if (messageId !== pendingId || !path)
+            return
+        const video = pendingIsVideo
+        pendingId = ""
+        start(messageId, path, video)
+    }
+
+    function toggle() {
+        if (!loader.item)
+            return
+        if (loader.item.playbackState === MediaPlayer.PlayingState)
+            loader.item.pause()
+        else
+            loader.item.play()
+    }
+
+    function stop() {
+        pendingId = ""
+        if (loader.item) {
+            loader.item.stop()
+            loader.item.source = ""
+        }
+        currentId = ""
+        currentPath = ""
+        isVideo = false
+    }
+
+    function seek(milliseconds) {
+        if (loader.item && loader.item.seekable)
+            loader.item.position = Math.max(0, Math.min(milliseconds, loader.item.duration))
+    }
+
+    // The player is created on first use. Declaring it eagerly would start the
+    // multimedia backend during application startup, which is both wasteful and
+    // noisy on machines without a working audio stack.
+    Loader {
+        id: loader
+        active: false
+        sourceComponent: Component {
+            MediaPlayer {
+                audioOutput: AudioOutput {}
+                videoOutput: root.videoSurface
+                onErrorOccurred: (error, errorString) => {
+                    root.failed(errorString)
+                    root.stop()
+                }
+                onMediaStatusChanged: {
+                    if (mediaStatus !== MediaPlayer.EndOfMedia || root.isVideo)
+                        return
+                    const completed = root.currentId
+                    root.stop()
+                    root.finished(completed)
+                }
+            }
+        }
+    }
+}

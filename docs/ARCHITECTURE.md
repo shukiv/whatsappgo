@@ -88,6 +88,45 @@ title, avatar, and activity time and leave the rest untouched. On-demand
 history pages are treated the same way: an absent field there means "not
 included", never "cleared".
 
+### Attachment storage
+
+`media.db` holds the bytes of every attachment that has been downloaded or
+sent, split into chunks so a large video is never read or written as a single
+value. It is a separate database because attachments are large and would
+otherwise inflate the write-ahead log of the message index.
+
+The database is the durable copy; the media cache directory is a disposable
+materialisation that exists because the desktop reads files, not blobs. Opening
+an attachment whose cached file is missing restores it from the database instead
+of asking WhatsApp for it again, which old media no longer allows. Attachment
+bytes never travel over the RPC socket; only paths do.
+
+### Shared contacts and places
+
+A shared contact travels as a vCard. The name and the first telephone number
+are read out of it once, when the message is stored, so the interface never
+parses a card while drawing. A shared place carries its coordinates and a small
+map picture, which is cached like any other preview. Neither is fetched from a
+network service.
+
+### Link previews
+
+A link preview belongs to the message: the sending client resolves the page and
+puts the title, description, and a small picture inside the protobuf. WhatsAppGo
+stores those fields and renders them. It never requests the linked page, so
+reading a conversation reveals nothing to the sites it mentions.
+
+History synchronisation strips the inline picture from media messages, and does
+not carry link previews for messages that predate this feature. Pictures are
+therefore fetched on demand for the messages the conversation is showing, a few
+at a time, which bounds the work to what is on screen.
+
+The daemon also collects attachments on its own, newest first, one file every
+1.5 seconds, up to 400 files per connection and skipping anything above 50 MB.
+Its position is written to the message database, so a restart resumes rather
+than starting again, and everything it fetches goes into `media.db`.
+Attachments WhatsApp no longer serves are skipped without stopping the scan.
+
 ### Media previews
 
 Media messages carry a small inline preview. It is written to
@@ -149,6 +188,11 @@ QML composer → RPC request → whatsmeow send → SQLite transaction
 
 ## Memory and rendering
 
+- The conversation is a `QAbstractListModel`. Reporting insertions precisely
+  keeps the viewport anchored when an older page is prepended, and stops every
+  delegate from being rebuilt whenever one receipt arrives.
+- One shared media player serves the whole window, created on first use so the
+  multimedia backend is not started by an application that never plays anything.
 - QML `ListView` reuses chat and message delegates.
 - SQLite returns bounded pages rather than entire conversations.
 - Media is file-backed and downloaded outside the UI process.

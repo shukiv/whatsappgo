@@ -14,6 +14,7 @@ type Paths struct {
 	RuntimeDir string
 	DeviceDB   string
 	MessageDB  string
+	MediaDB    string
 	MediaDir   string
 	Socket     string
 }
@@ -61,6 +62,7 @@ func ResolveProfile(profile string) (Paths, error) {
 		RuntimeDir: runtimeDir,
 		DeviceDB:   filepath.Join(dataDir, "device.db"),
 		MessageDB:  filepath.Join(dataDir, "messages.db"),
+		MediaDB:    filepath.Join(dataDir, "media.db"),
 		MediaDir:   filepath.Join(cacheDir, "media"),
 		Socket:     filepath.Join(runtimeDir, socketName),
 	}, nil

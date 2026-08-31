@@ -33,9 +33,10 @@ func (s *Service) Close() {
 }
 
 type chatListParams struct {
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
-	Query  string `json:"query"`
+	Limit    int    `json:"limit"`
+	Offset   int    `json:"offset"`
+	Query    string `json:"query"`
+	Archived bool   `json:"archived"`
 }
 type messageListParams struct {
 	ChatJID string `json:"chat_jid"`
@@ -79,6 +80,10 @@ type readParams struct {
 	SenderJID  string   `json:"sender_jid"`
 	MessageIDs []string `json:"message_ids"`
 	Timestamp  int64    `json:"timestamp"`
+}
+type chatFlagParams struct {
+	ChatJID string `json:"chat_jid"`
+	Value   bool   `json:"value"`
 }
 type typingParams struct {
 	ChatJID string `json:"chat_jid"`
@@ -124,7 +129,38 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
+		if p.Archived {
+			return s.store.ListArchivedChats(ctx, p.Limit, p.Offset, p.Query)
+		}
 		return s.store.ListChats(ctx, p.Limit, p.Offset, p.Query)
+	case "chats.archived_count":
+		count, err := s.store.ArchivedChatCount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]int{"count": count}, nil
+	// "chat.read" already marks messages read for receipts; this one changes
+	// the conversation's own read state, which WhatsApp tracks separately.
+	case "chat.pin", "chat.mute", "chat.archive", "chat.set_read":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		var err error
+		switch method {
+		case "chat.pin":
+			err = s.gateway.SetChatPinned(ctx, p.ChatJID, p.Value)
+		case "chat.mute":
+			err = s.gateway.SetChatMuted(ctx, p.ChatJID, p.Value)
+		case "chat.archive":
+			err = s.gateway.SetChatArchived(ctx, p.ChatJID, p.Value)
+		default:
+			err = s.gateway.SetChatRead(ctx, p.ChatJID, p.Value)
+		}
+		return okResult(), err
 	case "statuses.list":
 		page, err := s.store.ListMessages(ctx, "status@broadcast", 0, 200)
 		if err != nil {

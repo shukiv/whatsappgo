@@ -17,6 +17,13 @@ Item {
     visible: previewActive
     Accessible.name: qsTr("Image preview")
 
+    // Escape backs out of the preview, the way it closes every other overlay.
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        enabled: root.previewActive
+        onActivated: root.closePreview()
+    }
+
     function openImage(url) {
         imageUrl = url
         imageRotation = 0
@@ -79,15 +86,6 @@ Item {
                 background: Rectangle { radius: 22; color: parent.hovered ? Theme.hoverRow : "transparent" }
             }
             ThemedToolButton {
-                Layout.preferredWidth: 44
-                Layout.preferredHeight: 44
-                iconSource: Qt.resolvedUrl("icons/edit.svg")
-                iconSize: 20
-                Accessible.name: qsTr("Edit caption")
-                onClicked: caption.forceActiveFocus()
-                background: Rectangle { radius: 22; color: parent.hovered ? Theme.hoverRow : "transparent" }
-            }
-            ThemedToolButton {
                 id: previewEmojiButton
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 44
@@ -107,12 +105,21 @@ Item {
         anchors.top: toolbar.bottom
         anchors.bottom: footer.top
         anchors.margins: 20
+        // A rotated image is drawn from its centre, so a quarter turn pushes
+        // its corners outside this area and over the toolbar unless it is both
+        // clipped and measured against the side it will occupy once turned.
+        clip: true
 
         Image {
             id: previewImage
             anchors.centerIn: parent
-            width: Math.min(sourceSize.width > 0 ? sourceSize.width : 520, parent.width - 40)
-            height: Math.min(sourceSize.height > 0 ? sourceSize.height : 520, parent.height - 36)
+            readonly property bool quarterTurn: Math.abs(root.imageRotation % 180) === 90
+            readonly property real naturalWidth: sourceSize.width > 0 ? sourceSize.width : 520
+            readonly property real naturalHeight: sourceSize.height > 0 ? sourceSize.height : 520
+            readonly property real availableAcross: quarterTurn ? parent.height - 16 : parent.width - 40
+            readonly property real availableDown: quarterTurn ? parent.width - 40 : parent.height - 16
+            width: Math.max(1, Math.min(naturalWidth, availableAcross))
+            height: Math.max(1, Math.min(naturalHeight, availableDown))
             source: root.imageUrl
             rotation: root.imageRotation
             fillMode: Image.PreserveAspectFit
