@@ -4,7 +4,7 @@
   <name>WhatsAppGo</name>
   <summary>A low-memory native WhatsApp client for Linux</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MPL-2.0</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <developer id="org.whatsappgo"><name>WhatsAppGo Contributors</name></developer>
   <description>
     <p>WhatsAppGo is an unofficial Linux-first WhatsApp client. A native Qt and Kirigami interface automatically manages its bundled Go backend, which uses the WhatsApp multi-device protocol.</p>

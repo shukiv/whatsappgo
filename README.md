@@ -171,5 +171,5 @@ docs/               user, developer, architecture, security, troubleshooting
 
 ## License
 
-Mozilla Public License 2.0. Product names and trademarks belong to their
-respective owners.
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE). Product names
+and trademarks belong to their respective owners.

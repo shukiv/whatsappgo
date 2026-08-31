@@ -67,6 +67,7 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media 
 	if notifier == nil {
 		notifier = notify.Noop{}
 	}
+	configureDeviceIdentity()
 	db, err := sql.Open("sqlite", "file:"+deviceDB+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err

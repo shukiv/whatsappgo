@@ -23,6 +23,9 @@ only while the application is open.
 4. Keep both devices online while the initial history and directory sync run.
 
 Use **Refresh QR code** if it expires. The first QR is generated automatically.
+New QR-linked registrations appear as **WhatsAppGo** in the phone's linked-device
+list. An entry created by an older build keeps its original name until it is
+logged out and paired again.
 
 ### Phone pairing code
 

@@ -2,7 +2,7 @@ Name:           whatsappgo
 Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
-License:        MPL-2.0
+License:        GPL-3.0-or-later
 URL:            https://github.com/shukiv/whatsappgo
 Source0:        %{name}-%{version}.tar.gz
 
