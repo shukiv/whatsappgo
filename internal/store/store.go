@@ -1060,15 +1060,15 @@ func (s *Store) MessagesMissingThumbnails(ctx context.Context, after MediaCursor
 	return result, rows.Err()
 }
 
-// MessagesMissingLinkPreviews returns link-bearing text messages without a
-// cached card image. The caller further restricts the scan to YouTube URLs.
-func (s *Store) MessagesMissingLinkPreviews(ctx context.Context, after MediaCursor, limit int) ([]PendingLinkPreview, error) {
+// MessagesForLinkPreviewBackfill returns link-bearing text messages. The
+// caller restricts the scan to YouTube and may replace an older low-resolution
+// cached card as well as fill a missing one.
+func (s *Store) MessagesForLinkPreviewBackfill(ctx context.Context, after MediaCursor, limit int) ([]PendingLinkPreview, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT chat_jid,id,body,link_url FROM messages
- WHERE link_thumbnail='' AND kind='text'
-  AND (link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')
+ WHERE kind='text' AND (link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')
   AND (chat_jid,id) > (?,?)
  ORDER BY chat_jid,id LIMIT ?`, after.ChatJID, after.MessageID, limit)
 	if err != nil {

@@ -24,7 +24,7 @@ import (
 const maxInlineThumbnail = 1 << 20
 
 const thumbnailBackfillMetadataKey = "media_thumbnail_backfill_v1"
-const linkPreviewBackfillMetadataKey = "youtube_link_preview_backfill_v1"
+const linkPreviewBackfillMetadataKey = "youtube_link_preview_backfill_v3"
 
 // thumbnailFromMessage returns the small preview picture WhatsApp embeds
 // directly in a media message, together with the extension for its format.
@@ -76,6 +76,14 @@ func (c *Client) withCachedLinkPreview(msg model.Message, raw *waE2E.Message) mo
 }
 
 func (c *Client) writeThumbnail(key string, data []byte, ext string) string {
+	return c.writeThumbnailFile(key, data, ext, false)
+}
+
+func (c *Client) writeThumbnailReplacing(key string, data []byte, ext string) string {
+	return c.writeThumbnailFile(key, data, ext, true)
+}
+
+func (c *Client) writeThumbnailFile(key string, data []byte, ext string, replace bool) string {
 	if len(data) == 0 || len(data) > maxInlineThumbnail || ext == "" {
 		return ""
 	}
@@ -88,7 +96,7 @@ func (c *Client) writeThumbnail(key string, data []byte, ext string) string {
 		return ""
 	}
 	path := filepath.Join(dir, safeName(key)+ext)
-	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+	if info, err := os.Stat(path); !replace && err == nil && info.Size() > 0 {
 		return path
 	}
 	tmp, err := os.CreateTemp(dir, "thumb-*")
@@ -185,7 +193,7 @@ func (c *Client) backfillLinkPreviews() {
 	updatedChats := make(map[string]struct{})
 	updated := 0
 	for {
-		pending, err := c.store.MessagesMissingLinkPreviews(ctx, cursor, 100)
+		pending, err := c.store.MessagesForLinkPreviewBackfill(ctx, cursor, 100)
 		if err != nil || len(pending) == 0 {
 			break
 		}
@@ -196,7 +204,10 @@ func (c *Client) backfillLinkPreviews() {
 			}
 			if linkpreview.IsYouTube(text) {
 				if preview, err := resolver(ctx, text); err == nil {
-					path := c.writeThumbnail(item.ChatJID+"-"+item.MessageID+"-link", preview.Thumbnail, ".jpg")
+					// Use a distinct cache key for the high-resolution migration.
+					// Changing the URL makes an already-visible QML Image discard its
+					// in-memory copy immediately when the message refresh event arrives.
+					path := c.writeThumbnailReplacing(item.ChatJID+"-"+item.MessageID+"-link-hq", preview.Thumbnail, ".jpg")
 					if path != "" {
 						if err := c.store.UpdateLinkPreview(ctx, item.ChatJID, item.MessageID, preview.URL, preview.Title, preview.Description, path); err != nil {
 							return

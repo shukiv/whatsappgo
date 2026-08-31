@@ -147,6 +147,13 @@ func resolveYouTube(ctx context.Context, rawURL string, client *http.Client) (mo
 	if preview.Title == "" {
 		return model.LinkPreview{}, errors.New("YouTube oEmbed has no title")
 	}
+	if maxResolutionURL := youtubeMaxResolutionThumbnail(metadata.ThumbnailURL); maxResolutionURL != "" {
+		if thumbnail, imageErr := fetchThumbnail(ctx, client, maxResolutionURL); imageErr == nil {
+			preview.Thumbnail = thumbnail
+			preview.ThumbnailMIME = "image/jpeg"
+			return preview, nil
+		}
+	}
 	if metadata.ThumbnailURL != "" {
 		if thumbnail, imageErr := fetchThumbnail(ctx, client, metadata.ThumbnailURL); imageErr == nil {
 			preview.Thumbnail = thumbnail
@@ -154,6 +161,25 @@ func resolveYouTube(ctx context.Context, rawURL string, client *http.Client) (mo
 		}
 	}
 	return preview, nil
+}
+
+func youtubeMaxResolutionThumbnail(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host != "i.ytimg.com" && host != "img.youtube.com" {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 3 || (parts[0] != "vi" && parts[0] != "vi_webp") || parts[1] == "" {
+		return ""
+	}
+	parsed.Path = "/vi/" + parts[1] + "/maxresdefault.jpg"
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	return parsed.String()
 }
 
 func metadataFromDocument(base *url.URL, doc *html.Node) (model.LinkPreview, string) {
@@ -226,9 +252,12 @@ func fetchThumbnail(ctx context.Context, client *http.Client, rawURL string) ([]
 	if err != nil {
 		return nil, err
 	}
-	thumb := scaledImage(source, 320, 180)
+	// Link cards can span most of a desktop conversation and are commonly
+	// displayed on high-DPI screens. Keeping up to 1280x720 avoids stretching a
+	// tiny cache file while still bounding disk and local-RPC use.
+	thumb := scaledImage(source, 1280, 720)
 	var encoded bytes.Buffer
-	if err := jpeg.Encode(&encoded, thumb, &jpeg.Options{Quality: 78}); err != nil {
+	if err := jpeg.Encode(&encoded, thumb, &jpeg.Options{Quality: 88}); err != nil {
 		return nil, err
 	}
 	return encoded.Bytes(), nil

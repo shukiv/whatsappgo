@@ -19,14 +19,32 @@ import (
 )
 
 func jpegBytes(t *testing.T) []byte {
+	return jpegSized(t, 8, 6)
+}
+
+func jpegSized(t *testing.T, width, height int) []byte {
 	t.Helper()
-	source := image.NewRGBA(image.Rect(0, 0, 8, 6))
+	source := image.NewRGBA(image.Rect(0, 0, width, height))
 	source.Set(0, 0, color.RGBA{R: 37, G: 211, B: 102, A: 255})
 	var buffer bytes.Buffer
 	if err := jpeg.Encode(&buffer, source, nil); err != nil {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+func imageSize(t *testing.T, path string) (int, int) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	config, _, err := image.DecodeConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config.Width, config.Height
 }
 
 func pngBytes(t *testing.T) []byte {
@@ -214,5 +232,40 @@ func TestBackfillLinkPreviewsRepairsHistoricalYouTubeCard(t *testing.T) {
 	}
 	if _, done, err := st.Metadata(ctx, linkPreviewBackfillMetadataKey); err != nil || !done {
 		t.Fatalf("link preview backfill was not recorded: done=%v err=%v", done, err)
+	}
+}
+
+func TestBackfillLinkPreviewsUpgradesLowResolutionYouTubeCard(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const chat = "george@lid"
+	const messageID = "youtube-low-resolution"
+	c := &Client{store: st, mediaDir: t.TempDir()}
+	lowPath := c.writeThumbnail(chat+"-"+messageID+"-link", jpegSized(t, 240, 180), ".jpg")
+	if err := st.UpsertMessage(ctx, model.Message{
+		ID: messageID, ChatJID: chat, Timestamp: 1, Kind: "text", Status: "received",
+		Body: "https://youtu.be/ub1O8H02j4E?si=test", LinkURL: "https://youtu.be/ub1O8H02j4E?si=test",
+		LinkTitle: "Real video", LinkDescription: "Channel", LinkThumbnail: lowPath,
+	}, "George", false); err != nil {
+		t.Fatal(err)
+	}
+	c.resolveLinkPreview = func(context.Context, string) (model.LinkPreview, error) {
+		return model.LinkPreview{URL: "https://youtu.be/ub1O8H02j4E?si=test", Title: "Real video", Description: "Channel", Thumbnail: jpegSized(t, 1280, 720), ThumbnailMIME: "image/jpeg"}, nil
+	}
+	c.backfillLinkPreviews()
+	message, err := st.GetMessage(ctx, chat, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.LinkThumbnail == lowPath {
+		t.Fatal("upgraded thumbnail reused the cached URL, so the UI would keep stale pixels")
+	}
+	width, height := imageSize(t, message.LinkThumbnail)
+	if width < 640 || height < 360 {
+		t.Fatalf("historical thumbnail stayed at %dx%d", width, height)
 	}
 }
