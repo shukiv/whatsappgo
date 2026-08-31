@@ -1,0 +1,158 @@
+#pragma once
+
+#include <QHash>
+#include <QJsonObject>
+#include <QLocalSocket>
+#include <QObject>
+#include <QTimer>
+#include <QVariantList>
+#include <QVariantMap>
+#include <QStringList>
+#include <QSet>
+
+#include <functional>
+
+class QProcess;
+
+class RpcClient final : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(bool daemonConnected READ daemonConnected NOTIFY daemonConnectedChanged)
+    Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY statusChanged)
+    Q_PROPERTY(QVariantMap status READ status NOTIFY statusChanged)
+    Q_PROPERTY(QVariantList chats READ chats NOTIFY chatsChanged)
+    Q_PROPERTY(QVariantList messages READ messages NOTIFY messagesChanged)
+    Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
+    Q_PROPERTY(QString pairingQr READ pairingQr NOTIFY pairingQrChanged)
+    Q_PROPERTY(QString pairingCode READ pairingCode NOTIFY pairingCodeChanged)
+    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(QString profile READ profile NOTIFY profileChanged)
+    Q_PROPERTY(QStringList profiles READ profiles NOTIFY profilesChanged)
+    Q_PROPERTY(QVariantList searchResults READ searchResults NOTIFY searchResultsChanged)
+    Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
+    Q_PROPERTY(QVariantList callLogs READ callLogs NOTIFY callLogsChanged)
+    Q_PROPERTY(QVariantList channels READ channels NOTIFY channelsChanged)
+    Q_PROPERTY(QVariantList communities READ communities NOTIFY communitiesChanged)
+    Q_PROPERTY(bool clipboardHasImage READ clipboardHasImage NOTIFY clipboardChanged)
+
+public:
+    explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
+    ~RpcClient() override;
+
+    bool daemonConnected() const;
+    bool loggedIn() const;
+    QVariantMap status() const { return m_status; }
+    QVariantList chats() const { return m_chats; }
+    QVariantList messages() const { return m_messages; }
+    QVariantMap selectedChat() const { return m_selectedChat; }
+    QString pairingQr() const { return m_pairingQr; }
+    QString pairingCode() const { return m_pairingCode; }
+    bool busy() const { return m_busy; }
+    QString profile() const { return m_profile; }
+    QStringList profiles() const { return m_profiles; }
+    QVariantList searchResults() const { return m_searchResults; }
+    QVariantList statusUpdates() const { return m_statusUpdates; }
+    QVariantList callLogs() const { return m_callLogs; }
+    QVariantList channels() const { return m_channels; }
+    QVariantList communities() const { return m_communities; }
+    bool clipboardHasImage() const;
+
+    Q_INVOKABLE void reconnect();
+    Q_INVOKABLE void refreshStatus();
+    Q_INVOKABLE void refreshChats(const QString &query = {});
+    Q_INVOKABLE void openChat(const QString &jid, const QString &title);
+    Q_INVOKABLE void closeChat();
+    Q_INVOKABLE void loadOlderMessages();
+    Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
+    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {});
+    Q_INVOKABLE void sendVoice(const QString &localUrl);
+    Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
+    Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
+    Q_INVOKABLE void reactMessage(const QString &messageId, const QString &senderJid, const QString &reaction);
+    Q_INVOKABLE void startChat(const QString &phone);
+    Q_INVOKABLE void setTyping(bool typing);
+    Q_INVOKABLE void startPairing();
+    Q_INVOKABLE void pairPhone(const QString &phone);
+    Q_INVOKABLE void logout();
+    Q_INVOKABLE void switchProfile(const QString &profile);
+    Q_INVOKABLE void addProfile(const QString &name);
+    Q_INVOKABLE void searchMessages(const QString &query);
+    Q_INVOKABLE void openFile(const QString &path);
+    Q_INVOKABLE void downloadMedia(const QString &messageId);
+    Q_INVOKABLE QString prepareClipboardImage();
+    Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {});
+    Q_INVOKABLE void discardClipboardImage(const QString &localUrl);
+    Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
+    Q_INVOKABLE void refreshStatuses();
+    Q_INVOKABLE void refreshCalls();
+    Q_INVOKABLE void refreshChannels();
+    Q_INVOKABLE void refreshCommunities();
+
+signals:
+    void daemonConnectedChanged();
+    void statusChanged();
+    void chatsChanged();
+    void messagesChanged();
+    void selectedChatChanged();
+    void pairingQrChanged();
+    void pairingCodeChanged();
+    void busyChanged();
+    void errorOccurred(const QString &message);
+    void messageSent();
+    void profileChanged();
+    void profilesChanged();
+    void searchResultsChanged();
+    void statusUpdatesChanged();
+    void callLogsChanged();
+    void channelsChanged();
+    void communitiesChanged();
+    void clipboardChanged();
+    void noticeOccurred(const QString &message);
+
+private:
+    using Callback = std::function<void(const QJsonValue &, const QJsonObject &)>;
+
+    void connectSocket();
+    void sendRequest(const QString &method, const QJsonObject &params, Callback callback = {});
+    void processLine(const QByteArray &line);
+    void processEvent(const QString &name, const QJsonValue &data);
+    void setBusy(bool value);
+    void upsertMessage(const QVariantMap &message);
+    void requestRemoteHistory();
+    void loadRemoteHistoryPage();
+    bool copyImageFile(const QString &path);
+    QString clipboardDirectory() const;
+    bool isClipboardFile(const QString &path) const;
+    QString socketPath() const;
+    void startBackendForCurrentProfile();
+    void stopOwnedBackends();
+
+    QLocalSocket m_socket;
+    QTimer m_reconnectTimer;
+    QByteArray m_readBuffer;
+    quint64 m_nextId = 0;
+    QHash<QString, Callback> m_pending;
+    QVariantMap m_status;
+    QVariantList m_chats;
+    QVariantList m_messages;
+    QVariantMap m_selectedChat;
+    QVariantList m_searchResults;
+    QVariantList m_statusUpdates;
+    QVariantList m_callLogs;
+    QVariantList m_channels;
+    QVariantList m_communities;
+    QString m_pairingQr;
+    QString m_pairingCode;
+    QString m_profile = QStringLiteral("default");
+    QStringList m_profiles{QStringLiteral("default")};
+    bool m_busy = false;
+    QHash<QString, QProcess *> m_ownedBackends;
+    bool m_shuttingDown = false;
+    QString m_initialChat;
+    bool m_loadingOlder = false;
+    bool m_hasMore = false;
+    qint64 m_nextBefore = 0;
+    QSet<QString> m_requestedHistoryBoundaries;
+    bool m_waitingRemoteHistory = false;
+    QString m_pendingCopyImageId;
+};

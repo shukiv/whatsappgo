@@ -1,0 +1,142 @@
+pragma Singleton
+import QtQuick
+
+QtObject {
+    property string preferredMode: "system"
+
+    readonly property string requestedMode: {
+        const args = Qt.application.arguments
+        for (let i = 0; i < args.length; ++i) {
+            if (args[i] === "--theme" && i + 1 < args.length)
+                return ["light", "dark", "system"].indexOf(args[i + 1]) >= 0 ? args[i + 1] : ""
+            if (args[i].indexOf("--theme=") === 0) {
+                const value = args[i].slice(8)
+                return ["light", "dark", "system"].indexOf(value) >= 0 ? value : ""
+            }
+        }
+        return ""
+    }
+    readonly property string mode: requestedMode || preferredMode
+    readonly property bool dark: mode === "dark" || (mode === "system" && Application.styleHints.colorScheme === Qt.Dark)
+
+    readonly property color brand: "#25D366"
+    // The light tokens follow the current WhatsApp Web surfaces rather than
+    // the older blue-grey/teal palette. Dark mode retains the familiar
+    // high-contrast linked-device palette until it is measured independently.
+    readonly property color primary: dark ? "#00A884" : "#1DAA61"
+    readonly property color primaryText: "#FFFFFF"
+    readonly property color primaryContainer: dark ? "#005C4B" : "#D9FDD3"
+    // QML reserves onXxx names for signal handlers.
+    readonly property color primaryContainerText: dark ? "#E9EDEF" : "#0A0A0A"
+    readonly property color navigation: dark ? "#111B21" : "#F7F5F3"
+    readonly property color surface: dark ? "#111B21" : "#FFFFFF"
+    readonly property color surfaceRaised: dark ? "#202C33" : "#FFFFFF"
+    readonly property color surfaceMuted: dark ? "#2A3942" : "#F6F5F4"
+    readonly property color chatBackground: dark ? "#0B141A" : "#F5F1EB"
+    readonly property color emptyBackground: dark ? "#0B141A" : "#F7F5F3"
+    readonly property color composer: dark ? "#202C33" : "#FFFFFF"
+    readonly property color input: dark ? "#2A3942" : "#FFFFFF"
+    readonly property color text: dark ? "#E9EDEF" : "#0A0A0A"
+    readonly property color textMuted: dark ? "#8696A0" : "#54545A"
+    readonly property color border: dark ? "#2A3942" : "#DDDAD6"
+    readonly property color icon: dark ? "#AEBAC1" : "#54545A"
+    readonly property color avatar: dark ? "#374248" : "#E7E5E2"
+    readonly property color avatarText: dark ? "#DDE5EA" : "#54545A"
+    readonly property color danger: dark ? "#F15C6D" : "#EA0038"
+    readonly property color dangerText: "#FFFFFF"
+    readonly property color incomingBubble: dark ? "#202C33" : "#FFFFFF"
+    readonly property color outgoingBubble: dark ? "#005C4B" : "#D9FDD3"
+    readonly property color bubbleBorder: dark ? "#00000000" : "#14000000"
+    readonly property color replyBackground: dark ? "#111B21" : "#F0EFED"
+    readonly property color readReceipt: "#53BDEB"
+    readonly property color selectedRow: dark ? "#2A3942" : "#F6F5F4"
+    readonly property color hoverRow: dark ? "#26343C" : "#F7F5F3"
+    readonly property color pressedRow: dark ? "#31414A" : "#EEECE9"
+    readonly property color scrollbarHandle: dark ? "#667781" : "#8D8B88"
+    readonly property color scrollbarHandleHover: dark ? "#AEBAC1" : "#666461"
+    readonly property real patternOpacity: dark ? 0.10 : 0.16
+    readonly property string emojiFontFamily: "Noto Color Emoji"
+
+    readonly property int radiusSmall: 6
+    readonly property int radiusMedium: 10
+    readonly property int radiusLarge: 8
+    readonly property int spacingSmall: 4
+    readonly property int spacing: 8
+    readonly property int spacingLarge: 16
+
+    function escapeHtml(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\"/g, "&quot;")
+            .replace(/'/g, "&#39;")
+    }
+
+    function emojiMarkup(safe) {
+        const atom = "(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF])(?:\\uFE0F|\\uFE0E)?(?:\\uD83C[\\uDFFB-\\uDFFF])?"
+        const flags = "(?:\\uD83C[\\uDDE6-\\uDDFF]){2}"
+        const cluster = new RegExp("(" + flags + "|" + atom + "(?:\\u200D" + atom + ")*)", "g")
+        return safe.replace(cluster, "<span style=\"font-family:'Noto Color Emoji'\">$1</span>")
+    }
+
+    function richTextSegment(value) {
+        return emojiMarkup(escapeHtml(value)).replace(/\n/g, "<br>")
+    }
+
+    function emojiRichText(value) {
+        return richTextSegment(value)
+    }
+
+    function linkifiedLine(source) {
+        const urlPattern = /https?:\/\/[^\s<>\"']+/gi
+        let rendered = ""
+        let cursor = 0
+        let match
+        while ((match = urlPattern.exec(source)) !== null) {
+            let url = match[0]
+            let suffix = ""
+            while (url.length > 0 && /[.,!?;:]/.test(url[url.length - 1])) {
+                suffix = url[url.length - 1] + suffix
+                url = url.slice(0, -1)
+            }
+            if (url.endsWith(")") && (url.match(/\)/g) || []).length > (url.match(/\(/g) || []).length) {
+                suffix = ")" + suffix
+                url = url.slice(0, -1)
+            }
+            rendered += richTextSegment(source.slice(cursor, match.index))
+            rendered += "<a href=\"" + escapeHtml(url) + "\" style=\"color:" + primary + ";text-decoration:none\">" + richTextSegment(url) + "</a>"
+            rendered += richTextSegment(suffix)
+            cursor = match.index + match[0].length
+        }
+        return rendered + richTextSegment(source.slice(cursor))
+    }
+
+    function messageRichText(value) {
+        const lines = String(value || "").split("\n")
+        const rendered = []
+        for (let i = 0; i < lines.length; ++i) {
+            const quoted = lines[i].startsWith("▎") || /^\s*>\s?/.test(lines[i])
+            if (!quoted) {
+                rendered.push(linkifiedLine(lines[i]) || "&nbsp;")
+                continue
+            }
+            const content = lines[i].startsWith("▎")
+                ? lines[i].slice(1).replace(/^\s/, "")
+                : lines[i].replace(/^\s*>\s?/, "")
+            rendered.push("<span style=\"color:" + primary + "\">▎</span>&nbsp;"
+                + (linkifiedLine(content) || "&nbsp;"))
+        }
+        return rendered.join("<br>")
+    }
+
+    function isEmojiOnly(value) {
+        const compact = String(value || "").replace(/\s/g, "")
+        if (!compact)
+            return false
+        const atom = "(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF])(?:\\uFE0F|\\uFE0E)?(?:\\uD83C[\\uDFFB-\\uDFFF])?"
+        const flags = "(?:\\uD83C[\\uDDE6-\\uDDFF]){2}"
+        const cluster = new RegExp("(" + flags + "|" + atom + "(?:\\u200D" + atom + ")*)", "g")
+        return compact.replace(cluster, "").length === 0
+    }
+}

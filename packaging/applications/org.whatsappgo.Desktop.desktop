@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=WhatsAppGo
+Comment=Low-memory native WhatsApp client
+Exec=whatsappgo
+Icon=org.whatsappgo.Desktop
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+StartupNotify=true
+DBusActivatable=false
+Keywords=WhatsApp;Chat;Messages;

@@ -1,0 +1,53 @@
+package whatsapp
+
+import (
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestRoundedAvatarCreatesTransparentCorners(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "avatar.png")
+	source := image.NewNRGBA(image.Rect(0, 0, 40, 30))
+	for y := 0; y < 30; y++ {
+		for x := 0; x < 40; x++ {
+			source.Set(x, y, color.NRGBA{R: 200, A: 255})
+		}
+	}
+	file, err := os.Create(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, source); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	roundedPath, err := roundedAvatar(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundedFile, err := os.Open(roundedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rounded, err := png.Decode(roundedFile)
+	roundedFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rounded.Bounds().Size(); got.X != 30 || got.Y != 30 {
+		t.Fatalf("unexpected dimensions: %v", got)
+	}
+	_, _, _, cornerAlpha := rounded.At(0, 0).RGBA()
+	_, _, _, centerAlpha := rounded.At(15, 15).RGBA()
+	if cornerAlpha != 0 || centerAlpha == 0 {
+		t.Fatalf("unexpected alpha values: corner=%d center=%d", cornerAlpha, centerAlpha)
+	}
+}

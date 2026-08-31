@@ -1,0 +1,251 @@
+package notify
+
+import (
+	"context"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"syscall"
+
+	"github.com/godbus/dbus/v5"
+)
+
+// desktopExecutableName is the application that notification clicks activate.
+const desktopExecutableName = "whatsappgo"
+
+const (
+	notificationService   = "org.freedesktop.Notifications"
+	notificationInterface = "org.freedesktop.Notifications"
+	notificationPath      = "/org/freedesktop/Notifications"
+)
+
+type Notifier interface {
+	Notify(context.Context, string, string, string) error
+	Close() error
+}
+
+type Desktop struct {
+	mu                sync.Mutex
+	conn              *dbus.Conn
+	signals           chan *dbus.Signal
+	done              chan struct{}
+	actions           map[uint32]string
+	actionOrder       []uint32
+	profile           string
+	notificationOwner string
+	launcher          string
+	closeOnce         sync.Once
+}
+
+func NewDesktop(profile string) (*Desktop, error) {
+	conn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return nil, err
+	}
+	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), profile: profile}
+	var owner string
+	if err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&owner); err != nil {
+		log.Printf("notification click actions disabled: %s has no owner on the session bus: %v", notificationService, err)
+	}
+	d.notificationOwner = owner
+	d.launcher = resolveDesktopExecutable(os.Executable, exec.LookPath)
+	if d.launcher == "" {
+		log.Printf("notification click actions disabled: %s was not found beside the backend or on PATH", desktopExecutableName)
+	}
+	// Signals are not restricted to the owner of an interface name, so the
+	// match rules pin the sender and every delivered signal is checked against
+	// the current owner of the notification service. Otherwise any process on
+	// the session bus could forge a click and make this daemon spawn windows.
+	for _, member := range []string{"ActionInvoked", "NotificationClosed"} {
+		if err := conn.AddMatchSignal(
+			dbus.WithMatchInterface(notificationInterface),
+			dbus.WithMatchMember(member),
+			dbus.WithMatchSender(notificationService),
+		); err != nil {
+			conn.Close()
+			return nil, err
+		}
+	}
+	conn.Signal(d.signals)
+	go d.watchActions()
+	return d, nil
+}
+
+// maxTrackedNotifications bounds the click-target map. The server tells us
+// when a notification closes, but that signal can be missed, so old entries
+// are evicted in the order they were created.
+const maxTrackedNotifications = 256
+
+func (d *Desktop) Notify(ctx context.Context, chatJID, title, body string) error {
+	actions := []string{}
+	if d.launcher != "" {
+		actions = []string{"default", "Open"}
+	}
+	hints := map[string]dbus.Variant{
+		"desktop-entry":                   dbus.MakeVariant("org.whatsappgo.Desktop"),
+		"category":                        dbus.MakeVariant("im.received"),
+		"x-canonical-private-synchronous": dbus.MakeVariant("whatsappgo-" + chatJID),
+	}
+	// The D-Bus round trip is not guarded, so delivering a notification never
+	// blocks the signal watcher that resolves earlier notification clicks.
+	call := d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).CallWithContext(ctx, notificationInterface+".Notify", 0,
+		"WhatsAppGo", uint32(0), "", title, body, actions, hints, int32(8000))
+	if call.Err != nil {
+		return call.Err
+	}
+	var id uint32
+	if err := call.Store(&id); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.trackActionLocked(id, chatJID)
+	return nil
+}
+
+func (d *Desktop) trackActionLocked(id uint32, chatJID string) {
+	if _, exists := d.actions[id]; !exists {
+		d.actionOrder = append(d.actionOrder, id)
+	}
+	d.actions[id] = chatJID
+	for len(d.actionOrder) > maxTrackedNotifications {
+		delete(d.actions, d.actionOrder[0])
+		d.actionOrder = d.actionOrder[1:]
+	}
+}
+
+func (d *Desktop) forgetActionLocked(id uint32) {
+	if _, exists := d.actions[id]; !exists {
+		return
+	}
+	delete(d.actions, id)
+	for i, tracked := range d.actionOrder {
+		if tracked == id {
+			d.actionOrder = append(d.actionOrder[:i], d.actionOrder[i+1:]...)
+			break
+		}
+	}
+}
+
+func (d *Desktop) watchActions() {
+	for {
+		select {
+		case <-d.done:
+			return
+		case signal, ok := <-d.signals:
+			if !ok {
+				return
+			}
+			if len(signal.Body) < 1 || !d.signalIsTrusted(signal.Sender) {
+				continue
+			}
+			id, ok := signal.Body[0].(uint32)
+			if !ok {
+				continue
+			}
+			invoked := signal.Name == notificationInterface+".ActionInvoked"
+			d.mu.Lock()
+			chatJID, owned := d.actions[id]
+			// A notification id is acted on once. Forgetting it here also stops
+			// a repeated signal from reopening the window again and again.
+			if owned {
+				d.forgetActionLocked(id)
+			}
+			d.mu.Unlock()
+			if owned && invoked {
+				d.launchChat(chatJID)
+			}
+		}
+	}
+}
+
+// signalIsTrusted reports whether a signal came from the bus name that owns
+// the notification service. The owner is resolved once, when the connection is
+// established; an unknown owner rejects every signal.
+func (d *Desktop) signalIsTrusted(sender string) bool {
+	return d.notificationOwner != "" && sender == d.notificationOwner
+}
+
+func (d *Desktop) launchChat(chatJID string) {
+	launcher := d.launcher
+	// The path is re-validated immediately before running it so a binary that
+	// was replaced after startup is not executed.
+	if launcher == "" || !isTrustedExecutable(launcher) {
+		return
+	}
+	args := []string{}
+	if d.profile != "" && d.profile != "default" {
+		args = []string{"--profile", d.profile}
+	}
+	args = append(args, "--chat", chatJID)
+	command := exec.Command(launcher, args...)
+	if command.Start() == nil {
+		_ = command.Process.Release()
+	}
+}
+
+// resolveDesktopExecutable locates the desktop application for notification
+// actions. The backend is installed and started beside the desktop
+// executable, so that sibling is preferred over a PATH lookup, which fails for
+// development builds that were never installed.
+func resolveDesktopExecutable(executable func() (string, error), lookPath func(string) (string, error)) string {
+	if self, err := executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(self), desktopExecutableName)
+		if isTrustedExecutable(sibling) {
+			return sibling
+		}
+	}
+	if path, err := lookPath(desktopExecutableName); err == nil && isTrustedExecutable(path) {
+		return path
+	}
+	return ""
+}
+
+// isTrustedExecutable reports whether a path is an executable file that only
+// its owner can replace. A notification click runs this program, so a file or
+// parent directory that other local accounts may write to is rejected: on a
+// shared machine that would let another user choose what this daemon executes.
+func isTrustedExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	return ownedAndProtected(info) && ownedAndProtected(directoryInfo(filepath.Dir(path)))
+}
+
+func directoryInfo(path string) os.FileInfo {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	return info
+}
+
+// ownedAndProtected reports whether the current user or root owns the entry
+// and no other account can write to it.
+func ownedAndProtected(info os.FileInfo) bool {
+	if info == nil {
+		return false
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	return stat.Uid == 0 || stat.Uid == uint32(os.Geteuid())
+}
+
+func (d *Desktop) Close() error {
+	var err error
+	d.closeOnce.Do(func() { close(d.done); d.conn.RemoveSignal(d.signals); err = d.conn.Close() })
+	return err
+}
+
+type Noop struct{}
+
+func (Noop) Notify(context.Context, string, string, string) error { return nil }
+func (Noop) Close() error                                         { return nil }

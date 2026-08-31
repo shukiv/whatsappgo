@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">WhatsAppGo</title>
+  <desc id="desc">Two overlapping message bubbles</desc>
+  <rect width="128" height="128" rx="28" fill="#006c4c"/>
+  <path d="M28 32h52a16 16 0 0 1 16 16v24a16 16 0 0 1-16 16H54L35 102l5-14H28a16 16 0 0 1-16-16V48a16 16 0 0 1 16-16Z" fill="#fff" opacity=".96"/>
+  <path d="M65 45h35a16 16 0 0 1 16 16v21a16 16 0 0 1-16 16h-7l4 12-17-12H65a16 16 0 0 1-16-16V61a16 16 0 0 1 16-16Z" fill="#b8ead6" stroke="#006c4c" stroke-width="5"/>
+  <circle cx="68" cy="72" r="4" fill="#006c4c"/>
+  <circle cx="83" cy="72" r="4" fill="#006c4c"/>
+  <circle cx="98" cy="72" r="4" fill="#006c4c"/>
+</svg>

@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  daemon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
+
+  desktop:
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel kf6-kirigami-devel
+      - uses: actions/checkout@v4
+      - run: cmake -S desktop -B desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build desktop/build --parallel

@@ -1,0 +1,11 @@
+/bin/
+/build/
+/desktop/build*/
+*.db
+*.db-shm
+*.db-wal
+*.log
+.cache/
+.idea/
+.vscode/
+compile_commands.json

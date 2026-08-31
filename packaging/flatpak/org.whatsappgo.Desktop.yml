@@ -1,0 +1,53 @@
+app-id: org.whatsappgo.Desktop
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
+command: whatsappgo
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/whatsappgo:create
+
+build-options:
+  append-path: /usr/lib/sdk/golang/bin
+  env:
+    GOTOOLCHAIN: local
+    GOPATH: /run/build/whatsappgo/.gopath
+
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - '*.a'
+  - '*.la'
+
+modules:
+  - name: whatsappgo
+    buildsystem: simple
+    build-commands:
+      # The desktop CMake project installs ../bin/whatsappd beside whatsappgo,
+      # so the backend is built into the source tree like the other packages.
+      - CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags '-s -w -X main.version=0.1.0' -o bin/whatsappd ./cmd/whatsappd
+      - cmake -S desktop -B _flatpak_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app
+      - cmake --build _flatpak_build
+      - cmake --install _flatpak_build
+      - install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml /app/share/metainfo/org.whatsappgo.Desktop.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..
+        # Never ship a stale development binary or build tree from the host.
+        skip:
+          - bin
+          - build
+          - desktop/build
+          - desktop/build-debug
+          - .cache
+      - go.mod.yml
