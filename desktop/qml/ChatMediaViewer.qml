@@ -47,6 +47,15 @@ FocusScope {
         panY = 0
     }
 
+    function replaceImage(url) {
+        if (!url || String(imageUrl) === String(url))
+            return
+        imageUrl = url
+        zoomFactor = minimumZoom
+        panX = 0
+        panY = 0
+    }
+
     function clampPan() {
         const maxX = stage.width * Math.max(0, zoomFactor - 1) / 2
         const maxY = stage.height * Math.max(0, zoomFactor - 1) / 2

@@ -311,6 +311,7 @@ int main(int argc, char *argv[])
         const QVariantMap chat{
             {QStringLiteral("jid"), QStringLiteral("573133878085@s.whatsapp.net")},
             {QStringLiteral("title"), QStringLiteral("Test contact")},
+            {QStringLiteral("avatar_path"), QStringLiteral("/tmp/test-contact-round-123.png")},
             {QStringLiteral("muted_until"), 0},
             {QStringLiteral("favorite"), false},
             {QStringLiteral("archived"), false},
@@ -344,6 +345,12 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         QCoreApplication::processEvents();
         auto *back = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactInfoBackButton")));
+        auto *avatarButton = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactAvatarButton")));
+        QVariant originalAvatarPath;
+        const bool resolvedOriginalAvatar = QMetaObject::invokeMethod(
+            drawer.get(), "originalAvatarPath", Q_RETURN_ARG(QVariant, originalAvatarPath),
+            Q_ARG(QVariant, QStringLiteral("/tmp/test-contact-round-123.png")));
+        const bool avatarClicked = avatarButton && QMetaObject::invokeMethod(avatarButton, "click");
         drawer->setProperty("sharedView", true);
         drawer->setProperty("activeCategory", QStringLiteral("media"));
         QCoreApplication::processEvents();
@@ -360,6 +367,9 @@ int main(int argc, char *argv[])
         auto *list = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactSharedList")));
         const auto listTop = list && drawerItem ? list->mapToItem(drawerItem, QPointF(0, 0)).y() : -1.0;
         return back != nullptr && back->width() >= 44 && back->height() >= 44
+                && avatarButton && avatarButton->width() >= 144 && avatarButton->height() >= 144
+                && resolvedOriginalAvatar && originalAvatarPath.toString() == QStringLiteral("/tmp/test-contact.jpg")
+                && avatarClicked
                 && drawer->property("sharedView").toBool()
                 && drawer->property("activeCategory").toString() == QStringLiteral("links")
                 && drawer->property("width").toReal() >= 320
@@ -1235,10 +1245,16 @@ int main(int argc, char *argv[])
             QStringLiteral("whatsappgo-native-viewer-test.jpg"));
         if (!source.save(receivedImagePath, "JPG"))
             return EXIT_FAILURE;
+        QImage thumbnail(40, 40, QImage::Format_ARGB32_Premultiplied);
+        thumbnail.fill(QColor(QStringLiteral("#EA0038")));
+        const auto thumbnailPath = QDir(QDir::tempPath()).filePath(
+            QStringLiteral("whatsappgo-native-viewer-thumbnail.jpg"));
+        if (!thumbnail.save(thumbnailPath, "JPG"))
+            return EXIT_FAILURE;
         const QVariant imageMessage = QVariantMap{
             {QStringLiteral("id"), QStringLiteral("received-image-test")},
             {QStringLiteral("kind"), QStringLiteral("image")},
-            {QStringLiteral("media_path"), receivedImagePath},
+            {QStringLiteral("media_thumbnail"), thumbnailPath},
             {QStringLiteral("body"), QStringLiteral("A received photo")},
             {QStringLiteral("from_me"), false},
             {QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch()},
@@ -1255,6 +1271,15 @@ int main(int argc, char *argv[])
             && nativeViewer->property("previewActive").toBool()
             && nativeImage && nativeImage->property("source").toUrl().isLocalFile()
             && nativeClose && nativeClose->width() >= 44 && nativeClose->height() >= 44;
+        const bool startedWithThumbnail = nativeImage
+            && nativeImage->property("source").toUrl().toLocalFile() == thumbnailPath;
+        const bool completedDownload = QMetaObject::invokeMethod(
+            root, "completeChatImageDownload",
+            Q_ARG(QVariant, QStringLiteral("received-image-test")),
+            Q_ARG(QVariant, receivedImagePath));
+        QCoreApplication::processEvents();
+        const bool upgradedToFullImage = nativeImage
+            && nativeImage->property("source").toUrl().toLocalFile() == receivedImagePath;
         auto *zoomIn = nativeViewer
             ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomIn"))) : nullptr;
         auto *zoomOut = nativeViewer
@@ -1289,7 +1314,9 @@ int main(int argc, char *argv[])
         const bool nativeViewerClosed = nativeClose && QMetaObject::invokeMethod(nativeClose, "click");
         QCoreApplication::processEvents();
         QFile::remove(receivedImagePath);
-        if (!nativeViewerReady || !nativeZoomReady || !nativeViewerClosed
+        QFile::remove(thumbnailPath);
+        if (!nativeViewerReady || !startedWithThumbnail || !completedDownload || !upgradedToFullImage
+                || !nativeZoomReady || !nativeViewerClosed
                 || nativeViewer->property("previewActive").toBool())
             return EXIT_FAILURE;
         if (screenshotPath.isEmpty())

@@ -198,6 +198,17 @@ Kirigami.ApplicationWindow {
                                   String(message.id || ""))
     }
 
+    function completeChatImageDownload(messageId, path) {
+        Playback.fileReady(messageId, path)
+        if (chatMediaViewer.previewActive && chatMediaViewer.messageId === messageId)
+            chatMediaViewer.replaceImage(window.localMediaUrl(path))
+        if (window.infoDrawerOpen) {
+            backend.refreshChatInfo()
+            if (contactInfoDrawer.sharedView)
+                backend.refreshSharedContent(contactInfoDrawer.activeCategory)
+        }
+    }
+
     Loader {
         id: voiceRecorderLoader
         active: false
@@ -228,14 +239,7 @@ Kirigami.ApplicationWindow {
                 window.showSection(window.activeSection)
         }
         function onMediaReady(messageId, path) {
-            Playback.fileReady(messageId, path)
-            if (chatMediaViewer.previewActive && chatMediaViewer.messageId === messageId)
-                chatMediaViewer.imageUrl = window.localMediaUrl(path)
-            if (window.infoDrawerOpen) {
-                backend.refreshChatInfo()
-                if (contactInfoDrawer.sharedView)
-                    backend.refreshSharedContent(contactInfoDrawer.activeCategory)
-            }
+            window.completeChatImageDownload(messageId, path)
         }
     }
     Timer { id: errorTimer; interval: 5000; onTriggered: window.transientError = "" }
@@ -1363,6 +1367,10 @@ Kirigami.ApplicationWindow {
                 }
                 onOpenFileRequested: path => backend.openFile(path)
                 onImagePreviewRequested: message => window.openChatImage(message)
+                onAvatarPreviewRequested: (path, title) => {
+                    chatMediaViewer.openImage(window.localMediaUrl(path), title,
+                                              window.localMediaUrl(path), "", "", "")
+                }
                 onDownloadRequested: messageId => backend.downloadMedia(messageId)
                 onOpenLinkRequested: url => {
                     if (url)

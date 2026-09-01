@@ -94,3 +94,41 @@ func TestRoundedAvatarPathChangesWhenTheSourceIsRefreshed(t *testing.T) {
 		t.Fatalf("refreshed avatar kept the same cache URL: %q", first)
 	}
 }
+
+func TestRoundedAvatarKeepsEnoughResolutionForTheProfileDrawer(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "large-avatar.png")
+	source := image.NewNRGBA(image.Rect(0, 0, 480, 420))
+	for y := 0; y < 420; y++ {
+		for x := 0; x < 480; x++ {
+			source.Set(x, y, color.NRGBA{G: 180, B: 120, A: 255})
+		}
+	}
+	file, err := os.Create(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, source); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	roundedPath, err := roundedAvatar(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundedFile, err := os.Open(roundedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rounded, err := png.Decode(roundedFile)
+	roundedFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rounded.Bounds().Dx(); got < 400 {
+		t.Fatalf("profile avatar was reduced to %dpx", got)
+	}
+}

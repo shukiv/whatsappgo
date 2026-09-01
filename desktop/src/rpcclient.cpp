@@ -356,6 +356,8 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
     } else if (name == QStringLiteral("chat.updated") || name == QStringLiteral("directory.synced")) {
         refreshChats();
         refreshArchived();
+        if (!m_chatInfo.isEmpty())
+            refreshChatInfo();
     } else if (name == QStringLiteral("history.synced")) {
         refreshChats();
         refreshStatuses();
@@ -1043,6 +1045,9 @@ void RpcClient::pumpMediaQueue()
                 if (error.isEmpty()) {
                     const auto message = result.toObject().toVariantMap();
                     upsertMessage(message);
+                    const auto path = message.value(QStringLiteral("media_path")).toString();
+                    if (!path.isEmpty())
+                        emit mediaReady(message.value(QStringLiteral("id")).toString(), path);
                 }
                 pumpMediaQueue();
             });

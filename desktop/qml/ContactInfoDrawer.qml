@@ -24,6 +24,7 @@ Rectangle {
     signal archiveChanged(bool archived)
     signal openFileRequested(string path)
     signal imagePreviewRequested(var message)
+    signal avatarPreviewRequested(string path, string title)
     signal downloadRequested(string messageId)
     signal openLinkRequested(string url)
 
@@ -54,6 +55,10 @@ Rectangle {
             return String(message.link_url)
         const match = String(message && message.body || "").match(/https?:\/\/[^\s<>"']+/i)
         return match ? match[0] : ""
+    }
+
+    function originalAvatarPath(path) {
+        return String(path || "").replace(/-round(?:-[0-9]+)?\.png$/, ".jpg")
     }
 
     function showShared(category) {
@@ -131,14 +136,29 @@ Rectangle {
                     bottomPadding: 18
                     spacing: 8
 
-                    Avatar {
+                    Button {
+                        id: avatarButton
+                        objectName: "contactAvatarButton"
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: 144
                         height: 144
-                        diameter: 144
-                        title: root.title
-                        fallbackIdentity: !root.avatarPath
-                        source: root.localUrl(root.avatarPath)
+                        padding: 0
+                        flat: true
+                        enabled: Boolean(root.avatarPath)
+                        Accessible.name: enabled ? qsTr("Open profile picture for %1").arg(root.title)
+                                                 : qsTr("No profile picture for %1").arg(root.title)
+                        onClicked: root.avatarPreviewRequested(root.originalAvatarPath(root.avatarPath), root.title)
+                        background: Rectangle {
+                            radius: width / 2
+                            color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        }
+                        contentItem: Avatar {
+                            diameter: 144
+                            title: root.title
+                            fallbackIdentity: !root.avatarPath
+                            source: root.localUrl(root.avatarPath)
+                        }
+                        HoverHandler { cursorShape: avatarButton.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
                     }
                     Label {
                         width: parent.width - 48

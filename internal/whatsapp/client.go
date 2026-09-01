@@ -681,9 +681,29 @@ func (c *Client) fetchAvatar(ctx context.Context, jidString string, refresh bool
 	if err != nil {
 		return "", err
 	}
-	info, err := c.wa.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
+	var existingID string
+	fullIDPath := path + ".full-id"
+	if refresh {
+		if data, readErr := os.ReadFile(fullIDPath); readErr == nil {
+			existingID = strings.TrimSpace(string(data))
+		}
+	}
+	info, err := c.wa.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{
+		// A refreshed avatar is used by the contact drawer and native viewer,
+		// where WhatsApp's 96 px preview is visibly pixelated.
+		Preview:    !refresh,
+		ExistingID: existingID,
+	})
 	if errors.Is(err, whatsmeow.ErrProfilePictureNotSet) || errors.Is(err, whatsmeow.ErrProfilePictureUnauthorized) {
 		return "", nil
+	}
+	if err == nil && info == nil && refresh {
+		if cached, statErr := os.Stat(path); statErr == nil && cached.Size() > 0 {
+			if rounded, roundErr := roundedAvatar(path); roundErr == nil {
+				return rounded, nil
+			}
+			return path, nil
+		}
 	}
 	if err != nil || info == nil || info.URL == "" {
 		return "", err
@@ -730,6 +750,9 @@ func (c *Client) fetchAvatar(ctx context.Context, jidString string, refresh bool
 	if err := os.Rename(tmpName, path); err != nil {
 		return "", err
 	}
+	if refresh && info.ID != "" {
+		_ = os.WriteFile(fullIDPath, []byte(info.ID+"\n"), 0o600)
+	}
 	rounded, err := roundedAvatar(path)
 	if err != nil {
 		return path, nil
@@ -771,8 +794,8 @@ func roundedAvatar(sourcePath string) (string, error) {
 	if bounds.Dy() < side {
 		side = bounds.Dy()
 	}
-	if side > 192 {
-		side = 192
+	if side > 640 {
+		side = 640
 	}
 	if side <= 0 {
 		return "", errors.New("avatar has invalid dimensions")
