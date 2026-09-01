@@ -333,6 +333,7 @@ Kirigami.ApplicationWindow {
 
         Rectangle {
             id: navigationRail
+            objectName: "navigationRail"
             Layout.preferredWidth: 80
             Layout.fillHeight: true
             color: Theme.navigation
@@ -380,8 +381,11 @@ Kirigami.ApplicationWindow {
                     Accessible.checked: window.activeSection === "chats"
                     onClicked: window.showSection("chats")
                     background: Rectangle {
+                        objectName: "navigationChatsBackground"
                         radius: 24
-                        color: window.activeSection === "chats" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "chats" ? Theme.navigationSelected
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     Rectangle {
                         visible: window.totalUnreadCount > 0
@@ -416,7 +420,9 @@ Kirigami.ApplicationWindow {
                     onClicked: window.showSection("calls")
                     background: Rectangle {
                         radius: 24
-                        color: window.activeSection === "calls" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "calls" ? Theme.navigationSelected
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
@@ -432,7 +438,9 @@ Kirigami.ApplicationWindow {
                     onClicked: window.showSection("status")
                     background: Rectangle {
                         radius: 24
-                        color: window.activeSection === "status" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "status" ? Theme.navigationSelected
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
@@ -448,7 +456,9 @@ Kirigami.ApplicationWindow {
                     onClicked: window.showSection("channels")
                     background: Rectangle {
                         radius: 24
-                        color: window.activeSection === "channels" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "channels" ? Theme.navigationSelected
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
@@ -464,7 +474,9 @@ Kirigami.ApplicationWindow {
                     onClicked: window.showSection("communities")
                     background: Rectangle {
                         radius: 24
-                        color: window.activeSection === "communities" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "communities" ? Theme.navigationSelected
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
@@ -477,7 +489,11 @@ Kirigami.ApplicationWindow {
                     iconSource: Qt.resolvedUrl("icons/search.svg")
                     Accessible.name: qsTr("Search chats")
 					onClicked: window.openChatSearch()
-                    background: Rectangle { radius: 24; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    background: Rectangle {
+                        radius: 24
+                        color: parent.down ? Theme.navigationPressed
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
+                    }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                 }
@@ -489,7 +505,11 @@ Kirigami.ApplicationWindow {
                     iconSource: Qt.resolvedUrl("icons/new-chat.svg")
                     Accessible.name: qsTr("Start a new chat")
                     onClicked: window.openNewChat()
-                    background: Rectangle { radius: 24; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    background: Rectangle {
+                        radius: 24
+                        color: parent.down ? Theme.navigationPressed
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
+                    }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                 }
@@ -506,7 +526,9 @@ Kirigami.ApplicationWindow {
                     onClicked: window.showSection("profile")
                     background: Rectangle {
                         radius: 24
-                        color: window.activeSection === "profile" ? Theme.selectedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                        color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "profile" ? Theme.navigationSelected
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
@@ -520,7 +542,11 @@ Kirigami.ApplicationWindow {
                     iconSize: 21
                     Accessible.name: Theme.dark ? qsTr("Switch to light mode") : qsTr("Switch to dark mode")
                     onClicked: Theme.preferredMode = Theme.dark ? "light" : "dark"
-                    background: Rectangle { radius: 24; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    background: Rectangle {
+                        radius: 24
+                        color: parent.down ? Theme.navigationPressed
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
+                    }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
                 }

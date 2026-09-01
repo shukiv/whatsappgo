@@ -29,6 +29,9 @@ QtObject {
     // QML reserves onXxx names for signal handlers.
     readonly property color primaryContainerText: dark ? "#E9EDEF" : "#0A0A0A"
     readonly property color navigation: dark ? "#111B21" : "#F7F5F3"
+    readonly property color navigationSelected: dark ? "#2A3942" : "#E4E2DF"
+    readonly property color navigationHover: dark ? "#26343C" : "#ECEAE7"
+    readonly property color navigationPressed: dark ? "#31414A" : "#DCDAD7"
     readonly property color surface: dark ? "#111B21" : "#FFFFFF"
     readonly property color surfaceRaised: dark ? "#202C33" : "#FFFFFF"
     readonly property color surfaceMuted: dark ? "#2A3942" : "#F6F5F4"

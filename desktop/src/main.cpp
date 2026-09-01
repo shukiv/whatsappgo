@@ -1470,8 +1470,22 @@ int main(int argc, char *argv[])
         backend.discardClipboardImage(localUrl);
         return copied && !QFileInfo::exists(path) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    if (smokeTest && screenshotPath.isEmpty())
-        return engine.rootObjects().isEmpty() ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (smokeTest && screenshotPath.isEmpty()) {
+        if (engine.rootObjects().isEmpty())
+            return EXIT_FAILURE;
+        // A selected rail destination must have a visible circular state in
+        // both themes. The previous light colors differed by a single RGB
+        // step, so the control technically had a background but looked bare.
+        auto *root = engine.rootObjects().constFirst();
+        auto *navigationRail = root->findChild<QObject *>(QStringLiteral("navigationRail"));
+        auto *selectedNavigation = root->findChild<QObject *>(QStringLiteral("navigationChatsBackground"));
+        if (!navigationRail || !selectedNavigation)
+            return EXIT_FAILURE;
+        const auto railColor = navigationRail->property("color").value<QColor>();
+        const auto selectedColor = selectedNavigation->property("color").value<QColor>();
+        return qAbs(railColor.lightness() - selectedColor.lightness()) >= 10
+            ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
     if (!screenshotPath.isEmpty()) {
         QTimer::singleShot(1200, &app, [&engine, screenshotPath] {
             if (engine.rootObjects().isEmpty()) {
