@@ -7,6 +7,7 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QDir>
+#include <QEventLoop>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -615,6 +616,14 @@ int main(int argc, char *argv[])
         auto *accountMenu = accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherMenu"));
         const bool accountClicked = QMetaObject::invokeMethod(accountChip.get(), "click");
         QCoreApplication::processEvents();
+        QEventLoop accountMenuTransition;
+        QTimer::singleShot(120, &accountMenuTransition, &QEventLoop::quit);
+        accountMenuTransition.exec();
+        const bool standaloneAccountMenuOpened = accountMenu
+            && accountMenu->property("opened").toBool();
+        if (accountMenu)
+            QMetaObject::invokeMethod(accountMenu, "close");
+        QCoreApplication::processEvents();
 
         QQmlComponent chatComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ChatListDelegate.qml")));
         const QVariantMap chat{
@@ -673,12 +682,15 @@ int main(int argc, char *argv[])
         auto *chatListItem = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatList"))) : nullptr;
         auto *chatScrollBar = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListScrollBar"))) : nullptr;
         auto *actualAccountButton = mainRoot ? mainRoot->findChild<QObject *>(QStringLiteral("accountSwitcherButton")) : nullptr;
-        auto *actualAccountMenu = actualAccountButton ? actualAccountButton->findChild<QObject *>(QStringLiteral("accountSwitcherMenu")) : nullptr;
         const bool actualAccountClicked = actualAccountButton && QMetaObject::invokeMethod(actualAccountButton, "click");
         QCoreApplication::processEvents();
         return accountUnreadBadge && accountUnreadBadge->isVisible() && accountChipItem
-                && accountClicked && accountMenu && accountMenu->property("opened").toBool()
-                && actualAccountClicked && actualAccountMenu && actualAccountMenu->property("visible").toBool()
+                && accountClicked && standaloneAccountMenuOpened
+                && accountMenu->property("height").toReal() >= 100.0
+                && accountMenu->property("width").toReal() == 244.0
+                && qFuzzyIsNull(accountMenu->property("x").toReal())
+                && accountMenu->property("y").toReal() >= accountChip->property("height").toReal()
+                && actualAccountClicked
                 && accountUnreadBadge->width() >= 19.0 && accountChip->property("width").toReal() == 44.0
                 && accountChip->property("totalUnread").toInt() == 12
                 && qAbs(timestampRight - badgeRight) <= 2.0
@@ -1243,10 +1255,28 @@ int main(int argc, char *argv[])
             && nativeViewer->property("previewActive").toBool()
             && nativeImage && nativeImage->property("source").toUrl().isLocalFile()
             && nativeClose && nativeClose->width() >= 44 && nativeClose->height() >= 44;
+        auto *zoomIn = nativeViewer
+            ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomIn"))) : nullptr;
+        auto *zoomOut = nativeViewer
+            ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomOut"))) : nullptr;
+        auto *zoomWheel = nativeViewer
+            ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomWheel")) : nullptr;
+        const auto initialZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
+        const bool zoomedIn = nativeViewer && QMetaObject::invokeMethod(nativeViewer, "zoomIn");
+        QCoreApplication::processEvents();
+        const auto enlargedZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
+        const bool zoomedOut = nativeViewer && QMetaObject::invokeMethod(nativeViewer, "zoomOut");
+        QCoreApplication::processEvents();
+        const auto restoredZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
+        const bool nativeZoomReady = zoomIn && zoomOut && zoomWheel
+            && zoomIn->width() >= 44 && zoomIn->height() >= 44
+            && zoomOut->width() >= 44 && zoomOut->height() >= 44
+            && qFuzzyCompare(initialZoom, 1.0) && zoomedIn && enlargedZoom > initialZoom
+            && zoomedOut && qFuzzyCompare(restoredZoom, 1.0);
         const bool nativeViewerClosed = nativeClose && QMetaObject::invokeMethod(nativeClose, "click");
         QCoreApplication::processEvents();
         QFile::remove(receivedImagePath);
-        if (!nativeViewerReady || !nativeViewerClosed
+        if (!nativeViewerReady || !nativeZoomReady || !nativeViewerClosed
                 || nativeViewer->property("previewActive").toBool())
             return EXIT_FAILURE;
         if (screenshotPath.isEmpty())

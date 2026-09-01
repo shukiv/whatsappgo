@@ -498,7 +498,6 @@ Kirigami.ApplicationWindow {
                             profiles: backend.profiles
                             currentProfile: backend.profile
                             unreadCounts: backend.profileUnreadCounts
-                            popupParent: Overlay.overlay
                             onSwitchRequested: profile => backend.switchProfile(profile)
                             ToolTip.visible: hovered
                             ToolTip.text: Accessible.name

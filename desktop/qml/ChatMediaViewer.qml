@@ -13,7 +13,11 @@ FocusScope {
     property url contactAvatarSource
     property string sentAt: ""
     property string caption: ""
+    property real zoomFactor: 1.0
     readonly property bool previewActive: String(imageUrl).length > 0
+    readonly property real minimumZoom: 1.0
+    readonly property real maximumZoom: 5.0
+    readonly property real zoomStep: 0.25
 
     visible: previewActive
     focus: previewActive
@@ -27,12 +31,33 @@ FocusScope {
         contactAvatarSource = avatarSource || ""
         sentAt = timestampText || ""
         caption = imageCaption || ""
+        zoomFactor = minimumZoom
         forceActiveFocus()
     }
 
     function closePreview() {
         imageUrl = ""
         messageId = ""
+        zoomFactor = minimumZoom
+    }
+
+    function setZoom(value) {
+        zoomFactor = Math.max(minimumZoom, Math.min(maximumZoom, value))
+    }
+
+    function zoomIn() {
+        setZoom(zoomFactor + zoomStep)
+    }
+
+    function zoomOut() {
+        setZoom(zoomFactor - zoomStep)
+    }
+
+    function adjustZoomFromWheel(delta) {
+        if (delta > 0)
+            zoomIn()
+        else if (delta < 0)
+            zoomOut()
     }
 
     Shortcut {
@@ -104,6 +129,66 @@ FocusScope {
             }
         }
 
+        RowLayout {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 4
+
+            ThemedToolButton {
+                id: zoomOutButton
+                objectName: "chatMediaViewerZoomOut"
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                enabled: root.zoomFactor > root.minimumZoom
+                Accessible.name: qsTr("Zoom out")
+                onClicked: root.zoomOut()
+                contentItem: Label {
+                    text: "−"
+                    color: parent.enabled ? Theme.icon : Theme.textMuted
+                    font.pixelSize: 25
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    radius: 22
+                    color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+            }
+
+            Label {
+                Layout.preferredWidth: 54
+                text: Math.round(root.zoomFactor * 100) + "%"
+                color: Theme.textMuted
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            ThemedToolButton {
+                id: zoomInButton
+                objectName: "chatMediaViewerZoomIn"
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                enabled: root.zoomFactor < root.maximumZoom
+                Accessible.name: qsTr("Zoom in")
+                onClicked: root.zoomIn()
+                contentItem: Label {
+                    text: "+"
+                    color: parent.enabled ? Theme.icon : Theme.textMuted
+                    font.pixelSize: 23
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    radius: 22
+                    color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : "transparent"
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+            }
+        }
+
         ThemedToolButton {
             id: closeButton
             objectName: "chatMediaViewerCloseButton"
@@ -140,6 +225,7 @@ FocusScope {
         anchors.top: toolbar.bottom
         anchors.bottom: filmstrip.top
         anchors.margins: 20
+        clip: true
 
         Image {
             id: fullImage
@@ -150,7 +236,20 @@ FocusScope {
             asynchronous: true
             cache: false
             smooth: true
+            scale: root.zoomFactor
+            transformOrigin: Item.Center
             Accessible.name: root.caption || qsTr("Shared photo")
+        }
+
+        WheelHandler {
+            objectName: "chatMediaViewerZoomWheel"
+            target: null
+            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+            onWheel: event => {
+                const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
+                root.adjustZoomFromWheel(delta)
+                event.accepted = true
+            }
         }
 
         BusyIndicator {
