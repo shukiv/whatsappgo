@@ -9,6 +9,10 @@ ItemDelegate {
     property bool destructive: false
     property color iconTint: destructive ? Theme.danger : Theme.text
     property string trailingText: ""
+    property url actionIconSource
+    property string actionAccessibleName: ""
+    property string actionObjectName: ""
+    signal actionTriggered()
 
     width: parent ? parent.width : 256
     height: 46
@@ -51,6 +55,26 @@ ItemDelegate {
             color: Theme.primary
             font.pixelSize: 12
             font.weight: Font.DemiBold
+        }
+
+        ThemedToolButton {
+            objectName: root.actionObjectName
+            visible: root.actionIconSource.toString().length > 0
+            Layout.preferredWidth: 40
+            Layout.preferredHeight: 40
+            iconSource: root.actionIconSource
+            iconSize: 17
+            Accessible.name: root.actionAccessibleName
+            ToolTip.visible: hovered
+            ToolTip.text: Accessible.name
+            background: Rectangle {
+                radius: width / 2
+                color: parent.down ? Theme.pressedRow
+                    : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
+                border.color: parent.activeFocus ? Theme.primary : "transparent"
+                border.width: parent.activeFocus ? 2 : 0
+            }
+            onClicked: root.actionTriggered()
         }
 
         Label {

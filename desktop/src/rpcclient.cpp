@@ -69,6 +69,13 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     }
     if (!m_profiles.contains(QStringLiteral("default")))
         m_profiles.prepend(QStringLiteral("default"));
+    settings.beginGroup(QStringLiteral("accounts/displayNames"));
+    for (const auto &profile : std::as_const(m_profiles)) {
+        const auto displayName = settings.value(profile).toString().trimmed();
+        if (!displayName.isEmpty())
+            m_profileDisplayNames.insert(profile, displayName);
+    }
+    settings.endGroup();
     m_profile = settings.value(QStringLiteral("accounts/current"), QStringLiteral("default")).toString();
     if (!m_profiles.contains(m_profile)) {
         m_profile = QStringLiteral("default");
@@ -996,9 +1003,39 @@ void RpcClient::addProfile(const QString &name)
     m_profiles.append(slug);
     QSettings settings;
     settings.setValue(QStringLiteral("accounts/profiles"), m_profiles);
+    auto displayName = name.simplified();
+    if (displayName.size() > 64)
+        displayName.truncate(64);
+    if (!displayName.isEmpty()) {
+        m_profileDisplayNames.insert(slug, displayName);
+        settings.beginGroup(QStringLiteral("accounts/displayNames"));
+        settings.setValue(slug, displayName);
+        settings.endGroup();
+        emit profileDisplayNamesChanged();
+    }
     ensureProfileMonitor(slug);
     emit profilesChanged();
     switchProfile(slug);
+}
+
+void RpcClient::renameProfile(const QString &profile, const QString &displayName)
+{
+    if (!m_profiles.contains(profile))
+        return;
+    auto cleaned = displayName.simplified();
+    if (cleaned.isEmpty())
+        return;
+    if (cleaned.size() > 64)
+        cleaned.truncate(64);
+    if (m_profileDisplayNames.value(profile).toString() == cleaned)
+        return;
+
+    m_profileDisplayNames.insert(profile, cleaned);
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("accounts/displayNames"));
+    settings.setValue(profile, cleaned);
+    settings.endGroup();
+    emit profileDisplayNamesChanged();
 }
 
 void RpcClient::searchMessages(const QString &query)

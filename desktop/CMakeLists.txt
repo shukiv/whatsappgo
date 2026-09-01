@@ -156,6 +156,20 @@ if(BUILD_TESTING)
     target_include_directories(pairing-auto-start-test PRIVATE src)
     target_link_libraries(pairing-auto-start-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
+    qt_add_executable(profile-display-names-test
+        tests/ProfileDisplayNames.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+    )
+    target_include_directories(profile-display-names-test PRIVATE src)
+    target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+    add_test(NAME desktop-profile-display-names COMMAND profile-display-names-test)
+    set_tests_properties(desktop-profile-display-names PROPERTIES TIMEOUT 5)
+
     qt_add_executable(message-model-test
         tests/MessageModel.cpp
         src/messagemodel.cpp

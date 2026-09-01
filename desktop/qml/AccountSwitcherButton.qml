@@ -6,9 +6,15 @@ ThemedToolButton {
     id: root
     property var profiles: []
     property string currentProfile: "default"
+    property var displayNames: ({})
     property var unreadCounts: ({})
     property Item popupParent
     signal switchRequested(string profile)
+    signal renameRequested(string profile)
+
+    function displayName(profile) {
+        return String(displayNames[profile] || profile)
+    }
 
     readonly property int totalUnread: {
         let total = 0
@@ -21,7 +27,7 @@ ThemedToolButton {
     height: 44
     iconSource: Qt.resolvedUrl("icons/user.svg")
     iconSize: 20
-    Accessible.name: qsTr("Switch account. Current account: %1").arg(currentProfile)
+    Accessible.name: qsTr("Switch account. Current account: %1").arg(displayName(currentProfile))
     Accessible.description: totalUnread > 0
         ? qsTr("%1 unread messages across all accounts").arg(totalUnread)
         : qsTr("No unread messages")
@@ -100,13 +106,20 @@ ThemedToolButton {
             WhatsAppMenuItem {
                 required property string modelData
                 objectName: "accountSwitcherMenuItem"
-                text: modelData
+                text: root.displayName(modelData)
                 trailingText: Number(root.unreadCounts[modelData] || 0) > 0
                     ? String(root.unreadCounts[modelData])
                     : ""
                 iconSource: Qt.resolvedUrl("icons/user.svg")
+                actionIconSource: Qt.resolvedUrl("icons/edit.svg")
+                actionAccessibleName: qsTr("Rename %1").arg(root.displayName(modelData))
+                actionObjectName: "accountRenameButton"
                 checkable: true
                 checked: modelData === root.currentProfile
+                onActionTriggered: {
+                    accountMenu.close()
+                    root.renameRequested(modelData)
+                }
                 onClicked: {
                     accountMenu.close()
                     root.switchRequested(modelData)

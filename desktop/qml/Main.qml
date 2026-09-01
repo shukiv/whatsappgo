@@ -603,8 +603,14 @@ Kirigami.ApplicationWindow {
                             Layout.preferredHeight: 44
                             profiles: backend.profiles
                             currentProfile: backend.profile
+                            displayNames: backend.profileDisplayNames
                             unreadCounts: backend.profileUnreadCounts
                             onSwitchRequested: profile => backend.switchProfile(profile)
+                            onRenameRequested: profile => {
+                                renameAccountDialog.profile = profile
+                                renameAccountDialog.initialName = String(backend.profileDisplayNames[profile] || profile)
+                                renameAccountDialog.open()
+                            }
                             ToolTip.visible: hovered
                             ToolTip.text: Accessible.name
                         }
@@ -1908,6 +1914,29 @@ Kirigami.ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+    Kirigami.PromptDialog {
+        id: renameAccountDialog
+        objectName: "renameAccountDialog"
+        property string profile: ""
+        property string initialName: ""
+        title: qsTr("Rename account")
+        subtitle: qsTr("This changes only the local label. Your WhatsApp name and account data stay unchanged.")
+        preferredWidth: Math.min(window.width - 48, 430)
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        onOpened: {
+            renameAccountName.text = initialName
+            renameAccountName.forceActiveFocus()
+            renameAccountName.selectAll()
+        }
+        onAccepted: backend.renameProfile(profile, renameAccountName.text)
+        contentItem: TextField {
+            id: renameAccountName
+            placeholderText: qsTr("Account display name")
+            maximumLength: 64
+            Accessible.name: qsTr("Account display name")
+            onAccepted: if (text.trim()) renameAccountDialog.accept()
         }
     }
     Kirigami.PromptDialog {

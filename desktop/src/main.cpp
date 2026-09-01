@@ -624,6 +624,8 @@ int main(int argc, char *argv[])
         std::unique_ptr<QObject> accountChip(accountComponent.createWithInitialProperties({
             {QStringLiteral("profiles"), QStringList{QStringLiteral("default"), QStringLiteral("work")}},
             {QStringLiteral("currentProfile"), QStringLiteral("work")},
+            {QStringLiteral("displayNames"), QVariantMap{{QStringLiteral("default"), QStringLiteral("Personal")},
+                                                          {QStringLiteral("work"), QStringLiteral("Support")}}},
             {QStringLiteral("unreadCounts"), QVariantMap{{QStringLiteral("default"), 12}, {QStringLiteral("work"), 0}}},
         }));
         if (!accountChip)
@@ -644,6 +646,23 @@ int main(int argc, char *argv[])
         accountMenuTransition.exec();
         const bool standaloneAccountMenuOpened = accountMenu
             && accountMenu->property("opened").toBool();
+        const auto findVisualItem = [](auto &&self, QQuickItem *parent, const QString &name) -> QQuickItem * {
+            if (parent == nullptr)
+                return nullptr;
+            if (parent->objectName() == name)
+                return parent;
+            for (auto *child : parent->childItems()) {
+                if (auto *match = self(self, child, name))
+                    return match;
+            }
+            return nullptr;
+        };
+        auto *accountMenuItem = findVisualItem(findVisualItem, accountWindow.contentItem(), QStringLiteral("accountSwitcherMenuItem"));
+        auto *accountEditButton = findVisualItem(findVisualItem, accountWindow.contentItem(), QStringLiteral("accountRenameButton"));
+        const bool customAccountNameShown = accountMenuItem
+            && accountMenuItem->property("text").toString() == QStringLiteral("Personal");
+        const bool accountEditAvailable = accountEditButton && accountEditButton->isVisible()
+            && accountEditButton->width() >= 40.0 && accountEditButton->height() >= 40.0;
         if (accountMenu)
             QMetaObject::invokeMethod(accountMenu, "close");
         QCoreApplication::processEvents();
@@ -709,6 +728,8 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         return accountUnreadBadge && accountUnreadBadge->isVisible() && accountChipItem
                 && accountClicked && standaloneAccountMenuOpened
+                && customAccountNameShown
+                && accountEditAvailable
                 && accountMenu->property("height").toReal() >= 100.0
                 && accountMenu->property("width").toReal() == 244.0
                 && qFuzzyIsNull(accountMenu->property("x").toReal())

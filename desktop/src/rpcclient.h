@@ -39,6 +39,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString profile READ profile NOTIFY profileChanged)
     Q_PROPERTY(QStringList profiles READ profiles NOTIFY profilesChanged)
+    Q_PROPERTY(QVariantMap profileDisplayNames READ profileDisplayNames NOTIFY profileDisplayNamesChanged)
     Q_PROPERTY(QVariantMap profileUnreadCounts READ profileUnreadCounts NOTIFY profileUnreadCountsChanged)
     Q_PROPERTY(QVariantList searchResults READ searchResults NOTIFY searchResultsChanged)
     Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
@@ -70,6 +71,7 @@ public:
     bool busy() const { return m_busy; }
     QString profile() const { return m_profile; }
     QStringList profiles() const { return m_profiles; }
+    QVariantMap profileDisplayNames() const { return m_profileDisplayNames; }
     QVariantMap profileUnreadCounts() const { return m_profileUnreadCounts; }
     QVariantList searchResults() const { return m_searchResults; }
     QVariantList statusUpdates() const { return m_statusUpdates; }
@@ -113,6 +115,7 @@ public:
     Q_INVOKABLE void logout();
     Q_INVOKABLE void switchProfile(const QString &profile);
     Q_INVOKABLE void addProfile(const QString &name);
+    Q_INVOKABLE void renameProfile(const QString &profile, const QString &displayName);
     Q_INVOKABLE void searchMessages(const QString &query);
     Q_INVOKABLE void openFile(const QString &path);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
@@ -150,6 +153,7 @@ signals:
     void statusReplyFinished(const QString &recipientJid, const QString &statusMessageId, bool success, const QString &message);
     void profileChanged();
     void profilesChanged();
+    void profileDisplayNamesChanged();
     void profileUnreadCountsChanged();
     void searchResultsChanged();
     void statusUpdatesChanged();
@@ -211,6 +215,7 @@ private:
     QString m_pairingCode;
     QString m_profile = QStringLiteral("default");
     QStringList m_profiles{QStringLiteral("default")};
+    QVariantMap m_profileDisplayNames;
     QVariantMap m_profileUnreadCounts;
     bool m_busy = false;
     QHash<QString, QProcess *> m_ownedBackends;

@@ -42,9 +42,9 @@ Use the **+** button beside the account tabs, enter a local profile name, and
 link the second account. Each tab has separate credentials, history, cache, and
 connection. Selecting a tab starts its backend if it is not already running.
 
-The profile name identifies local storage; it does not change the WhatsApp
-account name. Allowed characters are lowercase letters, digits, `_`, and `-`,
-with a maximum of 32 characters.
+The internal profile key identifies local storage and does not change the
+WhatsApp account name. Use the pen beside an account in the switcher to give it
+a local display name; this label may contain spaces and non-Latin characters.
 
 ## Chats and history
 
