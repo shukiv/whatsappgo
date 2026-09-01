@@ -1168,7 +1168,7 @@ Kirigami.ApplicationWindow {
                         WheelHandler {
                             target: null
                             blocking: false
-                            onWheel: event => messageList.releaseTail()
+                            onWheel: event => messageList.handleReaderWheel()
                         }
                         delegate: MessageDelegate {
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
@@ -1221,6 +1221,17 @@ Kirigami.ApplicationWindow {
                             followTail = false
                         }
 
+                        function handleReaderWheel() {
+                            releaseTail()
+                            // StopAtBounds means another upward wheel tick at
+                            // the first loaded row does not change contentY and
+                            // emits no movement signal. Request history from
+                            // the observed wheel event so scrolling can carry
+                            // on naturally as soon as that page is prepended.
+                            if (contentY < originY + 80)
+                                olderMessagesTimer.restart()
+                        }
+
                         function prepareForChat(chatJid) {
                             const jid = String(chatJid || "")
                             // selectedChatChanged also reports refreshed titles
@@ -1261,6 +1272,7 @@ Kirigami.ApplicationWindow {
 
                         Timer {
                             id: olderMessagesTimer
+                            objectName: "olderMessagesTimer"
                             interval: 120
                             repeat: false
                             onTriggered: backend.loadOlderMessages()

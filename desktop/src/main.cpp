@@ -1398,6 +1398,19 @@ int main(int argc, char *argv[])
         require(!messageList->property("initialPositionPending").toBool(),
                 QStringLiteral("refreshing metadata for the open chat re-armed its initial tail jump"));
 
+        // At the top boundary a wheel tick cannot change contentY, so Qt does
+        // not emit movementStarted/contentYChanged. The observed wheel event
+        // itself must still request the next local history page.
+        auto *olderMessagesTimer = messageList->findChild<QObject *>(QStringLiteral("olderMessagesTimer"));
+        messageList->setProperty("contentY", messageList->property("originY"));
+        const bool handledBoundaryWheel = QMetaObject::invokeMethod(messageList, "handleReaderWheel");
+        require(handledBoundaryWheel,
+                QStringLiteral("the message list did not expose its reader-wheel handler"));
+        require(olderMessagesTimer != nullptr && olderMessagesTimer->property("running").toBool(),
+                QStringLiteral("wheel input at the top boundary did not request older messages"));
+        if (olderMessagesTimer != nullptr)
+            QMetaObject::invokeMethod(olderMessagesTimer, "stop");
+
         // Returning to a chat in the same session must paint its last local
         // page synchronously instead of showing an empty conversation while
         // another RPC round trip completes.
