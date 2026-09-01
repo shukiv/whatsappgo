@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"mime"
 	"os"
@@ -415,7 +416,11 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 				"title":    notifyTitle,
 				"body":     notificationBody(msg, evt.Info.IsGroup),
 			}})
-			go c.notifier.Notify(context.Background(), msg.ChatJID, notifyTitle, notificationBody(msg, evt.Info.IsGroup))
+			go func() {
+				if err := c.notifier.Notify(context.Background(), msg.ChatJID, notifyTitle, notificationBody(msg, evt.Info.IsGroup)); err != nil {
+					log.Printf("deliver desktop notification: %v", err)
+				}
+			}()
 		}
 	}
 	if downloadable := downloadableFromMessage(evt.Message); downloadable != nil && !evt.IsViewOnce {

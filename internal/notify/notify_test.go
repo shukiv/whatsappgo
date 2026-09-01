@@ -237,3 +237,57 @@ func TestRepeatedNotifyForSameIDDoesNotGrowOrder(t *testing.T) {
 		t.Fatalf("duplicate id mishandled: order=%#v actions=%#v", d.actionOrder, d.actions)
 	}
 }
+
+func TestStartNotificationDaemonWaitsForServiceOwner(t *testing.T) {
+	dir := privateDir(t)
+	path := writeExecutable(t, dir, 0o700)
+	lookups := 0
+	launches := 0
+	pauses := 0
+	owner := startNotificationDaemon([]string{path}, func() (string, error) {
+		lookups++
+		if lookups >= 3 {
+			return ":1.77", nil
+		}
+		return "", errors.New("not owned")
+	}, func(got string) error {
+		launches++
+		if got != path {
+			t.Fatalf("launched %q, want %q", got, path)
+		}
+		return nil
+	}, func(time.Duration) { pauses++ })
+	if owner != ":1.77" || launches != 1 || pauses != 1 {
+		t.Fatalf("owner=%q launches=%d pauses=%d lookups=%d", owner, launches, pauses, lookups)
+	}
+}
+
+func TestStartNotificationDaemonSkipsLaunchWhenServiceAppears(t *testing.T) {
+	dir := privateDir(t)
+	path := writeExecutable(t, dir, 0o700)
+	launched := false
+	owner := startNotificationDaemon([]string{path}, func() (string, error) {
+		return ":1.88", nil
+	}, func(string) error {
+		launched = true
+		return nil
+	}, func(time.Duration) {})
+	if owner != ":1.88" || launched {
+		t.Fatalf("owner=%q launched=%v", owner, launched)
+	}
+}
+
+func TestStartNotificationDaemonRejectsUnsafeCandidate(t *testing.T) {
+	dir := privateDir(t)
+	path := writeExecutable(t, dir, 0o770)
+	launched := false
+	owner := startNotificationDaemon([]string{path}, func() (string, error) {
+		return "", errors.New("not owned")
+	}, func(string) error {
+		launched = true
+		return nil
+	}, func(time.Duration) {})
+	if owner != "" || launched {
+		t.Fatalf("unsafe daemon produced owner=%q launched=%v", owner, launched)
+	}
+}

@@ -173,7 +173,9 @@ with a known-good GPU driver may launch with `QT_QUICK_BACKEND=rhi`.
 ## Notifications and presence
 
 Incoming messages use the native desktop notification service or portal unless
-the chat is muted; notification delivery does not depend on a tray icon.
+the chat is muted; notification delivery does not depend on a tray icon. If a
+minimal desktop session installed but did not start `notification-daemon`,
+WhatsAppGo safely starts the trusted system copy when its backend starts.
 Clicking a notification opens its conversation. When the desktop provides a
 system tray, WhatsAppGo also places its icon there with connection status,
 **Open/Hide**, and **Quit WhatsAppGo** actions. Minimizing hides the window

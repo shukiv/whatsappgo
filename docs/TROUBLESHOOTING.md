@@ -124,6 +124,17 @@ WhatsAppGo instance. If no instance is listening, it can launch only a
 If neither activation route is safe, the backend logs the reason and does not
 attach an action to the notification.
 
+## Incoming-message notifications do not appear
+
+WhatsAppGo first uses the freedesktop notification service, asks D-Bus to
+activate it when necessary, and then falls back to the desktop portal. Some
+minimal X11 sessions install `notification-daemon` without starting it;
+WhatsAppGo starts a trusted system copy automatically. If banners still do not
+appear, confirm that notifications are enabled in the desktop settings and run
+`notify-send "WhatsAppGo test"`. A `ServiceUnknown` error means the desktop did
+not install any notification provider; install `notification-daemon` or the
+notification component supplied by your desktop environment.
+
 ## The WhatsAppGo icon is missing from the GNOME top bar
 
 GNOME Shell requires a StatusNotifier/AppIndicator extension to display tray

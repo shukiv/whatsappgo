@@ -20,13 +20,21 @@ import (
 const desktopExecutableName = "whatsappgo"
 
 const (
-	notificationService   = "org.freedesktop.Notifications"
-	notificationInterface = "org.freedesktop.Notifications"
-	notificationPath      = "/org/freedesktop/Notifications"
-	portalService         = "org.freedesktop.portal.Desktop"
-	portalInterface       = "org.freedesktop.portal.Notification"
-	portalPath            = "/org/freedesktop/portal/desktop"
+	notificationService    = "org.freedesktop.Notifications"
+	notificationInterface  = "org.freedesktop.Notifications"
+	notificationPath       = "/org/freedesktop/Notifications"
+	portalService          = "org.freedesktop.portal.Desktop"
+	portalInterface        = "org.freedesktop.portal.Notification"
+	portalPath             = "/org/freedesktop/portal/desktop"
+	notificationStartWait  = 25 * time.Millisecond
+	notificationStartTries = 40
 )
+
+var notificationDaemonCandidates = []string{
+	"/usr/lib/notification-daemon/notification-daemon",
+	"/usr/libexec/notification-daemon/notification-daemon",
+	"/usr/libexec/notification-daemon",
+}
 
 type Notifier interface {
 	Notify(context.Context, string, string, string) error
@@ -58,8 +66,26 @@ func NewDesktop(profile string) (*Desktop, error) {
 		return nil, err
 	}
 	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), profile: profile}
-	var owner string
-	if err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&owner); err != nil {
+	lookupOwner := func() (string, error) {
+		var current string
+		err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&current)
+		return current, err
+	}
+	owner, ownerErr := lookupOwner()
+	if ownerErr != nil {
+		// Ask D-Bus to activate a registered notification service first. Minimal
+		// X11 sessions often install notification-daemon without a D-Bus service
+		// file, so fall back to starting that trusted system executable directly.
+		_ = conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.StartServiceByName", 0, notificationService, uint32(0)).Err
+		owner, ownerErr = lookupOwner()
+		if ownerErr != nil {
+			owner = startNotificationDaemon(notificationDaemonCandidates, lookupOwner, launchNotificationDaemon, time.Sleep)
+			if owner != "" {
+				log.Printf("started fallback desktop notification service")
+			}
+		}
+	}
+	if owner == "" {
 		var portalOwner string
 		if portalErr := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, portalService).Store(&portalOwner); portalErr != nil {
 			log.Printf("desktop notifications unavailable: neither %s nor %s has an owner", notificationService, portalService)
@@ -101,6 +127,41 @@ func NewDesktop(profile string) (*Desktop, error) {
 	conn.Signal(d.signals)
 	go d.watchActions()
 	return d, nil
+}
+
+func startNotificationDaemon(candidates []string, lookupOwner func() (string, error), launch func(string) error, pause func(time.Duration)) string {
+	// Another profile may have started the service after our first lookup.
+	if owner, err := lookupOwner(); err == nil && owner != "" {
+		return owner
+	}
+	path := ""
+	for _, candidate := range candidates {
+		if isTrustedExecutable(candidate) {
+			path = candidate
+			break
+		}
+	}
+	if path == "" || launch(path) != nil {
+		return ""
+	}
+	for attempt := 0; attempt < notificationStartTries; attempt++ {
+		if owner, err := lookupOwner(); err == nil && owner != "" {
+			return owner
+		}
+		if attempt+1 < notificationStartTries {
+			pause(notificationStartWait)
+		}
+	}
+	return ""
+}
+
+func launchNotificationDaemon(path string) error {
+	command := exec.Command(path)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	_ = command.Process.Release()
+	return nil
 }
 
 // maxTrackedNotifications bounds the click-target map. The server tells us

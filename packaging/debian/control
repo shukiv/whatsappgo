@@ -13,6 +13,7 @@ Rules-Requires-Root: no
 Package: whatsappgo
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, qml6-module-org-kde-kirigami, qml6-module-org-kde-desktop, qml6-module-qtmultimedia
+Recommends: notification-daemon
 Suggests: gnome-shell-extension-appindicator
 Description: low-memory native WhatsApp client for Linux
  WhatsAppGo uses a Qt/Kirigami desktop interface and an automatically managed
