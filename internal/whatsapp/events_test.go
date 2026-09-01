@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -16,6 +17,7 @@ import (
 	waEvents "go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/model"
 	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
@@ -33,6 +35,71 @@ func TestMessageFromEventExtractsReaction(t *testing.T) {
 	m := messageFromEvent(evt)
 	if m.Kind != "reaction" || m.ReplyTo != "target" || m.Body != "ok" {
 		t.Fatalf("unexpected reaction: %#v", m)
+	}
+}
+
+func TestSendReactionStoresAndEmitsSuccessfulOwnReaction(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	chat := types.NewJID("123", types.DefaultUserServer)
+	if err := st.UpsertMessage(ctx, model.Message{
+		ID: "target", ChatJID: chat.String(), SenderJID: chat.String(),
+		Timestamp: 1, Kind: "text", Body: "hello", Status: "received",
+	}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Client{
+		store: st,
+		subs:  make(map[uint64]func(gateway.Event)),
+		sendReactionMessage: func(context.Context, types.JID, types.JID, types.MessageID, string) (whatsmeow.SendResponse, error) {
+			return whatsmeow.SendResponse{
+				Timestamp: time.UnixMilli(2),
+				Sender:    types.NewJID("me", types.DefaultUserServer),
+			}, nil
+		},
+	}
+	var emitted gateway.Event
+	c.Subscribe(func(evt gateway.Event) { emitted = evt })
+	if err := c.SendReaction(ctx, chat.String(), "target", chat.String(), "👍"); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := st.ListMessages(ctx, chat.String(), 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 || len(page.Messages[0].Reactions) != 1 {
+		t.Fatalf("successful own reaction was not attached to the message: %#v", page.Messages)
+	}
+	got := page.Messages[0].Reactions[0]
+	if got.Emoji != "👍" || got.SenderJID != "me@s.whatsapp.net" {
+		t.Fatalf("unexpected stored own reaction: %#v", got)
+	}
+	if emitted.Name != "message.reaction" {
+		t.Fatalf("successful own reaction did not emit a refresh event: %#v", emitted)
+	}
+
+	// WhatsApp may later echo the reaction back to this linked device. The echo
+	// must update the optimistic row, not count the same person's reaction twice.
+	c.handleMessage(&waEvents.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Chat: chat, Sender: types.NewJID("me", types.DefaultUserServer), IsFromMe: true,
+		}, ID: "reaction-echo", Timestamp: time.UnixMilli(3)},
+		Message: &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+			Key: &waCommon.MessageKey{ID: proto.String("target")}, Text: proto.String("👍"),
+		}},
+	})
+	page, err = st.ListMessages(ctx, chat.String(), 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages[0].Reactions) != 1 {
+		t.Fatalf("own reaction echo created a duplicate: %#v", page.Messages[0].Reactions)
 	}
 }
 

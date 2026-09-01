@@ -373,10 +373,8 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		return
 	}
 	if reaction := evt.Message.GetReactionMessage(); reaction != nil {
-		r := model.Reaction{ChatJID: evt.Info.Chat.String(), MessageID: reaction.GetKey().GetID(), SenderJID: evt.Info.Sender.String(), Emoji: reaction.GetText(), Timestamp: evt.Info.Timestamp.UnixMilli()}
-		if err := c.store.UpsertReaction(context.Background(), r); err == nil {
-			c.emit(gateway.Event{Name: "message.reaction", Data: r})
-		}
+		r := model.Reaction{ChatJID: evt.Info.Chat.String(), MessageID: reaction.GetKey().GetID(), SenderJID: c.reactionSenderJID(evt.Info.Sender, evt.Info.IsFromMe), Emoji: reaction.GetText(), Timestamp: evt.Info.Timestamp.UnixMilli()}
+		_ = c.recordReaction(context.Background(), r)
 		return
 	}
 	if pin := evt.Message.GetPinInChatMessage(); pin != nil {

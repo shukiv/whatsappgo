@@ -61,6 +61,7 @@ type Client struct {
 	downloadToFile         func(context.Context, whatsmeow.DownloadableMessage, whatsmeow.File) error
 	requestMediaRetryPath  func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error)
 	downloadWithPathToFile func(context.Context, string, whatsmeow.DownloadableMessage, whatsmeow.File) error
+	sendReactionMessage    func(context.Context, types.JID, types.JID, types.MessageID, string) (whatsmeow.SendResponse, error)
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
@@ -552,8 +553,39 @@ func (c *Client) SendReaction(ctx context.Context, chatJID, messageID, senderJID
 			return err
 		}
 	}
-	_, err = c.wa.SendMessage(ctx, chat, c.wa.BuildReaction(chat, sender, types.MessageID(messageID), emoji))
-	return err
+	var resp whatsmeow.SendResponse
+	if c.sendReactionMessage != nil {
+		resp, err = c.sendReactionMessage(ctx, chat, sender, types.MessageID(messageID), emoji)
+	} else {
+		resp, err = c.wa.SendMessage(ctx, chat, c.wa.BuildReaction(chat, sender, types.MessageID(messageID), emoji))
+	}
+	if err != nil {
+		return err
+	}
+	timestamp := resp.Timestamp.UnixMilli()
+	if resp.Timestamp.IsZero() {
+		timestamp = time.Now().UnixMilli()
+	}
+	return c.recordReaction(ctx, model.Reaction{
+		ChatJID: chat.String(), MessageID: messageID,
+		SenderJID: c.reactionSenderJID(resp.Sender, true),
+		Emoji:     emoji, Timestamp: timestamp,
+	})
+}
+
+func (c *Client) reactionSenderJID(sender types.JID, fromMe bool) string {
+	if fromMe && c.wa != nil && c.wa.Store != nil && c.wa.Store.ID != nil {
+		sender = *c.wa.Store.ID
+	}
+	return sender.ToNonAD().String()
+}
+
+func (c *Client) recordReaction(ctx context.Context, reaction model.Reaction) error {
+	if err := c.store.UpsertReaction(ctx, reaction); err != nil {
+		return err
+	}
+	c.emit(gateway.Event{Name: "message.reaction", Data: reaction})
+	return nil
 }
 
 func (c *Client) PinMessage(ctx context.Context, chatJID, messageID, senderJID string, duration time.Duration) error {
