@@ -161,6 +161,43 @@ Kirigami.ApplicationWindow {
         mediaPreview.openImage(imageUrl)
     }
 
+    function localMediaUrl(path) {
+        const value = String(path || "")
+        if (!value)
+            return ""
+        return value.indexOf("file:") === 0 || value.indexOf("data:") === 0 || value.indexOf("qrc:") === 0
+            ? value : "file://" + value
+    }
+
+    function formatMessageDate(value) {
+        let timestamp = Number(value || 0)
+        if (!timestamp)
+            return ""
+        if (timestamp < 1000000000000)
+            timestamp *= 1000
+        return Qt.formatDateTime(new Date(timestamp), Qt.DefaultLocaleShortDate)
+    }
+
+    function openChatImage(message) {
+        if (!message)
+            return
+        const path = String(message.media_path || message.media_thumbnail || "")
+        if (!path) {
+            if (message.id)
+                backend.downloadMedia(message.id)
+            return
+        }
+        const fromMe = Boolean(message.from_me)
+        const title = fromMe
+            ? (backend.status.user_name || backend.profile || qsTr("You"))
+            : (message.sender_name || friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid))
+        const avatar = fromMe || !backend.selectedChat.avatar_path
+            ? "" : localMediaUrl(backend.selectedChat.avatar_path)
+        chatMediaViewer.openImage(localMediaUrl(path), title, avatar,
+                                  formatMessageDate(message.timestamp), String(message.body || ""),
+                                  String(message.id || ""))
+    }
+
     Loader {
         id: voiceRecorderLoader
         active: false
@@ -192,6 +229,8 @@ Kirigami.ApplicationWindow {
         }
         function onMediaReady(messageId, path) {
             Playback.fileReady(messageId, path)
+            if (chatMediaViewer.previewActive && chatMediaViewer.messageId === messageId)
+                chatMediaViewer.imageUrl = window.localMediaUrl(path)
             if (window.infoDrawerOpen) {
                 backend.refreshChatInfo()
                 if (contactInfoDrawer.sharedView)
@@ -1037,6 +1076,7 @@ Kirigami.ApplicationWindow {
                                 pinSevenDays.checked = true
                                 pinDialog.open()
                             }
+                            onImagePreviewRequested: message => window.openChatImage(message)
                         }
                         // Following the tail only while the reader is already at
                         // the bottom keeps an incoming message from yanking the
@@ -1322,6 +1362,7 @@ Kirigami.ApplicationWindow {
                     backend.clearChatInfo()
                 }
                 onOpenFileRequested: path => backend.openFile(path)
+                onImagePreviewRequested: message => window.openChatImage(message)
                 onDownloadRequested: messageId => backend.downloadMedia(messageId)
                 onOpenLinkRequested: url => {
                     if (url)
@@ -1348,6 +1389,12 @@ Kirigami.ApplicationWindow {
             }
             onAvatarRequested: jid => backend.fetchStatusAvatar(jid)
         }
+    }
+
+    ChatMediaViewer {
+        id: chatMediaViewer
+        anchors.fill: parent
+        z: 120
     }
 
     Loader {

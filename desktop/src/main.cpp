@@ -491,10 +491,22 @@ int main(int argc, char *argv[])
                 height: 600
                 visible: true
                 property var testMessage
+                property var imageMessage
+                property string previewedMessageId: ""
+                property string previewedMediaPath: ""
                 MessageDelegate {
                     objectName: "messageInteractionDelegate"
                     width: 800
                     modelData: harness.testMessage
+                }
+                MessageDelegate {
+                    objectName: "imageInteractionDelegate"
+                    width: 800
+                    modelData: harness.imageMessage
+                    onImagePreviewRequested: message => {
+                        harness.previewedMessageId = String(message.id || "")
+                        harness.previewedMediaPath = String(message.media_path || "")
+                    }
                 }
             }
         )QML", QUrl(QStringLiteral("qrc:/message-interaction-test.qml")));
@@ -516,6 +528,14 @@ int main(int argc, char *argv[])
         };
         std::unique_ptr<QObject> harness(component.createWithInitialProperties({
             {QStringLiteral("testMessage"), message},
+            {QStringLiteral("imageMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("image-test")},
+                {QStringLiteral("kind"), QStringLiteral("image")},
+                {QStringLiteral("media_path"), QStringLiteral("/tmp/whatsappgo-image-test.jpg")},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            }},
         }));
         if (!harness)
             return EXIT_FAILURE;
@@ -533,6 +553,10 @@ int main(int argc, char *argv[])
         auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
         auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
+        auto *imageDelegate = harness->findChild<QObject *>(QStringLiteral("imageInteractionDelegate"));
+        const bool imagePreviewInvoked = imageDelegate
+            && QMetaObject::invokeMethod(imageDelegate, "openVisualMedia");
+        QCoreApplication::processEvents();
         const auto rendered = body->property("text").toString();
         const bool selected = QMetaObject::invokeMethod(body, "selectAll")
             && !body->property("selectedText").toString().isEmpty();
@@ -565,6 +589,9 @@ int main(int argc, char *argv[])
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
                 && menuOpened && menu && menu->property("visible").toBool()
                 && quickReactions && quickReactions->property("visible").toBool()
+                && imagePreviewInvoked
+                && harness->property("previewedMessageId").toString() == QStringLiteral("image-test")
+                && harness->property("previewedMediaPath").toString() == QStringLiteral("/tmp/whatsappgo-image-test.jpg")
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
@@ -1190,6 +1217,37 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         auto *preview = root->findChild<QObject *>(QStringLiteral("mediaPreviewOverlay"));
         if (!invoked || !preview || !preview->property("previewActive").toBool())
+            return EXIT_FAILURE;
+
+        const auto receivedImagePath = QDir(QDir::tempPath()).filePath(
+            QStringLiteral("whatsappgo-native-viewer-test.jpg"));
+        if (!source.save(receivedImagePath, "JPG"))
+            return EXIT_FAILURE;
+        const QVariant imageMessage = QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("received-image-test")},
+            {QStringLiteral("kind"), QStringLiteral("image")},
+            {QStringLiteral("media_path"), receivedImagePath},
+            {QStringLiteral("body"), QStringLiteral("A received photo")},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch()},
+        };
+        const bool nativeViewerInvoked = QMetaObject::invokeMethod(
+            root, "openChatImage", Q_ARG(QVariant, imageMessage));
+        QCoreApplication::processEvents();
+        auto *nativeViewer = root->findChild<QObject *>(QStringLiteral("chatMediaViewer"));
+        auto *nativeImage = nativeViewer
+            ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerImage")) : nullptr;
+        auto *nativeClose = nativeViewer
+            ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerCloseButton"))) : nullptr;
+        const bool nativeViewerReady = nativeViewerInvoked && nativeViewer
+            && nativeViewer->property("previewActive").toBool()
+            && nativeImage && nativeImage->property("source").toUrl().isLocalFile()
+            && nativeClose && nativeClose->width() >= 44 && nativeClose->height() >= 44;
+        const bool nativeViewerClosed = nativeClose && QMetaObject::invokeMethod(nativeClose, "click");
+        QCoreApplication::processEvents();
+        QFile::remove(receivedImagePath);
+        if (!nativeViewerReady || !nativeViewerClosed
+                || nativeViewer->property("previewActive").toBool())
             return EXIT_FAILURE;
         if (screenshotPath.isEmpty())
             return EXIT_SUCCESS;

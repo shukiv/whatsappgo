@@ -23,6 +23,7 @@ Rectangle {
     signal muteChanged(bool muted)
     signal archiveChanged(bool archived)
     signal openFileRequested(string path)
+    signal imagePreviewRequested(var message)
     signal downloadRequested(string messageId)
     signal openLinkRequested(string url)
 
@@ -458,7 +459,7 @@ Rectangle {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             if (modelData.media_path)
-                                root.openFileRequested(modelData.media_path)
+                                root.imagePreviewRequested(modelData)
                             else
                                 root.downloadRequested(modelData.id)
                         }

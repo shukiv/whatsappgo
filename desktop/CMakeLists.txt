@@ -64,6 +64,7 @@ qt_add_qml_module(whatsappgo
         qml/WhatsAppMenuItem.qml
         qml/VoiceRecorder.qml
         qml/MediaPreview.qml
+        qml/ChatMediaViewer.qml
         qml/ContactInfoDrawer.qml
     RESOURCES
         qml/icons/new-chat.svg

@@ -13,6 +13,7 @@ Item {
     signal deleteRequested(string messageId, string senderJid)
     signal replyRequested(string messageId, string body)
     signal pinRequested(string messageId, string senderJid, string body)
+    signal imagePreviewRequested(var message)
 
     readonly property bool hasReply: Boolean(modelData.reply_to)
     readonly property bool hasMedia: Boolean(modelData.media_path)
@@ -118,6 +119,18 @@ Item {
         const withoutScheme = String(url || "").replace(/^[a-z]+:\/\//i, "")
         const host = withoutScheme.split("/")[0].split("?")[0]
         return host.replace(/^www\./i, "")
+    }
+
+    function openVisualMedia() {
+        if (modelData.kind === "video") {
+            Playback.start(modelData.id, modelData.media_path || "", true)
+            return
+        }
+        if ((modelData.kind === "image" || modelData.kind === "sticker") && hasPreview) {
+            if (previewIsThumbnail)
+                backend.ensureMedia(modelData.id)
+            imagePreviewRequested(modelData)
+        }
     }
 
     readonly property real playProgress: playingThis && Playback.duration > 0
@@ -481,6 +494,7 @@ Item {
 
                 Button {
                     objectName: "mediaOverlayAction"
+                    z: 2
                     visible: root.visualKind && root.modelData.kind !== "video" && !root.hasMedia
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
@@ -505,15 +519,12 @@ Item {
                 }
 
                 MouseArea {
+                    objectName: "messageMediaOpenArea"
+                    z: 1
                     anchors.fill: parent
-                    enabled: root.modelData.kind === "video" || root.hasMedia
+                    enabled: root.modelData.kind === "video" || root.hasPreview
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (root.modelData.kind === "video")
-                            Playback.start(root.modelData.id, root.modelData.media_path || "", true)
-                        else
-                            backend.openFile(root.modelData.media_path)
-                    }
+                    onClicked: root.openVisualMedia()
                 }
             }
 
@@ -794,6 +805,8 @@ Item {
                     onClicked: {
                         if (root.modelData.kind === "video")
                             Playback.start(root.modelData.id, root.modelData.media_path || "", true)
+                        else if (root.visualKind && root.hasPreview)
+                            root.imagePreviewRequested(root.modelData)
                         else if (root.hasMedia)
                             backend.openFile(root.modelData.media_path)
                         else
