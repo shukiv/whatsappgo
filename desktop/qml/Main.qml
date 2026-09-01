@@ -1156,7 +1156,6 @@ Kirigami.ApplicationWindow {
                         model: backend.messages
                         clip: true
                         reuseItems: true
-                        cacheBuffer: height
                         spacing: 1
                         // Short conversations grow upward from the composer,
                         // just like long conversations whose tail is visible.
@@ -1165,6 +1164,11 @@ Kirigami.ApplicationWindow {
                         bottomMargin: 10
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: OverlayScrollBar {}
+                        WheelHandler {
+                            target: null
+                            blocking: false
+                            onWheel: event => messageList.releaseTail()
+                        }
                         delegate: MessageDelegate {
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
                             chatTitle: backend.selectedChat.title || ""
@@ -1207,12 +1211,18 @@ Kirigami.ApplicationWindow {
                                 tailPositionTimer.restart()
                         }
 
+                        function releaseTail() {
+                            tailPositionTimer.stop()
+                            if (!positioningTail)
+                                followTail = false
+                        }
+
                         // Geometry can change several times while a batch of
                         // delegates and image previews settles. One position
                         // per event-loop turn avoids visible stop-start jumps.
                         Timer {
                             id: tailPositionTimer
-                            interval: 0
+                            interval: 16
                             repeat: false
                             onTriggered: {
                                 if (!messageList.followTail)
@@ -1245,23 +1255,20 @@ Kirigami.ApplicationWindow {
                             // A wheel gesture may begin while a media resize or
                             // appended row still has a tail update queued. The
                             // reader's gesture always takes precedence.
-                            tailPositionTimer.stop()
-                            if (!positioningTail)
-                                followTail = false
+                            releaseTail()
                         }
                         onContentYChanged: {
-                            if (moving && !positioningTail)
-                                followTail = nearTail()
                             if (moving && contentY < originY + 80)
                                 olderMessagesTimer.restart()
                         }
                         onMovementEnded: {
                             if (!positioningTail)
                                 followTail = nearTail()
+                            if (followTail)
+                                scheduleTailPosition()
                             if (contentY < originY + 80)
                                 olderMessagesTimer.restart()
                         }
-                        onContentHeightChanged: scheduleTailPosition()
                         onHeightChanged: scheduleTailPosition()
                         onCountChanged: {
                             if (window.pendingMessageJumpId)

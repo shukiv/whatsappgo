@@ -478,34 +478,50 @@ void RpcClient::setChatRead(const QString &jid, bool read)
                 [this](const QJsonValue &, const QJsonObject &) { refreshChats(); });
 }
 
+void RpcClient::rememberMessages(const QString &chatJid, const QVariantList &messages)
+{
+    if (chatJid.isEmpty())
+        return;
+    m_messageCache.insert(chatJid, messages);
+    m_messageCacheOrder.removeAll(chatJid);
+    m_messageCacheOrder.append(chatJid);
+    while (m_messageCacheOrder.size() > 12)
+        m_messageCache.remove(m_messageCacheOrder.takeFirst());
+}
+
 void RpcClient::openChat(const QString &jid, const QString &title)
 {
+	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+	if (!previousJid.isEmpty())
+		rememberMessages(previousJid, m_messages.items());
 	m_waitingRemoteHistory = false;
+    m_loadingOlder = false;
     m_mediaQueue.clear();
     m_requestedMedia.clear();
     clearChatInfo();
     m_selectedChat = {{QStringLiteral("jid"), jid}, {QStringLiteral("title"), title}};
-    m_messages.clear();
+    if (const auto cached = m_messageCache.constFind(jid); cached != m_messageCache.cend())
+        m_messages.reset(cached.value());
+    else
+        m_messages.clear();
     m_hasMore = false;
     m_nextBefore = 0;
     emit selectedChatChanged();
 	refreshChatInfo();
-	if (!m_refreshedHistoryChats.contains(jid)) {
-		m_refreshedHistoryChats.insert(jid);
-		sendRequest(QStringLiteral("history.refresh"),
-			{{QStringLiteral("chat_jid"), jid}, {QStringLiteral("limit"), 100}});
-	}
+    // The daemon serves requests sequentially per connection. Read its local
+    // database before asking WhatsApp for a remote refresh so opening a chat
+    // is never held behind network history synchronisation.
     sendRequest(QStringLiteral("messages.list"),
                 {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), 50}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
-                    if (!error.isEmpty())
+                [this, jid](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != jid)
                         return;
                     const auto page = result.toObject();
-                    m_messages.reset(page.value(QStringLiteral("messages")).toArray().toVariantList());
+                    const auto loadedMessages = page.value(QStringLiteral("messages")).toArray().toVariantList();
+                    rememberMessages(jid, loadedMessages);
+                    m_messages.reset(loadedMessages);
                     m_hasMore = page.value(QStringLiteral("has_more")).toBool();
                     m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
-					if (!m_messages.isEmpty() && !m_hasMore)
-						requestRemoteHistory();
                     QHash<QString, QJsonArray> unreadBySender;
                     QHash<QString, qint64> latestBySender;
                     const auto loaded = m_messages.items();
@@ -527,8 +543,8 @@ void RpcClient::openChat(const QString &jid, const QString &title)
                         sendRequest(QStringLiteral("chat.read"), {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()}});
                 });
     sendRequest(QStringLiteral("chat.avatar"), {{QStringLiteral("chat_jid"), jid}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
-                    if (!error.isEmpty())
+                [this, jid](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != jid)
                         return;
                     const auto path = result.toObject().value(QStringLiteral("path")).toString();
                     if (!path.isEmpty()) {
@@ -541,7 +557,11 @@ void RpcClient::openChat(const QString &jid, const QString &title)
 
 void RpcClient::closeChat()
 {
+	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+	if (!previousJid.isEmpty())
+		rememberMessages(previousJid, m_messages.items());
 	m_waitingRemoteHistory = false;
+    m_loadingOlder = false;
     clearComposerLinkPreview();
     m_selectedChat.clear();
     clearChatInfo();
@@ -626,12 +646,15 @@ void RpcClient::loadOlderMessages()
 	if (!m_hasMore) {
 		requestRemoteHistory();
 		return;
-	}
+    }
     m_loadingOlder = true;
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
     sendRequest(QStringLiteral("messages.list"),
-                {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
+                {{QStringLiteral("chat_jid"), chatJid},
                  {QStringLiteral("before"), m_nextBefore}, {QStringLiteral("limit"), 50}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
+                [this, chatJid](const QJsonValue &result, const QJsonObject &error) {
+                    if (m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+                        return;
                     m_loadingOlder = false;
                     if (!error.isEmpty())
                         return;
@@ -958,6 +981,8 @@ void RpcClient::switchProfile(const QString &profile)
     m_status.clear();
     m_chats.clear();
     m_messages.clear();
+    m_messageCache.clear();
+    m_messageCacheOrder.clear();
     m_selectedChat.clear();
     m_searchResults.clear();
     m_statusUpdates.clear();
@@ -966,7 +991,6 @@ void RpcClient::switchProfile(const QString &profile)
     m_callLogs.clear();
     m_channels.clear();
     m_communities.clear();
-	m_refreshedHistoryChats.clear();
     m_pairingQr.clear();
     m_pairingCode.clear();
 	clearComposerLinkPreview();

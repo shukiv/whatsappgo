@@ -176,6 +176,7 @@ private:
     void processEvent(const QString &name, const QJsonValue &data);
     void setBusy(bool value);
     void upsertMessage(const QVariantMap &message);
+    void rememberMessages(const QString &chatJid, const QVariantList &messages);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
     void refreshOpenMessages();
@@ -198,6 +199,8 @@ private:
     QVariantList m_archivedChats;
     int m_archivedCount = 0;
     MessageListModel m_messages;
+    QHash<QString, QVariantList> m_messageCache;
+    QStringList m_messageCacheOrder;
     QVariantMap m_selectedChat;
     QVariantMap m_chatInfo;
     QVariantList m_sharedContent;
@@ -226,7 +229,6 @@ private:
     bool m_hasMore = false;
     qint64 m_nextBefore = 0;
     QSet<QString> m_requestedHistoryBoundaries;
-	QSet<QString> m_refreshedHistoryChats;
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
     QSet<QString> m_requestedMedia;

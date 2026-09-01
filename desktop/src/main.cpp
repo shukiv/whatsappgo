@@ -1354,6 +1354,17 @@ int main(int argc, char *argv[])
         require(qAbs(messageList->property("contentY").toReal() - gestureReadingY) < 2.0,
                 QStringLiteral("a queued tail update snapped an active reader gesture back to the bottom"));
 
+        // Returning to a chat in the same session must paint its last local
+        // page synchronously instead of showing an empty conversation while
+        // another RPC round trip completes.
+        backend.openChat(QStringLiteral("cache-a@s.whatsapp.net"), QStringLiteral("Cache A"));
+        messages->reset(QVariantList{makeMessage(90)});
+        backend.openChat(QStringLiteral("cache-b@s.whatsapp.net"), QStringLiteral("Cache B"));
+        backend.openChat(QStringLiteral("cache-a@s.whatsapp.net"), QStringLiteral("Cache A"));
+        require(messages->count() == 1
+                    && messages->at(0).value(QStringLiteral("id")).toString() == QStringLiteral("scroll-90"),
+                QStringLiteral("returning to a viewed chat did not restore its messages immediately"));
+
         return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (mediaPreviewTest) {
