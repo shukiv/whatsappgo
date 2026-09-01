@@ -79,6 +79,37 @@ func TestSendMessagePersistsOutgoingResult(t *testing.T) {
 	}
 }
 
+func TestContactInfoMethodsExposeLocalHistory(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+	ctx := context.Background()
+	if err := st.UpsertMessage(ctx, model.Message{ID: "p1", ChatJID: "15551234567@s.whatsapp.net", Timestamp: 1, Kind: "image", MediaPath: "/tmp/p.jpg", Status: "received"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Handle(ctx, "chat.info", json.RawMessage(`{"chat_jid":"15551234567@s.whatsapp.net"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := result.(model.ChatInfo)
+	if info.Phone != "15551234567" || info.MediaCount != 1 {
+		t.Fatalf("unexpected info: %#v", info)
+	}
+	result, err = svc.Handle(ctx, "chat.shared", json.RawMessage(`{"chat_jid":"15551234567@s.whatsapp.net","category":"media","limit":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := result.(model.SharedMessagePage)
+	if len(page.Messages) != 1 || page.Messages[0].ID != "p1" {
+		t.Fatalf("unexpected shared page: %#v", page)
+	}
+}
+
 func TestRequestRejectsUnknownFields(t *testing.T) {
 	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
 	if err != nil {

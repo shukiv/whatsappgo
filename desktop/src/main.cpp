@@ -133,6 +133,8 @@ int main(int argc, char *argv[])
     parser.addOption(messageLayoutTestOption);
     QCommandLineOption desktopIntegrationTestOption(QStringLiteral("desktop-integration-test"), QStringLiteral("Verify system tray and notification integration"));
     parser.addOption(desktopIntegrationTestOption);
+    QCommandLineOption contactInfoTestOption(QStringLiteral("contact-info-test"), QStringLiteral("Verify the contact information and shared-content drawer"));
+    parser.addOption(contactInfoTestOption);
     QCommandLineOption screenshotOption(QStringLiteral("screenshot"), QStringLiteral("Render the interface to a PNG and exit"), QStringLiteral("path"));
     parser.addOption(screenshotOption);
     QCommandLineOption themeOption(QStringLiteral("theme"), QStringLiteral("Override the appearance for this run (system, light, or dark)"), QStringLiteral("mode"));
@@ -151,10 +153,11 @@ int main(int argc, char *argv[])
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
     const bool messageLayoutTest = parser.isSet(messageLayoutTestOption);
     const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
+    const bool contactInfoTest = parser.isSet(contactInfoTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
-        || messageLayoutTest || desktopIntegrationTest || !screenshotPath.isEmpty();
+        || messageLayoutTest || desktopIntegrationTest || contactInfoTest || !screenshotPath.isEmpty();
 
     auto initialProfile = parser.value(profileOption);
     const QRegularExpression validProfile(QStringLiteral("^[a-z0-9][a-z0-9_-]{0,31}$"));
@@ -295,6 +298,45 @@ int main(int argc, char *argv[])
     if (desktopIntegrationTest) {
         return !applicationIcon.isNull() && !trayAvailable && trayIcon == nullptr && trayMenu == nullptr
             ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (contactInfoTest) {
+        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ContactInfoDrawer.qml")));
+        const QVariantMap chat{
+            {QStringLiteral("jid"), QStringLiteral("573133878085@s.whatsapp.net")},
+            {QStringLiteral("title"), QStringLiteral("Test contact")},
+            {QStringLiteral("muted_until"), 0},
+            {QStringLiteral("favorite"), false},
+            {QStringLiteral("archived"), false},
+        };
+        const QVariantMap info{
+            {QStringLiteral("chat"), chat},
+            {QStringLiteral("phone"), QStringLiteral("573133878085")},
+            {QStringLiteral("shared_count"), 3},
+            {QStringLiteral("media_count"), 1},
+            {QStringLiteral("document_count"), 1},
+            {QStringLiteral("link_count"), 1},
+            {QStringLiteral("preview"), QVariantList{}},
+        };
+        std::unique_ptr<QObject> drawer(component.createWithInitialProperties({
+            {QStringLiteral("opened"), true},
+            {QStringLiteral("width"), 440},
+            {QStringLiteral("height"), 800},
+            {QStringLiteral("selectedChat"), chat},
+            {QStringLiteral("info"), info},
+        }));
+        if (!drawer)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *back = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactInfoBackButton")));
+        drawer->setProperty("sharedView", true);
+        drawer->setProperty("activeCategory", QStringLiteral("links"));
+        QCoreApplication::processEvents();
+        return back != nullptr && back->width() >= 44 && back->height() >= 44
+                && drawer->property("sharedView").toBool()
+                && drawer->property("activeCategory").toString() == QStringLiteral("links")
+                && drawer->property("width").toReal() >= 320
+            ? EXIT_SUCCESS
+            : EXIT_FAILURE;
     }
     if (resizeRenderingTest) {
         if (engine.rootObjects().isEmpty())

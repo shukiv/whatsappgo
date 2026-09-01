@@ -97,6 +97,25 @@ type MessagePage struct {
 	NextBefore int64     `json:"next_before,omitempty"`
 }
 
+// ChatInfo is the local information WhatsAppGo can show for a conversation.
+// Shared content is paged separately so opening the drawer stays inexpensive
+// even for chats with years of history.
+type ChatInfo struct {
+	Chat          Chat      `json:"chat"`
+	Phone         string    `json:"phone,omitempty"`
+	SharedCount   int       `json:"shared_count"`
+	MediaCount    int       `json:"media_count"`
+	DocumentCount int       `json:"document_count"`
+	LinkCount     int       `json:"link_count"`
+	Preview       []Message `json:"preview"`
+}
+
+type SharedMessagePage struct {
+	Messages []Message `json:"messages"`
+	HasMore  bool      `json:"has_more"`
+	Offset   int       `json:"offset"`
+}
+
 type SearchResult struct {
 	Messages []Message `json:"messages"`
 }

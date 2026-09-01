@@ -28,6 +28,10 @@ class RpcClient final : public QObject
     Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChatsChanged)
     Q_PROPERTY(QAbstractItemModel *messages READ messages CONSTANT)
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
+    Q_PROPERTY(QVariantMap chatInfo READ chatInfo NOTIFY chatInfoChanged)
+    Q_PROPERTY(QVariantList sharedContent READ sharedContent NOTIFY sharedContentChanged)
+    Q_PROPERTY(bool sharedContentHasMore READ sharedContentHasMore NOTIFY sharedContentChanged)
+    Q_PROPERTY(QString sharedContentCategory READ sharedContentCategory NOTIFY sharedContentChanged)
     Q_PROPERTY(QString pairingQr READ pairingQr NOTIFY pairingQrChanged)
     Q_PROPERTY(QString pairingCode READ pairingCode NOTIFY pairingCodeChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -53,6 +57,10 @@ public:
     int archivedCount() const { return m_archivedCount; }
     QAbstractItemModel *messages() { return &m_messages; }
     QVariantMap selectedChat() const { return m_selectedChat; }
+    QVariantMap chatInfo() const { return m_chatInfo; }
+    QVariantList sharedContent() const { return m_sharedContent; }
+    bool sharedContentHasMore() const { return m_sharedContentHasMore; }
+    QString sharedContentCategory() const { return m_sharedContentCategory; }
     QString pairingQr() const { return m_pairingQr; }
     QString pairingCode() const { return m_pairingCode; }
     bool busy() const { return m_busy; }
@@ -76,6 +84,9 @@ public:
     Q_INVOKABLE void setChatRead(const QString &jid, bool read);
     Q_INVOKABLE void openChat(const QString &jid, const QString &title);
     Q_INVOKABLE void closeChat();
+    Q_INVOKABLE void refreshChatInfo();
+    Q_INVOKABLE void refreshSharedContent(const QString &category, bool append = false);
+    Q_INVOKABLE void clearChatInfo();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
     Q_INVOKABLE void requestLinkPreview(const QString &text);
@@ -116,6 +127,8 @@ signals:
     void chatsChanged();
     void archivedChatsChanged();
     void selectedChatChanged();
+    void chatInfoChanged();
+    void sharedContentChanged();
     void pairingQrChanged();
     void pairingCodeChanged();
     void busyChanged();
@@ -166,6 +179,10 @@ private:
     int m_archivedCount = 0;
     MessageListModel m_messages;
     QVariantMap m_selectedChat;
+    QVariantMap m_chatInfo;
+    QVariantList m_sharedContent;
+    bool m_sharedContentHasMore = false;
+    QString m_sharedContentCategory;
     QVariantList m_searchResults;
     QVariantList m_statusUpdates;
     QVariantList m_callLogs;

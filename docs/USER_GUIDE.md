@@ -65,6 +65,20 @@ their names match.
 The linked-device protocol controls how much old history is supplied. Messages
 that WhatsApp never sends to this device cannot be reconstructed locally.
 
+Click the avatar or contact name in the conversation header to open **Contact
+info**. It shows the locally known avatar, phone number, shared-content count,
+mute state, encryption information, and archive action. Select **Media, links
+and documents** to open the three category tabs. Those views query the selected
+chat's SQLite history and page through it without loading the full conversation
+into memory. Cached media opens in its normal Linux application; uncached media
+is downloaded first, and links open in the system browser. Press **Escape** or
+use the close/back button to leave the drawer.
+
+Mute and archive changes are synchronized with WhatsApp. Calling, blocking,
+reporting, disappearing-message settings, and editing Favorites are not exposed
+reliably by the linked-device API, so the drawer identifies or omits those
+actions instead of displaying controls that would fail silently.
+
 ## Sending messages
 
 - **Enter** sends a message; **Shift+Enter** inserts a line break.

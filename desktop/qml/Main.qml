@@ -36,6 +36,8 @@ Kirigami.ApplicationWindow {
     property string chatFilter: "all"
     property bool newChatOpen: false
     property bool showArchived: false
+    property bool infoDrawerOpen: false
+    property string infoDrawerChatJid: ""
     property string activeSection: {
         const allowed = ["chats", "status", "calls", "channels", "communities", "profile"]
         const args = Qt.application.arguments
@@ -110,6 +112,15 @@ Kirigami.ApplicationWindow {
         newChatOpen = true
     }
 
+    function openContactInfo() {
+        if (!backend.selectedChat.jid)
+            return
+        infoDrawerChatJid = backend.selectedChat.jid
+        infoDrawerOpen = true
+        backend.refreshChatInfo()
+        contactInfoDrawer.forceActiveFocus()
+    }
+
     function insertComposerEmoji(emoji) {
         const position = Math.max(0, composer.cursorPosition)
         composer.insert(position, emoji)
@@ -154,6 +165,11 @@ Kirigami.ApplicationWindow {
         }
         function onMediaReady(messageId, path) {
             Playback.fileReady(messageId, path)
+            if (window.infoDrawerOpen) {
+                backend.refreshChatInfo()
+                if (contactInfoDrawer.sharedView)
+                    backend.refreshSharedContent(contactInfoDrawer.activeCategory)
+            }
         }
     }
     Timer { id: errorTimer; interval: 5000; onTriggered: window.transientError = "" }
@@ -818,32 +834,50 @@ Kirigami.ApplicationWindow {
                         anchors.rightMargin: 10
                         spacing: 10
 
-                        Avatar {
-                            Layout.preferredWidth: 48
-                            Layout.preferredHeight: 48
-                            diameter: 48
-                            title: window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid)
-                            fallbackIdentity: title.startsWith("+") || title.startsWith(qsTr("Contact ·"))
-                            source: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
-                        }
-
-                        ColumnLayout {
+                        Button {
+                            id: contactHeaderButton
+                            objectName: "contactHeaderButton"
                             Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            spacing: 1
-                            Label {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                text: window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid)
-                                color: Theme.text
-                                font.pixelSize: 17
-                                font.weight: Font.Medium
-                                elide: Text.ElideRight
+                            Layout.preferredHeight: 60
+                            flat: true
+                            leftPadding: 0
+                            rightPadding: 8
+                            Accessible.name: qsTr("Open contact information for %1").arg(window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid))
+                            onClicked: window.openContactInfo()
+                            background: Rectangle {
+                                radius: 10
+                                color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : "transparent"
                             }
-                            Label {
-                                text: backend.daemonConnected ? qsTr("Connected") : qsTr("Offline")
-                                color: Theme.textMuted
-                                font.pixelSize: 12
+                            contentItem: RowLayout {
+                                spacing: 10
+                                Avatar {
+                                    Layout.preferredWidth: 48
+                                    Layout.preferredHeight: 48
+                                    diameter: 48
+                                    title: window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid)
+                                    fallbackIdentity: title.startsWith("+") || title.startsWith(qsTr("Contact ·"))
+                                    source: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
+                                    Accessible.ignored: true
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    spacing: 1
+                                    Label {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        text: window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid)
+                                        color: Theme.text
+                                        font.pixelSize: 17
+                                        font.weight: Font.Medium
+                                        elide: Text.ElideRight
+                                    }
+                                    Label {
+                                        text: backend.daemonConnected ? qsTr("Connected") : qsTr("Offline")
+                                        color: Theme.textMuted
+                                        font.pixelSize: 12
+                                    }
+                                }
                             }
                         }
 
@@ -934,6 +968,11 @@ Kirigami.ApplicationWindow {
                             function onAppended() {
                                 if (messageList.followTail)
                                     Qt.callLater(() => messageList.positionViewAtEnd())
+                                if (window.infoDrawerOpen) {
+                                    backend.refreshChatInfo()
+                                    if (contactInfoDrawer.sharedView)
+                                        backend.refreshSharedContent(contactInfoDrawer.activeCategory)
+                                }
                             }
                         }
                     }
@@ -943,6 +982,10 @@ Kirigami.ApplicationWindow {
                         function onSelectedChatChanged() {
                             if (backend.selectedChat.jid)
                                 messageList.initialPositionPending = true
+                            if (window.infoDrawerOpen && backend.selectedChat.jid !== window.infoDrawerChatJid) {
+                                window.infoDrawerOpen = false
+                                backend.clearChatInfo()
+                            }
                         }
                     }
 
@@ -1151,6 +1194,39 @@ Kirigami.ApplicationWindow {
                 onSendRequested: (imageUrl, caption) => backend.sendClipboardImage(imageUrl, caption)
                 onCanceled: imageUrl => backend.discardClipboardImage(imageUrl)
                 onAddRequested: window.prepareClipboardPaste()
+            }
+
+            ContactInfoDrawer {
+                id: contactInfoDrawer
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                opened: window.infoDrawerOpen
+                selectedChat: backend.selectedChat
+                info: backend.chatInfo
+                sharedContent: backend.sharedContent
+                sharedContentHasMore: backend.sharedContentHasMore
+                onCloseRequested: {
+                    window.infoDrawerOpen = false
+                    backend.clearChatInfo()
+                }
+                onSharedRequested: category => backend.refreshSharedContent(category)
+                onLoadMoreRequested: category => backend.refreshSharedContent(category, true)
+                onSearchRequested: messageSearchDialog.open()
+                onMuteChanged: muted => {
+                    backend.setChatMuted(backend.selectedChat.jid, muted)
+                }
+                onArchiveChanged: archived => {
+                    backend.setChatArchived(backend.selectedChat.jid, archived)
+                    window.infoDrawerOpen = false
+                    backend.clearChatInfo()
+                }
+                onOpenFileRequested: path => backend.openFile(path)
+                onDownloadRequested: messageId => backend.downloadMedia(messageId)
+                onOpenLinkRequested: url => {
+                    if (url)
+                        Qt.openUrlExternally(url)
+                }
             }
         }
 

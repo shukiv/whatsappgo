@@ -494,6 +494,100 @@ func (s *Store) GetChat(ctx context.Context, jid string) (model.Chat, error) {
 	return c, err
 }
 
+// ChatInfo returns contact metadata and exact shared-content counts from the
+// local database. The phone alias is available for ordinary contacts even
+// when WhatsApp uses a privacy-preserving LID as the canonical chat address.
+func (s *Store) ChatInfo(ctx context.Context, jid string) (model.ChatInfo, error) {
+	jid = s.canonicalChatJID(ctx, jid)
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		return model.ChatInfo{}, err
+	}
+	info := model.ChatInfo{Chat: chat}
+	if strings.HasSuffix(jid, "@s.whatsapp.net") {
+		info.Phone = strings.TrimSuffix(jid, "@s.whatsapp.net")
+	} else if !chat.IsGroup {
+		var alias string
+		if err := s.db.QueryRowContext(ctx, `SELECT alias_jid FROM chat_aliases
+		 WHERE canonical_jid=? AND alias_jid LIKE '%@s.whatsapp.net' LIMIT 1`, jid).Scan(&alias); err == nil {
+			info.Phone = strings.TrimSuffix(alias, "@s.whatsapp.net")
+		}
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT
+	 COALESCE(SUM(CASE WHEN revoked=0 AND (kind IN ('image','video','sticker','document') OR link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%') THEN 1 ELSE 0 END),0),
+	 COALESCE(SUM(CASE WHEN revoked=0 AND kind IN ('image','video','sticker') THEN 1 ELSE 0 END),0),
+	 COALESCE(SUM(CASE WHEN revoked=0 AND kind='document' THEN 1 ELSE 0 END),0),
+	 COALESCE(SUM(CASE WHEN revoked=0 AND (link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%') THEN 1 ELSE 0 END),0)
+	 FROM messages WHERE chat_jid=?`, jid).Scan(&info.SharedCount, &info.MediaCount, &info.DocumentCount, &info.LinkCount)
+	if err != nil {
+		return model.ChatInfo{}, err
+	}
+	preview, err := s.ListSharedMessages(ctx, jid, "all", 0, 6)
+	if err != nil {
+		return model.ChatInfo{}, err
+	}
+	info.Preview = preview.Messages
+	return info, nil
+}
+
+// ListSharedMessages pages the media, documents, or links belonging to one
+// chat. Newest content is first, matching WhatsApp Web's information pane.
+func (s *Store) ListSharedMessages(ctx context.Context, chatJID, category string, offset, limit int) (model.SharedMessagePage, error) {
+	if strings.TrimSpace(chatJID) == "" {
+		return model.SharedMessagePage{}, errors.New("chat_jid is required")
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 60
+	}
+	condition := `(kind IN ('image','video','sticker') OR kind='document' OR link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')`
+	switch category {
+	case "media":
+		condition = `kind IN ('image','video','sticker')`
+	case "documents":
+		condition = `kind='document'`
+	case "links":
+		condition = `(link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')`
+	case "all", "":
+	default:
+		return model.SharedMessagePage{}, fmt.Errorf("unknown shared-content category %q", category)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
+	 reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
+	 link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
+	 contact_name,contact_phone,contact_count,latitude,longitude
+	 FROM messages WHERE chat_jid=? AND revoked=0 AND `+condition+`
+	 ORDER BY timestamp DESC,id DESC LIMIT ? OFFSET ?`, chatJID, limit+1, offset)
+	if err != nil {
+		return model.SharedMessagePage{}, err
+	}
+	defer rows.Close()
+	items := make([]model.Message, 0, limit+1)
+	for rows.Next() {
+		var m model.Message
+		var waveform []byte
+		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe,
+			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail,
+			&m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
+			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude); err != nil {
+			return model.SharedMessagePage{}, err
+		}
+		m.AudioWaveform = unpackWaveform(waveform)
+		items = append(items, m)
+	}
+	if err := rows.Err(); err != nil {
+		return model.SharedMessagePage{}, err
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return model.SharedMessagePage{Messages: items, HasMore: hasMore, Offset: offset}, nil
+}
+
 func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, limit int) (model.MessagePage, error) {
 	if chatJID == "" {
 		return model.MessagePage{}, errors.New("chat_jid is required")

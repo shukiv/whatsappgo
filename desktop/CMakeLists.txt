@@ -58,6 +58,7 @@ qt_add_qml_module(whatsappgo
         qml/WhatsAppMenuItem.qml
         qml/VoiceRecorder.qml
         qml/MediaPreview.qml
+        qml/ContactInfoDrawer.qml
     RESOURCES
         qml/icons/new-chat.svg
         qml/icons/menu.svg
@@ -85,6 +86,13 @@ qt_add_qml_module(whatsappgo
         qml/icons/chats.svg
         qml/icons/sun.svg
         qml/icons/moon.svg
+        qml/icons/phone.svg
+        qml/icons/video.svg
+        qml/icons/gallery.svg
+        qml/icons/document.svg
+        qml/icons/link.svg
+        qml/icons/lock.svg
+        qml/icons/chevron-right.svg
         qml/assets/chat-background.png
 )
 
@@ -165,6 +173,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-message-layout COMMAND whatsappgo --message-layout-test)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
+    add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
@@ -191,6 +200,10 @@ if(BUILD_TESTING)
     )
     set_tests_properties(desktop-pairing-auto-start PROPERTIES TIMEOUT 5)
     set_tests_properties(desktop-system-integration PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 10
+    )
+    set_tests_properties(desktop-contact-info PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )

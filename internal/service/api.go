@@ -26,6 +26,8 @@ var apiMethods = []MethodDescription{
 	method("account.logout", "Unlink this profile and delete its device session", true, nil),
 	method("chats.list", "List or search chats", false, map[string]any{"limit": 100, "offset": 0, "query": "", "archived": false}),
 	method("chats.archived_count", "Count archived chats", false, nil),
+	method("chat.info", "Get contact metadata and shared-content counts", false, map[string]any{"chat_jid": "123@lid"}),
+	method("chat.shared", "Page through a chat's media, documents, or links", false, map[string]any{"chat_jid": "123@lid", "category": "media", "offset": 0, "limit": 60}),
 	method("chat.pin", "Pin or unpin a chat", true, map[string]any{"chat_jid": "123@lid", "value": true}),
 	method("chat.mute", "Mute or unmute a chat", true, map[string]any{"chat_jid": "123@lid", "value": true}),
 	method("chat.archive", "Archive or restore a chat", true, map[string]any{"chat_jid": "123@lid", "value": true}),

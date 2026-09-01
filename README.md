@@ -63,6 +63,9 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - attachments fetched automatically for the conversation on screen
 - attachments stored in a database, so clearing the media cache loses nothing
 - image copy/paste, native media preview, downloads, and cached avatars
+- a WhatsApp-style contact information drawer with phone/avatar details,
+  synchronized mute/archive controls, shared-content counts, and separate
+  Media, Documents, and Links views backed by SQLite history
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
 - native system notifications independent of the tray, minimize-to-tray with

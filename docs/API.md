@@ -70,6 +70,8 @@ literal JSON object, `-` for standard input, or `@path` for a JSON file.
 
 ```bash
 whatsappctl call chat.typing '{"chat_jid":"15551234567@s.whatsapp.net","typing":true}'
+whatsappctl --pretty call chat.info '{"chat_jid":"15551234567@s.whatsapp.net"}'
+whatsappctl --pretty call chat.shared '{"chat_jid":"15551234567@s.whatsapp.net","category":"links","offset":0,"limit":60}'
 whatsappctl call chat.set_read '{"chat_jid":"15551234567@s.whatsapp.net","value":true}'
 whatsappctl call message.react '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":"","emoji":"👍"}'
 whatsappctl call message.edit '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","text":"Corrected"}'
@@ -130,6 +132,8 @@ All parameter objects reject unknown fields.
 | `account.logout` | `{}` | Unlink the profile; destructive |
 | `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array |
 | `chats.archived_count` | `{}` | Archived count |
+| `chat.info` | `chat_jid` | Contact/chat metadata, phone alias, exact shared-content counts, and a six-item preview |
+| `chat.shared` | `chat_jid`, `category`, `offset`, `limit` | Page local `media`, `documents`, or `links` for one chat; `all` is also accepted |
 | `chat.pin` / `chat.mute` / `chat.archive` / `chat.set_read` | `chat_jid`, `value` | Change synchronized chat state |
 | `chat.read` | `chat_jid`, `sender_jid`, `message_ids`, `timestamp` | Send receipts and clear local unread state |
 | `chat.typing` | `chat_jid`, `typing` | Set composing/paused presence |

@@ -747,6 +747,63 @@ func TestLinkPreviewSurvivesRoundTripAndRepeatedDelivery(t *testing.T) {
 	}
 }
 
+func TestChatInfoAndSharedContentUseCanonicalHistory(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const lid = "179452491378772@lid"
+	const phoneJID = "573133878085@s.whatsapp.net"
+	if err := s.UpsertChat(ctx, model.Chat{JID: lid, Title: "Shrums", AvatarPath: "/cache/avatar.jpg", MutedUntil: 9999999999999}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkChatAliases(ctx, lid, phoneJID); err != nil {
+		t.Fatal(err)
+	}
+	messages := []model.Message{
+		{ID: "photo", ChatJID: lid, Timestamp: 10, Kind: "image", MediaPath: "/cache/photo.jpg", Status: "received"},
+		{ID: "video", ChatJID: lid, Timestamp: 9, Kind: "video", MediaThumbnail: "/cache/video.jpg", Status: "received"},
+		{ID: "doc", ChatJID: lid, Timestamp: 8, Kind: "document", Body: "copy at https://example.net/invoice", MediaName: "invoice.pdf", Status: "received"},
+		{ID: "link", ChatJID: lid, Timestamp: 7, Kind: "text", Body: "see https://example.com", LinkURL: "https://example.com", LinkTitle: "Example", Status: "received"},
+		{ID: "plain-link", ChatJID: lid, Timestamp: 6, Kind: "text", Body: "https://example.org/path", Status: "received"},
+		{ID: "revoked", ChatJID: lid, Timestamp: 5, Kind: "image", Revoked: true, Status: "received"},
+	}
+	for _, message := range messages {
+		if err := s.UpsertMessage(ctx, message, "Shrums", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := s.ChatInfo(ctx, phoneJID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Chat.JID != lid || info.Phone != "573133878085" || info.MediaCount != 2 || info.DocumentCount != 1 || info.LinkCount != 3 || info.SharedCount != 5 {
+		t.Fatalf("unexpected chat info: %#v", info)
+	}
+	if len(info.Preview) != 5 || info.Preview[0].ID != "photo" {
+		t.Fatalf("unexpected preview: %#v", info.Preview)
+	}
+	media, err := s.ListSharedMessages(ctx, phoneJID, "media", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(media.Messages) != 1 || media.Messages[0].ID != "photo" || !media.HasMore {
+		t.Fatalf("unexpected media page: %#v", media)
+	}
+	documents, err := s.ListSharedMessages(ctx, lid, "documents", 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(documents.Messages) != 1 || documents.Messages[0].MediaName != "invoice.pdf" {
+		t.Fatalf("unexpected documents: %#v", documents)
+	}
+	links, err := s.ListSharedMessages(ctx, lid, "links", 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links.Messages) != 3 || links.Messages[0].ID != "doc" || links.Messages[1].ID != "link" || links.Messages[2].ID != "plain-link" {
+		t.Fatalf("unexpected links: %#v", links)
+	}
+}
+
 func TestListChatsNamesConversationsFromTheirSender(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

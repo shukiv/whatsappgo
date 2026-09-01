@@ -44,6 +44,12 @@ type messageListParams struct {
 	Before  int64  `json:"before"`
 	Limit   int    `json:"limit"`
 }
+type sharedListParams struct {
+	ChatJID  string `json:"chat_jid"`
+	Category string `json:"category"`
+	Offset   int    `json:"offset"`
+	Limit    int    `json:"limit"`
+}
 type historyRequestParams struct {
 	ChatJID string `json:"chat_jid"`
 	Limit   int    `json:"limit"`
@@ -150,6 +156,21 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return map[string]int{"count": count}, nil
+	case "chat.info":
+		var p messageListParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.ChatJID) == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		return s.store.ChatInfo(ctx, p.ChatJID)
+	case "chat.shared":
+		var p sharedListParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.store.ListSharedMessages(ctx, p.ChatJID, p.Category, p.Offset, p.Limit)
 	// "chat.read" already marks messages read for receipts; this one changes
 	// the conversation's own read state, which WhatsApp tracks separately.
 	case "chat.pin", "chat.mute", "chat.archive", "chat.set_read":

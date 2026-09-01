@@ -377,10 +377,11 @@ void RpcClient::refreshChats(const QString &query)
                             const auto chat = entry.toMap();
                             if (chat.value(QStringLiteral("jid")).toString() != selectedJid)
                                 continue;
-                            m_selectedChat.insert(QStringLiteral("title"), chat.value(QStringLiteral("title")));
-                            const auto avatar = chat.value(QStringLiteral("avatar_path"));
-                            if (!avatar.toString().isEmpty())
-                                m_selectedChat.insert(QStringLiteral("avatar_path"), avatar);
+                            const auto retainedAvatar = m_selectedChat.value(QStringLiteral("avatar_path"));
+                            m_selectedChat = chat;
+                            if (m_selectedChat.value(QStringLiteral("avatar_path")).toString().isEmpty()
+                                && !retainedAvatar.toString().isEmpty())
+                                m_selectedChat.insert(QStringLiteral("avatar_path"), retainedAvatar);
                             emit selectedChatChanged();
                             break;
                         }
@@ -414,7 +415,13 @@ void RpcClient::setChatPinned(const QString &jid, bool pinned)
 void RpcClient::setChatMuted(const QString &jid, bool muted)
 {
     sendRequest(QStringLiteral("chat.mute"), {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("value"), muted}},
-                [this](const QJsonValue &, const QJsonObject &) { refreshChats(); });
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    if (!error.isEmpty())
+                        return;
+                    refreshChats();
+                    if (!m_chatInfo.isEmpty())
+                        refreshChatInfo();
+                });
 }
 
 void RpcClient::setChatArchived(const QString &jid, bool archived)
@@ -434,6 +441,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
 	m_waitingRemoteHistory = false;
     m_mediaQueue.clear();
     m_requestedMedia.clear();
+    clearChatInfo();
     m_selectedChat = {{QStringLiteral("jid"), jid}, {QStringLiteral("title"), title}};
     m_messages.clear();
     m_hasMore = false;
@@ -493,10 +501,64 @@ void RpcClient::closeChat()
 	m_waitingRemoteHistory = false;
     clearComposerLinkPreview();
     m_selectedChat.clear();
+    clearChatInfo();
     m_searchResults.clear();
     m_messages.clear();
     emit selectedChatChanged();
     emit searchResultsChanged();
+}
+
+void RpcClient::refreshChatInfo()
+{
+    if (m_selectedChat.isEmpty())
+        return;
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    sendRequest(QStringLiteral("chat.info"), {{QStringLiteral("chat_jid"), chatJid}},
+                [this, chatJid](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+                        return;
+                    m_chatInfo = result.toObject().toVariantMap();
+                    emit chatInfoChanged();
+                });
+}
+
+void RpcClient::refreshSharedContent(const QString &category, bool append)
+{
+    if (m_selectedChat.isEmpty())
+        return;
+    const auto normalized = category.isEmpty() ? QStringLiteral("media") : category;
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    const int offset = append && normalized == m_sharedContentCategory ? m_sharedContent.size() : 0;
+    sendRequest(QStringLiteral("chat.shared"),
+                {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("category"), normalized},
+                 {QStringLiteral("offset"), offset}, {QStringLiteral("limit"), 60}},
+                [this, chatJid, normalized, append, offset](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+                        return;
+                    const auto page = result.toObject();
+                    const auto items = page.value(QStringLiteral("messages")).toArray().toVariantList();
+                    if (append && offset > 0 && normalized == m_sharedContentCategory)
+                        m_sharedContent += items;
+                    else
+                        m_sharedContent = items;
+                    m_sharedContentCategory = normalized;
+                    m_sharedContentHasMore = page.value(QStringLiteral("has_more")).toBool();
+                    emit sharedContentChanged();
+                });
+}
+
+void RpcClient::clearChatInfo()
+{
+    const bool hadInfo = !m_chatInfo.isEmpty();
+    const bool hadContent = !m_sharedContent.isEmpty() || !m_sharedContentCategory.isEmpty() || m_sharedContentHasMore;
+    m_chatInfo.clear();
+    m_sharedContent.clear();
+    m_sharedContentCategory.clear();
+    m_sharedContentHasMore = false;
+    if (hadInfo)
+        emit chatInfoChanged();
+    if (hadContent)
+        emit sharedContentChanged();
 }
 
 void RpcClient::loadOlderMessages()
