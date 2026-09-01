@@ -1334,6 +1334,26 @@ int main(int argc, char *argv[])
         require(qAbs(messageList->property("contentY").toReal() - readingY) < 2.0,
                 QStringLiteral("an appended message interrupted a reader browsing older history"));
 
+        // A wheel gesture can begin in the same event-loop turn as an
+        // appended row or a late media-size update. Reader movement must win
+        // over that already queued tail position instead of being snapped
+        // back to the newest message.
+        messageList->setProperty("followTail", true);
+        QMetaObject::invokeMethod(messageList, "scheduleTailPosition");
+        settle();
+        const qreal gestureTailY = messageList->property("contentY").toReal();
+        messages->upsert(makeMessage(82));
+        const bool movementStarted = QMetaObject::invokeMethod(messageList, "movementStarted");
+        messageList->setProperty("contentY", gestureTailY - 220.0);
+        const qreal gestureReadingY = messageList->property("contentY").toReal();
+        settle();
+        require(movementStarted,
+                QStringLiteral("the message list did not expose its movement-start signal"));
+        require(!messageList->property("followTail").toBool(),
+                QStringLiteral("starting reader movement did not release the tail anchor"));
+        require(qAbs(messageList->property("contentY").toReal() - gestureReadingY) < 2.0,
+                QStringLiteral("a queued tail update snapped an active reader gesture back to the bottom"));
+
         return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (mediaPreviewTest) {

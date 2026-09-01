@@ -1241,6 +1241,14 @@ Kirigami.ApplicationWindow {
                         // Only physical movement by the reader changes whether
                         // the tail is followed. Layout-driven contentY changes
                         // must not turn following off halfway through a batch.
+                        onMovementStarted: {
+                            // A wheel gesture may begin while a media resize or
+                            // appended row still has a tail update queued. The
+                            // reader's gesture always takes precedence.
+                            tailPositionTimer.stop()
+                            if (!positioningTail)
+                                followTail = false
+                        }
                         onContentYChanged: {
                             if (moving && !positioningTail)
                                 followTail = nearTail()
