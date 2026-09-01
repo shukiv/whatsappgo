@@ -126,6 +126,7 @@ public:
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
     Q_INVOKABLE void copyText(const QString &text);
     Q_INVOKABLE void refreshStatuses();
+    Q_INVOKABLE void refreshChatAvatar(const QString &jid);
     Q_INVOKABLE void fetchStatusAvatar(const QString &jid);
     Q_INVOKABLE void ensureStatusMedia(const QString &messageId);
     Q_INVOKABLE void refreshCalls();
@@ -224,6 +225,8 @@ private:
     QString m_pendingCopyImageId;
     QSet<QString> m_requestedMedia;
     QSet<QString> m_requestedStatusAvatars;
+    QSet<QString> m_pendingChatAvatars;
+    QHash<QString, qint64> m_chatAvatarRequestedAt;
     QSet<QString> m_requestedStatusMedia;
     QStringList m_mediaQueue;
     int m_mediaInFlight = 0;

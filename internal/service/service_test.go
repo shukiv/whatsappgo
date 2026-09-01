@@ -75,6 +75,36 @@ type fakeGateway struct {
 	pinnedMessage   string
 	pinDuration     time.Duration
 	unpinnedMessage string
+	fetchedAvatar   string
+	refreshedAvatar string
+}
+
+func (f *fakeGateway) FetchAvatar(_ context.Context, jid string) (string, error) {
+	f.fetchedAvatar = jid
+	return "", nil
+}
+
+func (f *fakeGateway) RefreshAvatar(_ context.Context, jid string) (string, error) {
+	f.refreshedAvatar = jid
+	return "", nil
+}
+
+func TestChatAvatarCanBypassTheDiskCache(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+
+	if _, err := svc.Handle(context.Background(), "chat.avatar", json.RawMessage(`{"chat_jid":"alice@lid","refresh":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if gw.refreshedAvatar != "alice@lid" || gw.fetchedAvatar != "" {
+		t.Fatalf("refresh did not bypass the cached avatar path: %#v", gw)
+	}
 }
 
 func (f *fakeGateway) PinMessage(_ context.Context, _, messageID, _ string, duration time.Duration) error {

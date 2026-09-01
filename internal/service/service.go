@@ -44,6 +44,7 @@ type messageListParams struct {
 	ChatJID string `json:"chat_jid"`
 	Before  int64  `json:"before"`
 	Limit   int    `json:"limit"`
+	Refresh bool   `json:"refresh"`
 }
 type sharedListParams struct {
 	ChatJID  string `json:"chat_jid"`
@@ -423,7 +424,13 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if p.ChatJID == "" {
 			return nil, errors.New("chat_jid is required")
 		}
-		path, err := s.gateway.FetchAvatar(ctx, p.ChatJID)
+		var path string
+		var err error
+		if p.Refresh {
+			path, err = s.gateway.RefreshAvatar(ctx, p.ChatJID)
+		} else {
+			path, err = s.gateway.FetchAvatar(ctx, p.ChatJID)
+		}
 		if err != nil {
 			return nil, err
 		}

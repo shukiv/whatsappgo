@@ -14,10 +14,12 @@ FocusScope {
     property string sentAt: ""
     property string caption: ""
     property real zoomFactor: 1.0
+    property real panX: 0
+    property real panY: 0
     readonly property bool previewActive: String(imageUrl).length > 0
     readonly property real minimumZoom: 1.0
     readonly property real maximumZoom: 5.0
-    readonly property real zoomStep: 0.25
+    readonly property real zoomRatio: 1.2
 
     visible: previewActive
     focus: previewActive
@@ -32,6 +34,8 @@ FocusScope {
         sentAt = timestampText || ""
         caption = imageCaption || ""
         zoomFactor = minimumZoom
+        panX = 0
+        panY = 0
         forceActiveFocus()
     }
 
@@ -39,25 +43,54 @@ FocusScope {
         imageUrl = ""
         messageId = ""
         zoomFactor = minimumZoom
+        panX = 0
+        panY = 0
     }
 
-    function setZoom(value) {
-        zoomFactor = Math.max(minimumZoom, Math.min(maximumZoom, value))
+    function clampPan() {
+        const maxX = stage.width * Math.max(0, zoomFactor - 1) / 2
+        const maxY = stage.height * Math.max(0, zoomFactor - 1) / 2
+        panX = Math.max(-maxX, Math.min(maxX, panX))
+        panY = Math.max(-maxY, Math.min(maxY, panY))
+    }
+
+    function setZoomAt(value, pointerX, pointerY) {
+        const oldZoom = zoomFactor
+        const nextZoom = Math.max(minimumZoom, Math.min(maximumZoom, value))
+        if (Math.abs(nextZoom - oldZoom) < 0.0001)
+            return
+        if (nextZoom <= minimumZoom) {
+            zoomFactor = minimumZoom
+            panX = 0
+            panY = 0
+            return
+        }
+        const centerX = stage.width / 2
+        const centerY = stage.height / 2
+        const ratio = nextZoom / oldZoom
+        panX = pointerX - centerX - (pointerX - centerX - panX) * ratio
+        panY = pointerY - centerY - (pointerY - centerY - panY) * ratio
+        zoomFactor = nextZoom
+        clampPan()
     }
 
     function zoomIn() {
-        setZoom(zoomFactor + zoomStep)
+        setZoomAt(zoomFactor * zoomRatio, stage.width / 2, stage.height / 2)
     }
 
     function zoomOut() {
-        setZoom(zoomFactor - zoomStep)
+        setZoomAt(zoomFactor / zoomRatio, stage.width / 2, stage.height / 2)
     }
 
-    function adjustZoomFromWheel(delta) {
-        if (delta > 0)
-            zoomIn()
-        else if (delta < 0)
-            zoomOut()
+    function adjustZoomFromWheel(delta, pointerX, pointerY) {
+        if (delta === 0)
+            return
+        // Multiplicative zoom respects both a mouse-wheel notch and the smaller,
+        // continuous deltas emitted by a touchpad.
+        const factor = Math.exp(delta * 0.0015)
+        setZoomAt(zoomFactor * factor,
+                  pointerX === undefined ? stage.width / 2 : pointerX,
+                  pointerY === undefined ? stage.height / 2 : pointerY)
     }
 
     Shortcut {
@@ -227,18 +260,32 @@ FocusScope {
         anchors.margins: 20
         clip: true
 
-        Image {
-            id: fullImage
-            objectName: "chatMediaViewerImage"
+        Item {
+            id: zoomSurface
+            objectName: "chatMediaViewerZoomSurface"
             anchors.fill: parent
-            source: root.imageUrl
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: false
-            smooth: true
+            anchors.leftMargin: root.panX
+            anchors.rightMargin: -root.panX
+            anchors.topMargin: root.panY
+            anchors.bottomMargin: -root.panY
             scale: root.zoomFactor
             transformOrigin: Item.Center
-            Accessible.name: root.caption || qsTr("Shared photo")
+            layer.enabled: true
+            layer.smooth: true
+            readonly property bool renderCached: layer.enabled
+
+            Image {
+                id: fullImage
+                objectName: "chatMediaViewerImage"
+                anchors.fill: parent
+                source: root.imageUrl
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: true
+                smooth: true
+                mipmap: true
+                Accessible.name: root.caption || qsTr("Shared photo")
+            }
         }
 
         WheelHandler {
@@ -247,7 +294,7 @@ FocusScope {
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             onWheel: event => {
                 const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
-                root.adjustZoomFromWheel(delta)
+                root.adjustZoomFromWheel(delta, event.position.x, event.position.y)
                 event.accepted = true
             }
         }

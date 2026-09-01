@@ -661,9 +661,17 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (c *Client) FetchAvatar(ctx context.Context, jidString string) (string, error) {
+	return c.fetchAvatar(ctx, jidString, false)
+}
+
+func (c *Client) RefreshAvatar(ctx context.Context, jidString string) (string, error) {
+	return c.fetchAvatar(ctx, jidString, true)
+}
+
+func (c *Client) fetchAvatar(ctx context.Context, jidString string, refresh bool) (string, error) {
 	dir := filepath.Join(c.mediaDir, "avatars")
 	path := filepath.Join(dir, safeName(jidString)+".jpg")
-	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+	if info, err := os.Stat(path); !refresh && err == nil && info.Size() > 0 {
 		if rounded, roundErr := roundedAvatar(path); roundErr == nil {
 			return rounded, nil
 		}
@@ -730,10 +738,23 @@ func (c *Client) FetchAvatar(ctx context.Context, jidString string) (string, err
 }
 
 func roundedAvatar(sourcePath string) (string, error) {
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		return "", err
+	}
 	ext := filepath.Ext(sourcePath)
-	targetPath := strings.TrimSuffix(sourcePath, ext) + "-round.png"
+	basePath := strings.TrimSuffix(sourcePath, ext)
+	// Include the source generation in the returned path. QML image caching is
+	// URL-based, so overwriting a stable filename would leave the old avatar on
+	// screen even after WhatsApp returned a newer picture.
+	targetPath := fmt.Sprintf("%s-round-%d.png", basePath, sourceInfo.ModTime().UnixNano())
 	if info, err := os.Stat(targetPath); err == nil && info.Size() > 0 {
 		return targetPath, nil
+	}
+	for _, stalePath := range avatarDerivedPaths(basePath) {
+		if stalePath != targetPath {
+			_ = os.Remove(stalePath)
+		}
 	}
 
 	sourceFile, err := os.Open(sourcePath)
@@ -799,6 +820,14 @@ func roundedAvatar(sourcePath string) (string, error) {
 		return "", err
 	}
 	return targetPath, nil
+}
+
+func avatarDerivedPaths(basePath string) []string {
+	paths, err := filepath.Glob(basePath + "-round*.png")
+	if err != nil {
+		return nil
+	}
+	return paths
 }
 
 func (c *Client) MarkRead(ctx context.Context, chatJID, senderJID string, ids []string, timestamp int64) error {

@@ -725,6 +725,7 @@ Kirigami.ApplicationWindow {
                                 ? (backend.statusUpdates[statusGroupIndex].items || []).length : 0
                             onChosen: (jid, title) => backend.openChat(jid, title)
                             onStatusRequested: jid => window.openStatusAt(window.statusGroupIndexForJid(jid))
+                            onAvatarRequested: jid => backend.refreshChatAvatar(jid)
                         }
 
                         Column {

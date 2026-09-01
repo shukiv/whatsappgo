@@ -12,6 +12,21 @@ ItemDelegate {
     property int statusItemCount: 0
     signal chosen(string jid, string title)
     signal statusRequested(string jid)
+    signal avatarRequested(string jid)
+
+    function requestAvatarRefresh() {
+        const jid = String(root.modelData.jid || "")
+        if (root.visible && jid.length > 0)
+            root.avatarRequested(jid)
+    }
+
+    Component.onCompleted: Qt.callLater(root.requestAvatarRefresh)
+    onModelDataChanged: Qt.callLater(root.requestAvatarRefresh)
+    onVisibleChanged: {
+        if (visible)
+            Qt.callLater(root.requestAvatarRefresh)
+    }
+    ListView.onReused: Qt.callLater(root.requestAvatarRefresh)
 
     readonly property string displayTitle: {
         const jid = String(root.modelData.jid || "")
@@ -90,6 +105,7 @@ ItemDelegate {
                     source: root.modelData.avatar_path ? "file://" + root.modelData.avatar_path : ""
                 }
                 Avatar {
+                    objectName: "chatAvatar"
                     anchors.centerIn: parent
                     visible: root.statusGroupIndex < 0
                     diameter: 49

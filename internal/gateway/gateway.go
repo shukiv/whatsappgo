@@ -48,6 +48,7 @@ type Gateway interface {
 	DeleteMessage(context.Context, string, string, string) error
 	ResolvePhone(context.Context, string) (model.Chat, error)
 	FetchAvatar(context.Context, string) (string, error)
+	RefreshAvatar(context.Context, string) (string, error)
 	MarkRead(context.Context, string, string, []string, int64) error
 	SetTyping(context.Context, string, bool) error
 	SetChatPinned(context.Context, string, bool) error
@@ -96,6 +97,9 @@ func (Unavailable) ResolvePhone(context.Context, string) (model.Chat, error) {
 	return model.Chat{}, ErrUnavailable
 }
 func (Unavailable) FetchAvatar(context.Context, string) (string, error) { return "", ErrUnavailable }
+func (Unavailable) RefreshAvatar(context.Context, string) (string, error) {
+	return "", ErrUnavailable
+}
 func (Unavailable) MarkRead(context.Context, string, string, []string, int64) error {
 	return ErrUnavailable
 }

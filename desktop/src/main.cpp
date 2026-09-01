@@ -1261,18 +1261,31 @@ int main(int argc, char *argv[])
             ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomOut"))) : nullptr;
         auto *zoomWheel = nativeViewer
             ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomWheel")) : nullptr;
+        auto *zoomSurface = nativeViewer
+            ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomSurface")) : nullptr;
         const auto initialZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
-        const bool zoomedIn = nativeViewer && QMetaObject::invokeMethod(nativeViewer, "zoomIn");
+        const bool zoomedIn = nativeViewer && QMetaObject::invokeMethod(
+            nativeViewer, "adjustZoomFromWheel",
+            Q_ARG(QVariant, 120.0), Q_ARG(QVariant, 160.0), Q_ARG(QVariant, 120.0));
         QCoreApplication::processEvents();
         const auto enlargedZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
-        const bool zoomedOut = nativeViewer && QMetaObject::invokeMethod(nativeViewer, "zoomOut");
+        const auto anchoredPanX = nativeViewer ? nativeViewer->property("panX").toReal() : 0.0;
+        const auto anchoredPanY = nativeViewer ? nativeViewer->property("panY").toReal() : 0.0;
+        const bool zoomedOut = nativeViewer && QMetaObject::invokeMethod(
+            nativeViewer, "adjustZoomFromWheel",
+            Q_ARG(QVariant, -120.0), Q_ARG(QVariant, 160.0), Q_ARG(QVariant, 120.0));
         QCoreApplication::processEvents();
         const auto restoredZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
-        const bool nativeZoomReady = zoomIn && zoomOut && zoomWheel
+        const bool nativeZoomReady = zoomIn && zoomOut && zoomWheel && zoomSurface
             && zoomIn->width() >= 44 && zoomIn->height() >= 44
             && zoomOut->width() >= 44 && zoomOut->height() >= 44
-            && qFuzzyCompare(initialZoom, 1.0) && zoomedIn && enlargedZoom > initialZoom
-            && zoomedOut && qFuzzyCompare(restoredZoom, 1.0);
+            && zoomSurface->property("renderCached").toBool()
+            && qFuzzyCompare(initialZoom, 1.0) && zoomedIn
+            && enlargedZoom > 1.15 && enlargedZoom < 1.25
+            && (!qFuzzyIsNull(anchoredPanX) || !qFuzzyIsNull(anchoredPanY))
+            && zoomedOut && qAbs(restoredZoom - 1.0) < 0.01
+            && qFuzzyIsNull(nativeViewer->property("panX").toReal())
+            && qFuzzyIsNull(nativeViewer->property("panY").toReal());
         const bool nativeViewerClosed = nativeClose && QMetaObject::invokeMethod(nativeClose, "click");
         QCoreApplication::processEvents();
         QFile::remove(receivedImagePath);

@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QFile>
 #include <QGuiApplication>
@@ -1185,6 +1186,26 @@ void RpcClient::refreshStatuses()
         m_statusUpdates = result.toArray().toVariantList();
         emit statusUpdatesChanged();
     });
+}
+
+void RpcClient::refreshChatAvatar(const QString &jid)
+{
+    if (jid.isEmpty() || m_pendingChatAvatars.contains(jid))
+        return;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    // Model refreshes can recreate every visible delegate. Keep visibility-
+    // driven refreshes cheap while still revisiting avatars during a session.
+    constexpr qint64 refreshCooldownMs = 30 * 1000;
+    if (now - m_chatAvatarRequestedAt.value(jid, 0) < refreshCooldownMs)
+        return;
+    m_chatAvatarRequestedAt.insert(jid, now);
+    m_pendingChatAvatars.insert(jid);
+    sendRequest(QStringLiteral("chat.avatar"),
+                {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("refresh"), true}},
+                [this, jid](const QJsonValue &, const QJsonObject &) {
+                    m_pendingChatAvatars.remove(jid);
+                    refreshChats();
+                });
 }
 
 void RpcClient::fetchStatusAvatar(const QString &jid)
