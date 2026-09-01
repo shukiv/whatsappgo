@@ -60,6 +60,7 @@ qt_add_qml_module(whatsappgo
         qml/OverlayScrollBar.qml
         qml/ReadReceipt.qml
         qml/EmojiPicker.qml
+        qml/AttachmentMenu.qml
         qml/WhatsAppMenuPopup.qml
         qml/WhatsAppMenuItem.qml
         qml/VoiceRecorder.qml
@@ -97,6 +98,12 @@ qt_add_qml_module(whatsappgo
         qml/icons/video.svg
         qml/icons/gallery.svg
         qml/icons/document.svg
+        qml/icons/camera.svg
+        qml/icons/headphones.svg
+        qml/icons/contact.svg
+        qml/icons/poll.svg
+        qml/icons/calendar.svg
+        qml/icons/sticker.svg
         qml/icons/link.svg
         qml/icons/lock.svg
         qml/icons/chevron-right.svg

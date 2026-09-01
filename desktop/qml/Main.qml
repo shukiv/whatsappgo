@@ -152,6 +152,11 @@ Kirigami.ApplicationWindow {
         composer.forceActiveFocus()
     }
 
+    function toggleAttachmentMenu() {
+        emojiPicker.close()
+        attachmentMenu.opened ? attachmentMenu.close() : attachmentMenu.open()
+    }
+
     function prepareClipboardPaste() {
         const imageUrl = backend.prepareClipboardImage()
         if (!imageUrl)
@@ -1226,14 +1231,37 @@ Kirigami.ApplicationWindow {
                                 spacing: 4
 
                                 ThemedToolButton {
+                                    id: attachmentButton
+                                    objectName: "attachmentButton"
                                     Layout.preferredWidth: 44
                                     Layout.preferredHeight: 44
                                     iconSource: Qt.resolvedUrl("icons/attach.svg")
-                                    Accessible.name: qsTr("Attach a file")
-                                    onClicked: fileDialog.open()
-                                    background: Rectangle { radius: 22; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                                    Accessible.name: qsTr("Attach")
+                                    Accessible.description: attachmentMenu.opened
+                                        ? qsTr("Attachment options open") : qsTr("Attachment options closed")
+                                    onClicked: window.toggleAttachmentMenu()
+                                    background: Rectangle {
+                                        radius: 22
+                                        color: parent.hovered || attachmentMenu.opened ? Theme.hoverRow : "transparent"
+                                    }
                                     ToolTip.visible: hovered
                                     ToolTip.text: Accessible.name
+
+                                    AttachmentMenu {
+                                        id: attachmentMenu
+                                        parent: Overlay.overlay
+                                        x: Math.max(8, Math.min(window.width - width - 8,
+                                                               attachmentButton.mapToItem(window.contentItem, 0, 0).x - 8))
+                                        y: Math.max(8, attachmentButton.mapToItem(window.contentItem, 0, 0).y
+                                                       - height - 8)
+                                        onDocumentRequested: documentFileDialog.open()
+                                        onPhotosVideosRequested: photosVideosFileDialog.open()
+                                        onAudioRequested: audioFileDialog.open()
+                                        onUnavailableRequested: feature => {
+                                            window.transientNotice = qsTr("%1 is not supported yet").arg(feature)
+                                            noticeTimer.restart()
+                                        }
+                                    }
                                 }
 
                                 ThemedToolButton {
@@ -1244,7 +1272,10 @@ Kirigami.ApplicationWindow {
                                     iconSource: Qt.resolvedUrl("icons/smile.svg")
                                     Accessible.name: qsTr("Choose an emoji")
                                     Accessible.description: emojiPicker.opened ? qsTr("Emoji picker open") : qsTr("Emoji picker closed")
-                                    onClicked: emojiPicker.opened ? emojiPicker.close() : emojiPicker.open()
+                                    onClicked: {
+                                        attachmentMenu.close()
+                                        emojiPicker.opened ? emojiPicker.close() : emojiPicker.open()
+                                    }
                                     background: Rectangle { radius: 22; color: parent.hovered || emojiPicker.opened ? Theme.hoverRow : "transparent" }
                                     ToolTip.visible: hovered
                                     ToolTip.text: Accessible.name
@@ -1605,8 +1636,27 @@ Kirigami.ApplicationWindow {
     }
 
     FileDialog {
-        id: fileDialog
-        title: qsTr("Choose a file to send")
+        id: documentFileDialog
+        title: qsTr("Choose a document")
+        nameFilters: [qsTr("All files (*)")]
+        onAccepted: backend.sendFile(selectedFile)
+    }
+    FileDialog {
+        id: photosVideosFileDialog
+        title: qsTr("Choose photos or videos")
+        nameFilters: [
+            qsTr("Photos and videos (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.heic *.heif *.mp4 *.mov *.mkv *.webm *.avi *.3gp)"),
+            qsTr("All files (*)")
+        ]
+        onAccepted: backend.sendFile(selectedFile)
+    }
+    FileDialog {
+        id: audioFileDialog
+        title: qsTr("Choose audio")
+        nameFilters: [
+            qsTr("Audio files (*.mp3 *.m4a *.ogg *.opus *.wav *.aac *.flac)"),
+            qsTr("All files (*)")
+        ]
         onAccepted: backend.sendFile(selectedFile)
     }
     Kirigami.PromptDialog {

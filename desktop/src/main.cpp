@@ -1235,6 +1235,47 @@ int main(int argc, char *argv[])
         source.fill(QColor(QStringLiteral("#25D366")));
         QGuiApplication::clipboard()->setImage(source);
         auto *root = engine.rootObjects().constFirst();
+
+        // The paperclip opens the complete attachment chooser. Keep every
+        // WhatsApp-style destination visible even when the linked-device API
+        // cannot send that type yet, so unavailable choices can explain
+        // themselves instead of disappearing.
+        auto *attachmentButton = root->findChild<QObject *>(QStringLiteral("attachmentButton"));
+        auto *attachmentMenu = root->findChild<QObject *>(QStringLiteral("attachmentMenu"));
+        if (!attachmentButton || !attachmentMenu) {
+            qWarning() << "attachment chooser missing" << attachmentButton << attachmentMenu;
+            return EXIT_FAILURE;
+        }
+        if (!QMetaObject::invokeMethod(root, "toggleAttachmentMenu")) {
+            qWarning() << "attachment menu could not be toggled";
+            return EXIT_FAILURE;
+        }
+        QCoreApplication::processEvents();
+        if (!attachmentMenu->property("visible").toBool()) {
+            qWarning() << "attachment chooser did not become visible";
+            return EXIT_FAILURE;
+        }
+        const QStringList attachmentActions{
+            QStringLiteral("attachmentDocument"),
+            QStringLiteral("attachmentPhotosVideos"),
+            QStringLiteral("attachmentCamera"),
+            QStringLiteral("attachmentAudio"),
+            QStringLiteral("attachmentContact"),
+            QStringLiteral("attachmentPoll"),
+            QStringLiteral("attachmentEvent"),
+            QStringLiteral("attachmentSticker"),
+        };
+        for (const auto &name : attachmentActions) {
+            auto *action = qobject_cast<QQuickItem *>(root->findChild<QObject *>(name));
+            if (!action || !action->isVisible() || action->height() < 44) {
+                qWarning() << "attachment action invalid" << name << action
+                           << (action ? action->isVisible() : false)
+                           << (action ? action->height() : 0);
+                return EXIT_FAILURE;
+            }
+        }
+        QMetaObject::invokeMethod(attachmentMenu, "close");
+
         const bool invoked = QMetaObject::invokeMethod(root, "prepareClipboardPaste");
         QCoreApplication::processEvents();
         auto *preview = root->findChild<QObject *>(QStringLiteral("mediaPreviewOverlay"));

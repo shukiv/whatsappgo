@@ -7,6 +7,7 @@ ItemDelegate {
     id: root
     property url iconSource
     property bool destructive: false
+    property color iconTint: destructive ? Theme.danger : Theme.text
     property string trailingText: ""
 
     width: parent ? parent.width : 256
@@ -32,7 +33,7 @@ ItemDelegate {
             Layout.preferredWidth: 20
             Layout.preferredHeight: 20
             source: root.iconSource
-            tint: root.destructive ? Theme.danger : Theme.text
+            tint: root.iconTint
         }
 
         Label {
