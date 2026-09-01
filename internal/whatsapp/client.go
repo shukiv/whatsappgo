@@ -556,6 +556,58 @@ func (c *Client) SendReaction(ctx context.Context, chatJID, messageID, senderJID
 	return err
 }
 
+func (c *Client) PinMessage(ctx context.Context, chatJID, messageID, senderJID string, duration time.Duration) error {
+	if duration != 24*time.Hour && duration != 7*24*time.Hour && duration != 30*24*time.Hour {
+		return errors.New("pin duration must be 24 hours, 7 days, or 30 days")
+	}
+	return c.sendMessagePin(ctx, chatJID, messageID, senderJID, duration, true)
+}
+
+func (c *Client) UnpinMessage(ctx context.Context, chatJID, messageID, senderJID string) error {
+	return c.sendMessagePin(ctx, chatJID, messageID, senderJID, 0, false)
+}
+
+func (c *Client) sendMessagePin(ctx context.Context, chatJID, messageID, senderJID string, duration time.Duration, pinned bool) error {
+	chat, err := types.ParseJID(chatJID)
+	if err != nil {
+		return err
+	}
+	sender := types.EmptyJID
+	if senderJID != "" {
+		sender, err = types.ParseJID(senderJID)
+		if err != nil {
+			return err
+		}
+	}
+	action := waE2E.PinInChatMessage_UNPIN_FOR_ALL
+	if pinned {
+		action = waE2E.PinInChatMessage_PIN_FOR_ALL
+	}
+	now := time.Now()
+	message := &waE2E.Message{
+		MessageContextInfo: &waE2E.MessageContextInfo{MessageAddOnDurationInSecs: proto.Uint32(uint32(duration / time.Second))},
+		PinInChatMessage: &waE2E.PinInChatMessage{
+			Key:  c.wa.BuildMessageKey(chat, sender, types.MessageID(messageID)),
+			Type: action.Enum(), SenderTimestampMS: proto.Int64(now.UnixMilli()),
+		},
+		EventMessage: &waE2E.EventMessage{},
+	}
+	if _, err = c.wa.SendMessage(ctx, chat, message); err != nil {
+		return err
+	}
+	if pinned {
+		err = c.store.SetMessagePinned(ctx, chatJID, messageID, now.Add(duration).UnixMilli())
+	} else {
+		err = c.store.ClearMessagePin(ctx, chatJID)
+	}
+	if err == nil {
+		c.emit(gateway.Event{Name: "message.pinned", Data: map[string]any{
+			"chat_jid": chatJID, "message_id": messageID, "pinned": pinned,
+		}})
+	}
+	return err
+}
+
 func (c *Client) EditText(ctx context.Context, chatJID, messageID, text string) error {
 	chat, err := types.ParseJID(chatJID)
 	if err != nil {

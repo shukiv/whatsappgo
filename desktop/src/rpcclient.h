@@ -102,6 +102,9 @@ public:
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
     Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
     Q_INVOKABLE void reactMessage(const QString &messageId, const QString &senderJid, const QString &reaction);
+    Q_INVOKABLE void pinMessage(const QString &messageId, const QString &senderJid, int durationSeconds);
+    Q_INVOKABLE void unpinMessage(const QString &messageId, const QString &senderJid = {});
+    Q_INVOKABLE int messageIndex(const QString &messageId) const;
     Q_INVOKABLE void startChat(const QString &phone);
     Q_INVOKABLE void setTyping(bool typing);
     Q_INVOKABLE void startPairing();

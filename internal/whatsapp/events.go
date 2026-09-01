@@ -379,6 +379,31 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		}
 		return
 	}
+	if pin := evt.Message.GetPinInChatMessage(); pin != nil {
+		target := pin.GetKey().GetID()
+		if target == "" {
+			return
+		}
+		pinned := pin.GetType() == waE2E.PinInChatMessage_PIN_FOR_ALL
+		var err error
+		if pinned {
+			duration := time.Duration(evt.Message.GetMessageContextInfo().GetMessageAddOnDurationInSecs()) * time.Second
+			if duration <= 0 {
+				duration = 7 * 24 * time.Hour
+			}
+			err = c.store.SetMessagePinned(context.Background(), evt.Info.Chat.String(), target, evt.Info.Timestamp.Add(duration).UnixMilli())
+		} else if pin.GetType() == waE2E.PinInChatMessage_UNPIN_FOR_ALL {
+			err = c.store.ClearMessagePin(context.Background(), evt.Info.Chat.String())
+		} else {
+			return
+		}
+		if err == nil {
+			c.emit(gateway.Event{Name: "message.pinned", Data: map[string]any{
+				"chat_jid": evt.Info.Chat.String(), "message_id": target, "pinned": pinned,
+			}})
+		}
+		return
+	}
 	if protocol := evt.Message.GetProtocolMessage(); protocol != nil && protocol.GetType() == waE2E.ProtocolMessage_REVOKE {
 		target := protocol.GetKey().GetID()
 		_ = c.store.MarkRevoked(context.Background(), evt.Info.Chat.String(), target)
@@ -402,15 +427,9 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	c.rememberMediaPayload(msg, evt.Message)
 	c.emit(gateway.Event{Name: "message.upsert", Data: msg})
 	if !msg.FromMe {
-		notifyTitle := title
 		chatInfo, _ := c.store.GetChat(context.Background(), msg.ChatJID)
+		notifyTitle := notificationTitle(chatInfo, title, msg.ChatJID)
 		muted := chatInfo.MutedUntil > time.Now().UnixMilli()
-		if notifyTitle == "" {
-			notifyTitle = chatInfo.Title
-		}
-		if notifyTitle == "" {
-			notifyTitle = displayJID(msg.ChatJID)
-		}
 		if !muted {
 			body := notificationBody(msg, evt.Info.IsGroup)
 			c.emit(gateway.Event{Name: "notification.received", Data: map[string]string{
@@ -438,6 +457,19 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	if downloadable := downloadableFromMessage(evt.Message); downloadable != nil && !evt.IsViewOnce {
 		go c.cacheMedia(msg, downloadable, evt.Message)
 	}
+}
+
+// notificationTitle keeps native notifications consistent with the chat list.
+// A message's PushName is self-published and may be stale (or simply unrelated
+// to the name the user saved), so it is only a fallback for an unnamed chat.
+func notificationTitle(chat model.Chat, pushName, chatJID string) string {
+	if title := strings.TrimSpace(chat.Title); title != "" {
+		return title
+	}
+	if title := strings.TrimSpace(pushName); title != "" {
+		return title
+	}
+	return displayJID(chatJID)
 }
 
 // notificationBody summarises a message for a desktop notification: its text

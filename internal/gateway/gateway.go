@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 )
@@ -41,6 +42,8 @@ type Gateway interface {
 	RequestHistory(context.Context, string, int) error
 	RefreshHistory(context.Context, string, int) error
 	SendReaction(context.Context, string, string, string, string) error
+	PinMessage(context.Context, string, string, string, time.Duration) error
+	UnpinMessage(context.Context, string, string, string) error
 	EditText(context.Context, string, string, string) error
 	DeleteMessage(context.Context, string, string, string) error
 	ResolvePhone(context.Context, string) (model.Chat, error)
@@ -81,7 +84,11 @@ func (Unavailable) RefreshHistory(context.Context, string, int) error { return E
 func (Unavailable) SendReaction(context.Context, string, string, string, string) error {
 	return ErrUnavailable
 }
-func (Unavailable) EditText(context.Context, string, string, string) error { return ErrUnavailable }
+func (Unavailable) PinMessage(context.Context, string, string, string, time.Duration) error {
+	return ErrUnavailable
+}
+func (Unavailable) UnpinMessage(context.Context, string, string, string) error { return ErrUnavailable }
+func (Unavailable) EditText(context.Context, string, string, string) error     { return ErrUnavailable }
 func (Unavailable) DeleteMessage(context.Context, string, string, string) error {
 	return ErrUnavailable
 }

@@ -915,6 +915,86 @@ Kirigami.ApplicationWindow {
                     }
                 }
 
+                Rectangle {
+                    id: pinnedMessageBar
+                    objectName: "pinnedMessageBar"
+                    readonly property var pinned: backend.chatInfo.pinned_message || ({})
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 46 : 0
+                    visible: Boolean(pinned.id)
+                    color: Theme.surfaceRaised
+                    border.color: Theme.border
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 10
+                        spacing: 12
+
+                        TintedIcon {
+                            Layout.preferredWidth: 20
+                            Layout.preferredHeight: 20
+                            source: Qt.resolvedUrl("icons/pin.svg")
+                            tint: Theme.textMuted
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: pinnedMessageBar.pinned.body
+                                  || pinnedMessageBar.pinned.media_name
+                                  || qsTr("Pinned message")
+                            color: Theme.textMuted
+                            font.pixelSize: 13
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            Accessible.name: qsTr("Pinned message: %1").arg(text)
+                        }
+                        ThemedToolButton {
+                            id: pinnedMessageMenuButton
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/chevron-right.svg")
+                            iconSize: 18
+                            rotation: 90
+                            Accessible.name: qsTr("Pinned message actions")
+                            onClicked: pinnedMessageMenu.open()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                        }
+                    }
+
+                    TapHandler {
+                        onTapped: pinnedMessageMenu.open()
+                    }
+
+                    WhatsAppMenuPopup {
+                        id: pinnedMessageMenu
+                        objectName: "pinnedMessageMenu"
+                        parent: Overlay.overlay
+                        width: 210
+                        x: Math.max(8, window.width - width - 18)
+                        y: Math.max(8, pinnedMessageBar.mapToItem(window.contentItem, 0, pinnedMessageBar.height).y + 2)
+
+                        WhatsAppMenuItem {
+                            text: qsTr("Unpin")
+                            iconSource: Qt.resolvedUrl("icons/pin.svg")
+                            onClicked: {
+                                pinnedMessageMenu.close()
+                                backend.unpinMessage(pinnedMessageBar.pinned.id,
+                                                     pinnedMessageBar.pinned.sender_jid || "")
+                            }
+                        }
+                        WhatsAppMenuItem {
+                            text: qsTr("Go to message")
+                            iconSource: Qt.resolvedUrl("icons/chevron-right.svg")
+                            onClicked: {
+                                pinnedMessageMenu.close()
+                                const index = backend.messageIndex(pinnedMessageBar.pinned.id)
+                                if (index >= 0)
+                                    messageList.positionViewAtIndex(index, ListView.Center)
+                            }
+                        }
+                    }
+                }
+
                 Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -949,6 +1029,13 @@ Kirigami.ApplicationWindow {
                                 window.replyTargetId = messageId
                                 window.replyPreview = body
                                 composer.forceActiveFocus()
+                            }
+                            onPinRequested: (messageId, senderJid, body) => {
+                                pinDialog.messageId = messageId
+                                pinDialog.senderJid = senderJid
+                                pinDialog.messagePreview = body
+                                pinSevenDays.checked = true
+                                pinDialog.open()
                             }
                         }
                         // Following the tail only while the reader is already at
@@ -1611,6 +1698,47 @@ Kirigami.ApplicationWindow {
                         addAccountDialog.close()
                     }
                 }
+            }
+        }
+    }
+    Kirigami.PromptDialog {
+        id: pinDialog
+        objectName: "pinMessageDialog"
+        property string messageId: ""
+        property string senderJid: ""
+        property string messagePreview: ""
+        title: qsTr("Choose how long to pin this message")
+        subtitle: qsTr("You can unpin it at any time.")
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        onAccepted: {
+            let duration = 7 * 24 * 60 * 60
+            if (pinOneDay.checked)
+                duration = 24 * 60 * 60
+            else if (pinThirtyDays.checked)
+                duration = 30 * 24 * 60 * 60
+            backend.pinMessage(messageId, senderJid, duration)
+        }
+        contentItem: ColumnLayout {
+            spacing: 8
+            ButtonGroup { id: pinDurationGroup }
+            RadioButton {
+                id: pinOneDay
+                text: qsTr("24 hours")
+                ButtonGroup.group: pinDurationGroup
+                Accessible.name: text
+            }
+            RadioButton {
+                id: pinSevenDays
+                text: qsTr("7 days")
+                checked: true
+                ButtonGroup.group: pinDurationGroup
+                Accessible.name: text
+            }
+            RadioButton {
+                id: pinThirtyDays
+                text: qsTr("30 days")
+                ButtonGroup.group: pinDurationGroup
+                Accessible.name: text
             }
         }
     }

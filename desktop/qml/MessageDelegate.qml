@@ -12,12 +12,33 @@ Item {
     signal editRequested(string messageId, string body)
     signal deleteRequested(string messageId, string senderJid)
     signal replyRequested(string messageId, string body)
+    signal pinRequested(string messageId, string senderJid, string body)
 
     readonly property bool hasReply: Boolean(modelData.reply_to)
     readonly property bool hasMedia: Boolean(modelData.media_path)
     readonly property bool mediaKind: ["image", "video", "audio", "document", "sticker"].indexOf(modelData.kind) >= 0
     readonly property bool visualKind: ["image", "video", "sticker"].indexOf(modelData.kind) >= 0
     readonly property bool audioKind: modelData.kind === "audio"
+    readonly property var reactionSummary: {
+        const summary = []
+        const indexes = ({})
+        const reactions = modelData.reactions || []
+        for (let i = 0; i < reactions.length; ++i) {
+            const emoji = String(reactions[i].emoji || "")
+            if (!emoji)
+                continue
+            if (indexes[emoji] === undefined) {
+                indexes[emoji] = summary.length
+                summary.push({ emoji: emoji, count: 1 })
+            } else {
+                summary[indexes[emoji]].count += 1
+            }
+        }
+        return summary
+    }
+    readonly property string reactionSummaryText: reactionSummary.map(function(reaction) {
+        return reaction.emoji + (reaction.count > 1 ? " " + reaction.count : "")
+    }).join("  ")
 
     // The local file when it has been downloaded, otherwise the inline
     // thumbnail WhatsApp delivers with the message itself. Showing the
@@ -56,7 +77,6 @@ Item {
     readonly property bool metaBeside: bodyText.visible && !bodyText.wrapped
         && !mediaFrame.visible && !voiceRow.visible && !fileRow.visible
         && !linkPreview.visible && !contactCard.visible && !locationCard.visible
-        && !reactionsFlow.visible
         && (bodyText.implicitWidth + metaRow.implicitWidth + 12) <= contentMaxWidth
 
     // The bubble is exactly as wide as its widest part, capped by the
@@ -75,8 +95,7 @@ Item {
         locationCard.visible ? Math.min(260, contentMaxWidth) : 0,
         bodyText.visible ? (metaBeside ? bodyText.implicitWidth + metaRow.implicitWidth + 12 : bodyText.implicitWidth) : 0,
         unsupportedLabel.visible ? unsupportedLabel.implicitWidth : 0,
-        metaRow.implicitWidth,
-        reactionsFlow.visible ? Math.min(reactionsFlow.implicitWidth, contentMaxWidth) : 0)
+        metaRow.implicitWidth)
     readonly property real contentWidth: Math.min(Math.max(naturalContentWidth, 54), contentMaxWidth)
 
     readonly property string mediaLabel: {
@@ -140,8 +159,78 @@ Item {
         return minutes + ":" + (seconds < 10 ? "0" : "") + seconds
     }
 
+    function clampPopupX(popup, value) {
+        return Math.max(8, Math.min(popup.parent.width - popup.width - 8, value))
+    }
+
+    function clampPopupY(popup, value) {
+        return Math.max(8, Math.min(popup.parent.height - popup.height - 8, value))
+    }
+
+    function openMessageMenuAt(x, y) {
+        contextMenu.capturedSelection = bodyText.selectedText
+        contextMenu.x = clampPopupX(contextMenu, x)
+        contextMenu.y = clampPopupY(contextMenu, y)
+        contextMenu.open()
+
+        quickReactionPopup.pairedWithMenu = true
+        quickReactionPopup.x = clampPopupX(
+            quickReactionPopup, contextMenu.x + contextMenu.width - quickReactionPopup.width)
+        let reactionY = contextMenu.y - quickReactionPopup.height - 6
+        if (reactionY < 8)
+            reactionY = contextMenu.y + contextMenu.implicitHeight + 6
+        quickReactionPopup.y = clampPopupY(quickReactionPopup, reactionY)
+        quickReactionPopup.open()
+    }
+
+    function openMessageMenuFromButton() {
+        const mapped = messageMenuButton.mapToItem(
+            contextMenu.parent, messageMenuButton.width, messageMenuButton.height)
+        openMessageMenuAt(mapped.x - contextMenu.width, mapped.y + 2)
+    }
+
+    function openReactionTray(anchorItem) {
+        contextMenu.close()
+        fullReactionPicker.close()
+        quickReactionPopup.pairedWithMenu = false
+        const mapped = anchorItem.mapToItem(
+            quickReactionPopup.parent, anchorItem.width / 2, anchorItem.height / 2)
+        const preferredX = root.modelData.from_me
+            ? mapped.x - quickReactionPopup.width : mapped.x
+        let preferredY = mapped.y - quickReactionPopup.height / 2
+        quickReactionPopup.x = clampPopupX(quickReactionPopup, preferredX)
+        quickReactionPopup.y = clampPopupY(quickReactionPopup, preferredY)
+        quickReactionPopup.open()
+    }
+
+    function openFullReactionPicker() {
+        const preferredX = quickReactionPopup.x + quickReactionPopup.width - fullReactionPicker.width
+        let preferredY = quickReactionPopup.y + quickReactionPopup.height + 6
+        if (preferredY + fullReactionPicker.height > fullReactionPicker.parent.height - 8)
+            preferredY = quickReactionPopup.y - fullReactionPicker.height - 6
+        quickReactionPopup.pairedWithMenu = false
+        contextMenu.close()
+        quickReactionPopup.close()
+        fullReactionPicker.x = clampPopupX(fullReactionPicker, preferredX)
+        fullReactionPicker.y = clampPopupY(fullReactionPicker, preferredY)
+        fullReactionPicker.open()
+    }
+
+    function reactWith(emoji) {
+        backend.reactMessage(root.modelData.id, root.modelData.sender_jid || "", emoji)
+        contextMenu.close()
+        quickReactionPopup.close()
+        fullReactionPicker.close()
+    }
+
+    function closeActionPopups() {
+        contextMenu.close()
+        quickReactionPopup.close()
+        fullReactionPicker.close()
+    }
+
     width: ListView.view ? ListView.view.width : 640
-    implicitHeight: bubble.implicitHeight + 4
+    implicitHeight: bubble.implicitHeight + (reactionsFlow.visible ? 22 : 4)
 
     // Attachments that arrived through history synchronisation carry no file,
     // so the conversation fetches the ones it is showing. The view only builds
@@ -185,6 +274,8 @@ Item {
         radius: Theme.radiusLarge
         border.color: Theme.bubbleBorder
         border.width: root.modelData.from_me ? 0 : 1
+
+        HoverHandler { id: bubbleHover }
 
         Canvas {
             id: messageTail
@@ -811,45 +902,219 @@ Item {
                 font.italic: true
             }
 
-            Flow {
-                id: reactionsFlow
-                visible: Boolean(root.modelData.reactions) && root.modelData.reactions.length > 0
-                width: root.contentWidth
-                spacing: 4
-                Repeater {
-                    model: root.modelData.reactions || []
-                    Label {
-                        required property var modelData
-                        text: modelData.emoji
-                        font.family: Theme.emojiFontFamily
-                        font.pixelSize: 15
-                        padding: 3
-                        background: Rectangle { color: Theme.surfaceMuted; radius: 8; border.color: Theme.border }
-                        Accessible.name: qsTr("Reaction %1").arg(modelData.emoji)
-                    }
-                }
+        }
+
+        ToolButton {
+            id: messageMenuButton
+            objectName: "messageMenuButton"
+            width: 32
+            height: 32
+            x: bubble.width - width - 1
+            y: 1
+            z: 12
+            focusPolicy: Qt.TabFocus
+            opacity: bubbleHover.hovered || hovered || activeFocus || contextMenu.opened ? 1 : 0
+            enabled: root.modelData.kind !== "system"
+            Accessible.name: qsTr("Message actions")
+            Accessible.description: contextMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
+            ToolTip.visible: hovered
+            ToolTip.text: Accessible.name
+            onClicked: root.openMessageMenuFromButton()
+            Behavior on opacity { NumberAnimation { duration: 90 } }
+            contentItem: TintedIcon {
+                source: Qt.resolvedUrl("icons/chevron-right.svg")
+                tint: Theme.icon
+                rotation: 90
             }
+            background: Rectangle {
+                radius: 8
+                color: parent.down ? Theme.pressedRow
+                    : parent.hovered || parent.activeFocus ? Theme.surfaceRaised : bubble.color
+                border.width: parent.activeFocus ? 2 : 0
+                border.color: Theme.primary
+            }
+        }
+    }
+
+    ToolButton {
+        id: messageReactionButton
+        objectName: "messageReactionButton"
+        width: 36
+        height: 36
+        x: root.modelData.from_me ? bubble.x - width - 8 : bubble.x + bubble.width + 8
+        y: bubble.y + Math.max(0, (bubble.height - height) / 2)
+        z: 8
+        focusPolicy: Qt.TabFocus
+        opacity: bubbleHover.hovered || hovered || activeFocus
+            || (quickReactionPopup.opened && !quickReactionPopup.pairedWithMenu) ? 1 : 0
+        enabled: root.modelData.kind !== "system" && !root.modelData.revoked
+        Accessible.name: qsTr("React to message")
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+        onClicked: root.openReactionTray(messageReactionButton)
+        Behavior on opacity { NumberAnimation { duration: 90 } }
+        contentItem: TintedIcon {
+            source: Qt.resolvedUrl("icons/smile.svg")
+            tint: Theme.icon
+            anchors.margins: 8
+        }
+        background: Item {
+            Rectangle {
+                anchors.fill: parent
+                anchors.leftMargin: 1
+                anchors.topMargin: 2
+                radius: width / 2
+                color: Theme.dark ? "#48000000" : "#22000000"
+            }
+            Rectangle {
+                anchors.fill: parent
+                anchors.rightMargin: 1
+                anchors.bottomMargin: 2
+                radius: width / 2
+                color: Theme.surfaceRaised
+                border.color: messageReactionButton.activeFocus ? Theme.primary : Theme.border
+                border.width: messageReactionButton.activeFocus ? 2 : 1
+            }
+        }
+    }
+
+    Rectangle {
+        id: reactionsFlow
+        objectName: "messageReactionBadge"
+        visible: root.reactionSummary.length > 0
+        implicitWidth: reactionSummaryLabel.implicitWidth + 12
+        width: implicitWidth
+        height: 22
+        x: root.modelData.from_me
+            ? bubble.x + bubble.width - width - 7 : bubble.x + 7
+        y: bubble.y + bubble.height - 4
+        z: 4
+        radius: height / 2
+        color: Theme.surfaceRaised
+        border.color: Theme.border
+        border.width: 1
+
+        Label {
+            id: reactionSummaryLabel
+            objectName: "messageReactionSummary"
+            anchors.centerIn: parent
+            text: root.reactionSummaryText
+            font.family: Theme.emojiFontFamily
+            font.pixelSize: 14
+            Accessible.name: qsTr("Reactions: %1").arg(text)
+        }
+
+        TapHandler {
+            onTapped: root.openReactionTray(reactionsFlow)
         }
     }
 
     TapHandler {
         acceptedButtons: Qt.RightButton
         onTapped: (eventPoint, button) => {
-            // Opening the menu moves focus away and clears the selection, so
-            // what was selected is remembered before that happens.
-            contextMenu.capturedSelection = bodyText.selectedText
             const mapped = root.mapToItem(contextMenu.parent, eventPoint.position.x, eventPoint.position.y)
-            contextMenu.x = Math.max(8, Math.min(contextMenu.parent.width - contextMenu.width - 8, mapped.x))
-            contextMenu.y = Math.max(8, Math.min(contextMenu.parent.height - contextMenu.implicitHeight - 8, mapped.y))
-            contextMenu.open()
+            root.openMessageMenuAt(mapped.x, mapped.y)
         }
+    }
+
+    Popup {
+        id: quickReactionPopup
+        objectName: "quickReactionPopup"
+        parent: Overlay.overlay
+        property bool pairedWithMenu: false
+        width: quickReactionRow.implicitWidth + 12
+        height: 52
+        padding: 6
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: {
+            if (pairedWithMenu) {
+                pairedWithMenu = false
+                contextMenu.close()
+            }
+        }
+        background: Item {
+            Rectangle {
+                anchors.fill: parent
+                anchors.leftMargin: 2
+                anchors.topMargin: 4
+                radius: 24
+                color: Theme.dark ? "#52000000" : "#26000000"
+            }
+            Rectangle {
+                anchors.fill: parent
+                anchors.rightMargin: 2
+                anchors.bottomMargin: 4
+                radius: 24
+                color: Theme.surfaceRaised
+                border.color: Theme.border
+            }
+        }
+        contentItem: Row {
+            id: quickReactionRow
+            spacing: 1
+            Repeater {
+                model: ["👍", "❤️", "😂", "😮", "😢", "🙏"]
+                ToolButton {
+                    required property string modelData
+                    width: 40
+                    height: 40
+                    focusPolicy: Qt.TabFocus
+                    Accessible.name: qsTr("React with %1").arg(modelData)
+                    onClicked: root.reactWith(modelData)
+                    contentItem: Label {
+                        text: parent.modelData
+                        font.family: Theme.emojiFontFamily
+                        font.pixelSize: 20
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 20
+                        color: parent.down ? Theme.pressedRow
+                            : parent.hovered || parent.activeFocus ? Theme.hoverRow : "transparent"
+                        border.width: parent.activeFocus ? 2 : 0
+                        border.color: Theme.primary
+                    }
+                }
+            }
+            ToolButton {
+                width: 40
+                height: 40
+                focusPolicy: Qt.TabFocus
+                Accessible.name: qsTr("More reactions")
+                onClicked: root.openFullReactionPicker()
+                contentItem: TintedIcon {
+                    source: Qt.resolvedUrl("icons/plus.svg")
+                    tint: Theme.icon
+                    anchors.margins: 10
+                }
+                background: Rectangle {
+                    radius: 20
+                    color: parent.down ? Theme.pressedRow
+                        : parent.hovered || parent.activeFocus ? Theme.hoverRow : "transparent"
+                    border.width: parent.activeFocus ? 2 : 0
+                    border.color: Theme.primary
+                }
+            }
+        }
+    }
+
+    EmojiPicker {
+        id: fullReactionPicker
+        objectName: "messageReactionPicker"
+        parent: Overlay.overlay
+        onEmojiChosen: emoji => root.reactWith(emoji)
     }
 
     WhatsAppMenuPopup {
         id: contextMenu
+        objectName: "messageContextMenu"
         parent: Overlay.overlay
         width: 246
         property string capturedSelection: ""
+        closePolicy: Popup.CloseOnEscape
 
         WhatsAppMenuItem {
             visible: Boolean(contextMenu.capturedSelection)
@@ -858,7 +1123,18 @@ Item {
             iconSource: Qt.resolvedUrl("icons/copy.svg")
             onClicked: {
                 backend.copyText(contextMenu.capturedSelection)
-                contextMenu.close()
+                root.closeActionPopups()
+            }
+        }
+
+        WhatsAppMenuItem {
+            visible: !Boolean(contextMenu.capturedSelection) && Boolean(root.modelData.body)
+            height: visible ? 46 : 0
+            text: qsTr("Copy")
+            iconSource: Qt.resolvedUrl("icons/copy.svg")
+            onClicked: {
+                backend.copyText(root.modelData.body || "")
+                root.closeActionPopups()
             }
         }
 
@@ -868,7 +1144,7 @@ Item {
             text: qsTr("Copy image")
             iconSource: Qt.resolvedUrl("icons/copy.svg")
             onClicked: {
-                contextMenu.close()
+                root.closeActionPopups()
                 backend.copyImage(root.modelData.id, root.modelData.media_path || "")
             }
         }
@@ -877,24 +1153,28 @@ Item {
             text: qsTr("Reply")
             iconSource: Qt.resolvedUrl("icons/reply.svg")
             onClicked: {
-                contextMenu.close()
+                root.closeActionPopups()
                 root.replyRequested(root.modelData.id, root.modelData.body || root.mediaLabel)
             }
         }
         WhatsAppMenuItem {
-            text: qsTr("React with thumbs up")
+            text: qsTr("React")
             iconSource: Qt.resolvedUrl("icons/smile.svg")
             onClicked: {
+                quickReactionPopup.pairedWithMenu = false
                 contextMenu.close()
-                backend.reactMessage(root.modelData.id, root.modelData.sender_jid || "", "👍")
+                root.openReactionTray(messageReactionButton)
             }
         }
         WhatsAppMenuItem {
-            text: qsTr("React with heart")
-            iconSource: Qt.resolvedUrl("icons/heart.svg")
+            visible: !root.modelData.revoked
+            height: visible ? 46 : 0
+            text: qsTr("Pin")
+            iconSource: Qt.resolvedUrl("icons/pin.svg")
             onClicked: {
-                contextMenu.close()
-                backend.reactMessage(root.modelData.id, root.modelData.sender_jid || "", "❤️")
+                root.closeActionPopups()
+                root.pinRequested(root.modelData.id, root.modelData.sender_jid || "",
+                                  root.modelData.body || root.mediaLabel)
             }
         }
         Rectangle {
@@ -909,7 +1189,7 @@ Item {
             text: qsTr("Edit")
             iconSource: Qt.resolvedUrl("icons/edit.svg")
             onClicked: {
-                contextMenu.close()
+                root.closeActionPopups()
                 root.editRequested(root.modelData.id, root.modelData.body || "")
             }
         }
@@ -920,7 +1200,7 @@ Item {
             iconSource: Qt.resolvedUrl("icons/delete.svg")
             destructive: true
             onClicked: {
-                contextMenu.close()
+                root.closeActionPopups()
                 root.deleteRequested(root.modelData.id, root.modelData.sender_jid || "")
             }
         }

@@ -72,6 +72,46 @@ type fakeGateway struct {
 	refreshedChat   string
 	downloadMessage string
 	resolvedPhone   string
+	pinnedMessage   string
+	pinDuration     time.Duration
+	unpinnedMessage string
+}
+
+func (f *fakeGateway) PinMessage(_ context.Context, _, messageID, _ string, duration time.Duration) error {
+	f.pinnedMessage = messageID
+	f.pinDuration = duration
+	return nil
+}
+
+func (f *fakeGateway) UnpinMessage(_ context.Context, _, messageID, _ string) error {
+	f.unpinnedMessage = messageID
+	return nil
+}
+
+func TestMessagePinValidatesDurationAndUsesGateway(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+	if _, err := svc.Handle(context.Background(), "message.pin", json.RawMessage(`{"chat_jid":"alice@lid","message_id":"m1","duration_seconds":604800}`)); err != nil {
+		t.Fatal(err)
+	}
+	if gw.pinnedMessage != "m1" || gw.pinDuration != 7*24*time.Hour {
+		t.Fatalf("unexpected pin request: message=%q duration=%s", gw.pinnedMessage, gw.pinDuration)
+	}
+	if _, err := svc.Handle(context.Background(), "message.pin", json.RawMessage(`{"chat_jid":"alice@lid","message_id":"m1","duration_seconds":60}`)); err == nil {
+		t.Fatal("unsupported pin duration was accepted")
+	}
+	if _, err := svc.Handle(context.Background(), "message.unpin", json.RawMessage(`{"chat_jid":"alice@lid","message_id":"m1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if gw.unpinnedMessage != "m1" {
+		t.Fatalf("unexpected unpin target %q", gw.unpinnedMessage)
+	}
 }
 
 func (f *fakeGateway) Subscribe(func(gateway.Event)) func() { return func() {} }

@@ -74,6 +74,8 @@ whatsappctl --pretty call chat.info '{"chat_jid":"15551234567@s.whatsapp.net"}'
 whatsappctl --pretty call chat.shared '{"chat_jid":"15551234567@s.whatsapp.net","category":"links","offset":0,"limit":60}'
 whatsappctl call chat.set_read '{"chat_jid":"15551234567@s.whatsapp.net","value":true}'
 whatsappctl call message.react '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":"","emoji":"👍"}'
+whatsappctl call message.pin '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":"","duration_seconds":604800}'
+whatsappctl call message.unpin '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":""}'
 whatsappctl call message.edit '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","text":"Corrected"}'
 whatsappctl call message.delete @delete.json
 printf '{"query":"contract","limit":25}' | whatsappctl call messages.search -
@@ -151,6 +153,8 @@ All parameter objects reject unknown fields.
 | `message.send` | `chat_jid`, `text`, `reply_to`, `reply_chat_jid`, `link_preview` | Sent message; `reply_chat_jid` identifies a quoted message stored in a different chat |
 | `message.send_media` | `chat_jid`, `path`, `caption`, `reply_to`, `voice` | Sent media message; path must be local to WhatsAppGo |
 | `message.react` | `chat_jid`, `message_id`, `sender_jid`, `emoji` | Add reaction; empty emoji removes it |
+| `message.pin` | `chat_jid`, `message_id`, `sender_jid`, `duration_seconds` | Pin for 86400, 604800, or 2592000 seconds |
+| `message.unpin` | `chat_jid`, `message_id`, `sender_jid` | Remove the chat's pinned message |
 | `message.edit` | `chat_jid`, `message_id`, `text` | Edit eligible sent text |
 | `message.delete` | `chat_jid`, `message_id`, `sender_jid` | Delete an eligible message for everyone |
 | `contact.resolve` | `phone` | Validate number and return/create its chat |

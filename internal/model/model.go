@@ -113,6 +113,8 @@ type StatusGroup struct {
 type ChatInfo struct {
 	Chat          Chat      `json:"chat"`
 	Phone         string    `json:"phone,omitempty"`
+	PinnedMessage *Message  `json:"pinned_message,omitempty"`
+	PinnedUntil   int64     `json:"pinned_until,omitempty"`
 	SharedCount   int       `json:"shared_count"`
 	MediaCount    int       `json:"media_count"`
 	DocumentCount int       `json:"document_count"`

@@ -119,6 +119,12 @@ Right-click a conversation to archive it, mute it, pin it, or mark it read or
 unread; each change is sent to WhatsApp, so it applies to your phone too.
 Archived conversations live behind the **Archived** row above the filters.
 
+Hover a message to reveal its reaction button and action arrow. Reactions are
+grouped below the bubble with a count when several people choose the same emoji.
+The message menu can pin a message for 24 hours, 7 days, or 30 days. A pinned
+message appears above the conversation; click it to go to the message or unpin
+it. These actions are synchronized with WhatsApp rather than kept only locally.
+
 Beyond what is on screen, the application keeps collecting in the background:
 older messages first, then the attachments belonging to them. Both run slowly on
 purpose and continue across restarts, so a freshly linked account fills in over

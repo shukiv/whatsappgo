@@ -36,6 +36,40 @@ func TestMessageFromEventExtractsReaction(t *testing.T) {
 	}
 }
 
+func TestPinInChatEventUpdatesPinnedMessageProjection(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	chat := types.NewJID("123", types.DefaultUserServer)
+	if err := st.UpsertMessage(ctx, model.Message{ID: "target", ChatJID: chat.String(), SenderJID: chat.String(), Timestamp: 1, Kind: "text", Body: "Pinned body", Status: "received"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+	at := time.Now().Truncate(time.Second)
+	c.handleMessage(&waEvents.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat}, ID: "pin-action", Timestamp: at},
+		Message: &waE2E.Message{
+			MessageContextInfo: &waE2E.MessageContextInfo{MessageAddOnDurationInSecs: proto.Uint32(86400)},
+			PinInChatMessage:   &waE2E.PinInChatMessage{Key: &waCommon.MessageKey{ID: proto.String("target")}, Type: waE2E.PinInChatMessage_PIN_FOR_ALL.Enum()},
+		},
+	})
+	info, err := st.ChatInfo(ctx, chat.String())
+	if err != nil || info.PinnedMessage == nil || info.PinnedMessage.ID != "target" || info.PinnedUntil != at.Add(24*time.Hour).UnixMilli() {
+		t.Fatalf("pin event was not projected: info=%#v err=%v", info, err)
+	}
+	c.handleMessage(&waEvents.Message{
+		Info:    types.MessageInfo{MessageSource: types.MessageSource{Chat: chat}, ID: "unpin-action", Timestamp: at.Add(time.Minute)},
+		Message: &waE2E.Message{PinInChatMessage: &waE2E.PinInChatMessage{Key: &waCommon.MessageKey{ID: proto.String("target")}, Type: waE2E.PinInChatMessage_UNPIN_FOR_ALL.Enum()}},
+	})
+	info, err = st.ChatInfo(ctx, chat.String())
+	if err != nil || info.PinnedMessage != nil {
+		t.Fatalf("unpin event was not projected: info=%#v err=%v", info, err)
+	}
+}
+
 func TestMessageFromEventDropsTransportOnlyEnvelope(t *testing.T) {
 	evt := &waEvents.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: types.NewJID("123", types.DefaultUserServer)}, ID: "transport", Timestamp: time.Now()}, Message: &waE2E.Message{SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{}}}
 	if m := messageFromEvent(evt); m.ID != "" {
@@ -424,6 +458,25 @@ func TestNotificationBodyDescribesMessages(t *testing.T) {
 	for _, tc := range cases {
 		if got := notificationBody(tc.msg, tc.group); got != tc.want {
 			t.Errorf("%s: notificationBody = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestNotificationTitlePrefersResolvedChatName(t *testing.T) {
+	cases := []struct {
+		name      string
+		chat      model.Chat
+		pushName  string
+		chatJID   string
+		wantTitle string
+	}{
+		{"saved contact beats stale push name", model.Chat{Title: "יאיר"}, "YBG", "972500000000@s.whatsapp.net", "יאיר"},
+		{"push name fills an unnamed contact", model.Chat{}, "YBG", "972500000000@s.whatsapp.net", "YBG"},
+		{"jid is the final fallback", model.Chat{}, "", "972500000000@s.whatsapp.net", "972500000000"},
+	}
+	for _, tc := range cases {
+		if got := notificationTitle(tc.chat, tc.pushName, tc.chatJID); got != tc.wantTitle {
+			t.Errorf("%s: notificationTitle = %q, want %q", tc.name, got, tc.wantTitle)
 		}
 	}
 }

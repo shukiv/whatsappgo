@@ -99,6 +99,7 @@ qt_add_qml_module(whatsappgo
         qml/icons/link.svg
         qml/icons/lock.svg
         qml/icons/chevron-right.svg
+        qml/icons/plus.svg
         qml/assets/chat-background.png
 )
 

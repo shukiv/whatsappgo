@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 )
@@ -595,6 +596,38 @@ func TestIncomingPushNameDoesNotReplaceResolvedContactName(t *testing.T) {
 	}
 	if chat.Title != "Adony Robles Lopez" {
 		t.Fatalf("push name replaced resolved contact name: %q", chat.Title)
+	}
+}
+
+func TestPinnedMessageAppearsInChatInfoAndCanBeCleared(t *testing.T) {
+	s, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	const chatJID = "alice@s.whatsapp.net"
+	const messageID = "pin-target"
+	if err := s.UpsertMessage(ctx, model.Message{ID: messageID, ChatJID: chatJID, SenderJID: chatJID, Timestamp: 100, Kind: "text", Body: "Keep this", Status: "received"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(7 * 24 * time.Hour).UnixMilli()
+	if err := s.SetMessagePinned(ctx, chatJID, messageID, expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.ChatInfo(ctx, chatJID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.PinnedMessage == nil || info.PinnedMessage.ID != messageID || info.PinnedMessage.Body != "Keep this" || info.PinnedUntil != expiresAt {
+		t.Fatalf("unexpected pinned message: %#v", info)
+	}
+	if err := s.ClearMessagePin(ctx, chatJID); err != nil {
+		t.Fatal(err)
+	}
+	info, err = s.ChatInfo(ctx, chatJID)
+	if err != nil || info.PinnedMessage != nil {
+		t.Fatalf("pin was not cleared: info=%#v err=%v", info, err)
 	}
 }
 

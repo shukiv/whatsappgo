@@ -480,7 +480,24 @@ int main(int argc, char *argv[])
             : EXIT_FAILURE;
     }
     if (messageInteractionTest) {
-        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/MessageDelegate.qml")));
+        QQmlComponent component(&engine);
+        component.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            ApplicationWindow {
+                id: harness
+                width: 900
+                height: 600
+                visible: true
+                property var testMessage
+                MessageDelegate {
+                    objectName: "messageInteractionDelegate"
+                    width: 800
+                    modelData: harness.testMessage
+                }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/message-interaction-test.qml")));
         const QVariantMap message{
             {QStringLiteral("id"), QStringLiteral("message-test")},
             {QStringLiteral("body"), QStringLiteral("Copy this https://example.com/path?q=1")},
@@ -488,22 +505,66 @@ int main(int argc, char *argv[])
             {QStringLiteral("from_me"), false},
             {QStringLiteral("timestamp"), 0},
             {QStringLiteral("status"), QStringLiteral("received")},
+            {QStringLiteral("reactions"), QVariantList{
+                QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("someone@lid")},
+                            {QStringLiteral("emoji"), QStringLiteral("🙏")}},
+                QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("another@lid")},
+                            {QStringLiteral("emoji"), QStringLiteral("👍")}},
+                QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("third@lid")},
+                            {QStringLiteral("emoji"), QStringLiteral("👍")}},
+            }},
         };
-        std::unique_ptr<QObject> delegate(component.createWithInitialProperties({
-            {QStringLiteral("width"), 800},
-            {QStringLiteral("modelData"), message},
+        std::unique_ptr<QObject> harness(component.createWithInitialProperties({
+            {QStringLiteral("testMessage"), message},
         }));
+        if (!harness)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *delegate = harness->findChild<QObject *>(QStringLiteral("messageInteractionDelegate"));
         if (!delegate)
             return EXIT_FAILURE;
         auto *body = delegate->findChild<QObject *>(QStringLiteral("messageBody"));
         if (!body)
             return EXIT_FAILURE;
+        auto *menuButton = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageMenuButton")));
+        auto *reactionButton = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionButton")));
+        auto *reactionBadge = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionBadge")));
+        auto *reactionSummary = delegate->findChild<QObject *>(QStringLiteral("messageReactionSummary"));
+        auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
+        auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
+        auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
         const auto rendered = body->property("text").toString();
         const bool selected = QMetaObject::invokeMethod(body, "selectAll")
             && !body->property("selectedText").toString().isEmpty();
+        const bool menuOpened = menuButton && QMetaObject::invokeMethod(menuButton, "click");
+        QCoreApplication::processEvents();
+        qInfo().noquote() << QStringLiteral("message interaction: selected=%1 link=%2 menuButton=%3 reactionButton=%4 badge=%5 summary=%6 badgeY=%7 bubbleH=%8 implicitH=%9 invoked=%10 menu=%11 reactions=%12")
+                                 .arg(selected).arg(rendered.contains(QStringLiteral("href=\"https://example.com/path?q=1\"")))
+                                 .arg(menuButton != nullptr).arg(reactionButton != nullptr)
+                                 .arg(reactionBadge && reactionBadge->isVisible())
+                                 .arg(reactionSummary ? reactionSummary->property("text").toString() : QStringLiteral("missing"))
+                                 .arg(reactionBadge ? reactionBadge->y() : -1).arg(bubble ? bubble->height() : -1)
+                                 .arg(delegate->property("implicitHeight").toReal()).arg(menuOpened)
+                                 .arg(menu ? QStringLiteral("opened:%1 visible:%2 parent:%3")
+                                                 .arg(menu->property("opened").toBool())
+                                                 .arg(menu->property("visible").toBool())
+                                                 .arg(menu->property("parent").value<QObject *>() != nullptr)
+                                           : QStringLiteral("missing"))
+                                 .arg(quickReactions ? QStringLiteral("opened:%1 visible:%2 parent:%3")
+                                                          .arg(quickReactions->property("opened").toBool())
+                                                          .arg(quickReactions->property("visible").toBool())
+                                                          .arg(quickReactions->property("parent").value<QObject *>() != nullptr)
+                                                    : QStringLiteral("missing"));
         return body->property("selectByMouse").toBool()
                 && selected
                 && rendered.contains(QStringLiteral("href=\"https://example.com/path?q=1\""))
+                && menuButton && menuButton->width() >= 32 && menuButton->height() >= 32
+                && reactionButton && reactionButton->width() >= 36 && reactionButton->height() >= 36
+                && reactionBadge && reactionBadge->isVisible() && bubble
+                && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏  👍 2")
+                && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
+                && menuOpened && menu && menu->property("visible").toBool()
+                && quickReactions && quickReactions->property("visible").toBool()
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
@@ -516,9 +577,17 @@ int main(int argc, char *argv[])
         }));
         if (!accountChip)
             return EXIT_FAILURE;
+        QQuickWindow accountWindow;
+        accountWindow.resize(640, 480);
+        if (auto *accountItem = qobject_cast<QQuickItem *>(accountChip.get()))
+            accountItem->setParentItem(accountWindow.contentItem());
+        accountWindow.show();
         QCoreApplication::processEvents();
         auto *accountUnreadBadge = qobject_cast<QQuickItem *>(accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherUnreadBadge")));
         auto *accountChipItem = qobject_cast<QQuickItem *>(accountChip.get());
+        auto *accountMenu = accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherMenu"));
+        const bool accountClicked = QMetaObject::invokeMethod(accountChip.get(), "click");
+        QCoreApplication::processEvents();
 
         QQmlComponent chatComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ChatListDelegate.qml")));
         const QVariantMap chat{
@@ -576,7 +645,13 @@ int main(int argc, char *argv[])
         auto *chatViewport = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListViewport"))) : nullptr;
         auto *chatListItem = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatList"))) : nullptr;
         auto *chatScrollBar = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListScrollBar"))) : nullptr;
+        auto *actualAccountButton = mainRoot ? mainRoot->findChild<QObject *>(QStringLiteral("accountSwitcherButton")) : nullptr;
+        auto *actualAccountMenu = actualAccountButton ? actualAccountButton->findChild<QObject *>(QStringLiteral("accountSwitcherMenu")) : nullptr;
+        const bool actualAccountClicked = actualAccountButton && QMetaObject::invokeMethod(actualAccountButton, "click");
+        QCoreApplication::processEvents();
         return accountUnreadBadge && accountUnreadBadge->isVisible() && accountChipItem
+                && accountClicked && accountMenu && accountMenu->property("opened").toBool()
+                && actualAccountClicked && actualAccountMenu && actualAccountMenu->property("visible").toBool()
                 && accountUnreadBadge->width() >= 19.0 && accountChip->property("width").toReal() == 44.0
                 && accountChip->property("totalUnread").toInt() == 12
                 && qAbs(timestampRight - badgeRight) <= 2.0

@@ -49,6 +49,8 @@ var apiMethods = []MethodDescription{
 	method("message.send", "Send a text message", true, map[string]any{"chat_jid": "123@lid", "text": "Hello", "reply_to": "", "reply_chat_jid": "", "link_preview": map[string]any{}}),
 	method("message.send_media", "Send a file, image, video, audio, or voice note", true, map[string]any{"chat_jid": "123@lid", "path": "/absolute/file", "caption": "", "reply_to": "", "voice": false}),
 	method("message.react", "Add or remove a reaction", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": "", "emoji": "👍"}),
+	method("message.pin", "Pin a message for 24 hours, 7 days, or 30 days", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": "", "duration_seconds": 604800}),
+	method("message.unpin", "Remove the pinned message from a chat", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": ""}),
 	method("message.edit", "Edit a sent text message", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "text": "Corrected"}),
 	method("message.delete", "Delete a message for everyone", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": ""}),
 	method("contact.resolve", "Resolve a phone number to a WhatsApp chat", true, map[string]any{"phone": "15551234567"}),
@@ -59,7 +61,7 @@ var apiEvents = []string{
 	"call.upsert", "calls.synced", "chat.presence", "chat.updated",
 	"connection.changed", "contact.presence", "daemon.error", "directory.synced",
 	"history.collected", "history.synced", "media.collected", "message.edited",
-	"message.reaction", "message.receipt", "message.revoked", "message.upsert",
+	"message.pinned", "message.reaction", "message.receipt", "message.revoked", "message.upsert",
 	"notification.received", "pairing.error", "pairing.qr", "pairing.state",
 	"pairing.success",
 }

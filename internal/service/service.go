@@ -82,6 +82,12 @@ type reactionParams struct {
 	SenderJID string `json:"sender_jid"`
 	Emoji     string `json:"emoji"`
 }
+type messagePinParams struct {
+	ChatJID         string `json:"chat_jid"`
+	MessageID       string `json:"message_id"`
+	SenderJID       string `json:"sender_jid"`
+	DurationSeconds int64  `json:"duration_seconds"`
+}
 type editParams struct {
 	ChatJID   string `json:"chat_jid"`
 	MessageID string `json:"message_id"`
@@ -315,6 +321,28 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, errors.New("chat_jid and message_id are required")
 		}
 		return okResult(), s.gateway.SendReaction(ctx, p.ChatJID, p.MessageID, p.SenderJID, p.Emoji)
+	case "message.pin":
+		var p messagePinParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		duration := time.Duration(p.DurationSeconds) * time.Second
+		if duration != 24*time.Hour && duration != 7*24*time.Hour && duration != 30*24*time.Hour {
+			return nil, errors.New("duration_seconds must be 86400, 604800, or 2592000")
+		}
+		return okResult(), s.gateway.PinMessage(ctx, p.ChatJID, p.MessageID, p.SenderJID, duration)
+	case "message.unpin":
+		var p messagePinParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		return okResult(), s.gateway.UnpinMessage(ctx, p.ChatJID, p.MessageID, p.SenderJID)
 	case "message.edit":
 		var p editParams
 		if err := decode(raw, &p); err != nil {

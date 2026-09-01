@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS reactions (
   PRIMARY KEY (chat_jid, message_id, sender_jid),
   FOREIGN KEY (chat_jid, message_id) REFERENCES messages(chat_jid, id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS message_pins (
+  chat_jid TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS call_logs (
   id TEXT PRIMARY KEY,
   peer_jid TEXT NOT NULL DEFAULT '',
@@ -327,6 +332,15 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	 SELECT ?,message_id,sender_jid,emoji,timestamp FROM reactions WHERE chat_jid=?`, canonicalJID, aliasJID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO message_pins(chat_jid,message_id,expires_at)
+	 SELECT ?,message_id,expires_at FROM message_pins WHERE chat_jid=?
+	 ON CONFLICT(chat_jid) DO UPDATE SET message_id=excluded.message_id,expires_at=excluded.expires_at
+	 WHERE excluded.expires_at>message_pins.expires_at`, canonicalJID, aliasJID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM message_pins WHERE chat_jid=?`, aliasJID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chats WHERE jid=?`, aliasJID); err != nil {
 		return err
 	}
@@ -505,6 +519,12 @@ func (s *Store) ChatInfo(ctx context.Context, jid string) (model.ChatInfo, error
 		return model.ChatInfo{}, err
 	}
 	info := model.ChatInfo{Chat: chat}
+	if pinned, expiresAt, pinErr := s.PinnedMessage(ctx, jid); pinErr != nil {
+		return model.ChatInfo{}, pinErr
+	} else if pinned.ID != "" {
+		info.PinnedMessage = &pinned
+		info.PinnedUntil = expiresAt
+	}
 	if strings.HasSuffix(jid, "@s.whatsapp.net") {
 		info.Phone = strings.TrimSuffix(jid, "@s.whatsapp.net")
 	} else if !chat.IsGroup {
@@ -532,6 +552,49 @@ func (s *Store) ChatInfo(ctx context.Context, jid string) (model.ChatInfo, error
 	}
 	info.Preview = preview.Messages
 	return info, nil
+}
+
+// SetMessagePinned records the one message WhatsApp currently pins above a
+// conversation. The action itself is sent through whatsmeow; this local row is
+// the durable projection used by the desktop after a restart.
+func (s *Store) SetMessagePinned(ctx context.Context, chatJID, messageID string, expiresAt int64) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	if strings.TrimSpace(chatJID) == "" || strings.TrimSpace(messageID) == "" {
+		return errors.New("chat_jid and message_id are required")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO message_pins(chat_jid,message_id,expires_at) VALUES(?,?,?)
+	 ON CONFLICT(chat_jid) DO UPDATE SET message_id=excluded.message_id,expires_at=excluded.expires_at`,
+		chatJID, messageID, expiresAt)
+	return err
+}
+
+func (s *Store) ClearMessagePin(ctx context.Context, chatJID string) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM message_pins WHERE chat_jid=?`, chatJID)
+	return err
+}
+
+func (s *Store) PinnedMessage(ctx context.Context, chatJID string) (model.Message, int64, error) {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	var messageID string
+	var expiresAt int64
+	err := s.db.QueryRowContext(ctx, `SELECT message_id,expires_at FROM message_pins WHERE chat_jid=?`, chatJID).
+		Scan(&messageID, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Message{}, 0, nil
+	}
+	if err != nil {
+		return model.Message{}, 0, err
+	}
+	if expiresAt > 0 && expiresAt <= time.Now().UnixMilli() {
+		_ = s.ClearMessagePin(ctx, chatJID)
+		return model.Message{}, 0, nil
+	}
+	message, err := s.GetMessage(ctx, chatJID, messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Message{}, expiresAt, nil
+	}
+	return message, expiresAt, err
 }
 
 // ListSharedMessages pages the media, documents, or links belonging to one

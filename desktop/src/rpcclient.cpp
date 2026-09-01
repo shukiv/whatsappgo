@@ -349,6 +349,9 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
     } else if (name == QStringLiteral("message.revoked") || name == QStringLiteral("message.reaction") || name == QStringLiteral("message.edited")) {
         if (data.toObject().value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
             openChat(m_selectedChat.value(QStringLiteral("jid")).toString(), m_selectedChat.value(QStringLiteral("title")).toString());
+    } else if (name == QStringLiteral("message.pinned")) {
+        if (data.toObject().value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
+            refreshChatInfo();
     } else if (name == QStringLiteral("chat.updated") || name == QStringLiteral("directory.synced")) {
         refreshChats();
         refreshArchived();
@@ -476,6 +479,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     m_hasMore = false;
     m_nextBefore = 0;
     emit selectedChatChanged();
+	refreshChatInfo();
 	if (!m_refreshedHistoryChats.contains(jid)) {
 		m_refreshedHistoryChats.insert(jid);
 		sendRequest(QStringLiteral("history.refresh"),
@@ -837,6 +841,43 @@ void RpcClient::reactMessage(const QString &messageId, const QString &senderJid,
                 {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
                  {QStringLiteral("message_id"), messageId}, {QStringLiteral("sender_jid"), senderJid},
                  {QStringLiteral("emoji"), reaction}});
+}
+
+void RpcClient::pinMessage(const QString &messageId, const QString &senderJid, int durationSeconds)
+{
+    if (m_selectedChat.isEmpty())
+        return;
+    sendRequest(QStringLiteral("message.pin"),
+                {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
+                 {QStringLiteral("message_id"), messageId}, {QStringLiteral("sender_jid"), senderJid},
+                 {QStringLiteral("duration_seconds"), durationSeconds}},
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    if (error.isEmpty())
+                        refreshChatInfo();
+                });
+}
+
+void RpcClient::unpinMessage(const QString &messageId, const QString &senderJid)
+{
+    if (m_selectedChat.isEmpty())
+        return;
+    sendRequest(QStringLiteral("message.unpin"),
+                {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
+                 {QStringLiteral("message_id"), messageId}, {QStringLiteral("sender_jid"), senderJid}},
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    if (error.isEmpty())
+                        refreshChatInfo();
+                });
+}
+
+int RpcClient::messageIndex(const QString &messageId) const
+{
+    const auto messages = m_messages.items();
+    for (int index = 0; index < messages.size(); ++index) {
+        if (messages.at(index).toMap().value(QStringLiteral("id")).toString() == messageId)
+            return index;
+    }
+    return -1;
 }
 
 void RpcClient::startChat(const QString &phone)
