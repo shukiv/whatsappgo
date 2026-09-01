@@ -93,6 +93,7 @@ public:
     Q_INVOKABLE void refreshSharedContent(const QString &category, bool append = false);
     Q_INVOKABLE void clearChatInfo();
     Q_INVOKABLE void loadOlderMessages();
+    Q_INVOKABLE bool canLoadOlderMessages() const;
     Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
     Q_INVOKABLE void sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text);
     Q_INVOKABLE void requestLinkPreview(const QString &text);

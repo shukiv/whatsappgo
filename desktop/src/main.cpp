@@ -505,10 +505,12 @@ int main(int argc, char *argv[])
                 property var imageMessage
                 property string previewedMessageId: ""
                 property string previewedMediaPath: ""
+                property string quotedMessageId: ""
                 MessageDelegate {
                     objectName: "messageInteractionDelegate"
                     width: 800
                     modelData: harness.testMessage
+                    onQuotedMessageRequested: messageId => harness.quotedMessageId = messageId
                 }
                 MessageDelegate {
                     objectName: "imageInteractionDelegate"
@@ -528,6 +530,9 @@ int main(int argc, char *argv[])
             {QStringLiteral("from_me"), false},
             {QStringLiteral("timestamp"), 0},
             {QStringLiteral("status"), QStringLiteral("received")},
+            {QStringLiteral("reply_to"), QStringLiteral("quoted-message-test")},
+            {QStringLiteral("reply_sender"), QStringLiteral("Alice")},
+            {QStringLiteral("reply_preview"), QStringLiteral("Original message")},
             {QStringLiteral("reactions"), QVariantList{
                 QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("someone@lid")},
                             {QStringLiteral("emoji"), QStringLiteral("🙏")}},
@@ -564,6 +569,8 @@ int main(int argc, char *argv[])
         auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
         auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
+        auto *quotedMessagePreview = qobject_cast<QQuickItem *>(
+            delegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview")));
         auto *imageDelegate = harness->findChild<QObject *>(QStringLiteral("imageInteractionDelegate"));
         const bool imagePreviewInvoked = imageDelegate
             && QMetaObject::invokeMethod(imageDelegate, "openVisualMedia");
@@ -572,6 +579,9 @@ int main(int argc, char *argv[])
         const bool selected = QMetaObject::invokeMethod(body, "selectAll")
             && !body->property("selectedText").toString().isEmpty();
         const bool menuOpened = menuButton && QMetaObject::invokeMethod(menuButton, "click");
+        QCoreApplication::processEvents();
+        const bool quoteClicked = quotedMessagePreview
+            && QMetaObject::invokeMethod(quotedMessagePreview, "click");
         QCoreApplication::processEvents();
         qInfo().noquote() << QStringLiteral("message interaction: selected=%1 link=%2 menuButton=%3 reactionButton=%4 badge=%5 summary=%6 badgeY=%7 bubbleH=%8 implicitH=%9 invoked=%10 menu=%11 reactions=%12")
                                  .arg(selected).arg(rendered.contains(QStringLiteral("href=\"https://example.com/path?q=1\"")))
@@ -600,6 +610,9 @@ int main(int argc, char *argv[])
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
                 && menuOpened && menu && menu->property("visible").toBool()
                 && quickReactions && quickReactions->property("visible").toBool()
+                && quotedMessagePreview && quotedMessagePreview->isVisible()
+                && quotedMessagePreview->height() >= 44 && quoteClicked
+                && harness->property("quotedMessageId").toString() == QStringLiteral("quoted-message-test")
                 && imagePreviewInvoked
                 && harness->property("previewedMessageId").toString() == QStringLiteral("image-test")
                 && harness->property("previewedMediaPath").toString() == QStringLiteral("/tmp/whatsappgo-image-test.jpg")
@@ -1231,10 +1244,15 @@ int main(int argc, char *argv[])
     if (mediaPreviewTest) {
         if (engine.rootObjects().isEmpty())
             return EXIT_FAILURE;
-        QImage source(80, 120, QImage::Format_ARGB32_Premultiplied);
+        // Match the dimensions of the image that exposed the software-layer
+        // crop without depending on a user's media cache.
+        QImage source(1204, 1091, QImage::Format_ARGB32_Premultiplied);
         source.fill(QColor(QStringLiteral("#25D366")));
         QGuiApplication::clipboard()->setImage(source);
         auto *root = engine.rootObjects().constFirst();
+        root->setProperty("width", 1760);
+        root->setProperty("height", 1008);
+        QCoreApplication::processEvents();
 
         // The paperclip opens the complete attachment chooser. Keep every
         // WhatsApp-style destination visible even when the linked-device API
@@ -1319,6 +1337,9 @@ int main(int argc, char *argv[])
             Q_ARG(QVariant, QStringLiteral("received-image-test")),
             Q_ARG(QVariant, receivedImagePath));
         QCoreApplication::processEvents();
+        QEventLoop imageDecodeLoop;
+        QTimer::singleShot(150, &imageDecodeLoop, &QEventLoop::quit);
+        imageDecodeLoop.exec();
         const bool upgradedToFullImage = nativeImage
             && nativeImage->property("source").toUrl().toLocalFile() == receivedImagePath;
         auto *zoomIn = nativeViewer
@@ -1329,6 +1350,22 @@ int main(int argc, char *argv[])
             ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomWheel")) : nullptr;
         auto *zoomSurface = nativeViewer
             ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomSurface")) : nullptr;
+        auto *stageItem = zoomSurface ? qobject_cast<QQuickItem *>(zoomSurface)->parentItem() : nullptr;
+        auto *viewerWindow = qobject_cast<QQuickWindow *>(root);
+        const auto renderedViewer = viewerWindow ? viewerWindow->grabWindow() : QImage();
+        const auto bottomProbe = stageItem
+            ? stageItem->mapToScene(QPointF(stageItem->width() / 2, stageItem->height() - 8)) : QPointF();
+        const auto bottomColor = renderedViewer.isNull()
+            ? QColor() : renderedViewer.pixelColor(bottomProbe.toPoint());
+        const auto paintedWidth = nativeImage ? nativeImage->property("paintedWidth").toReal() : 0.0;
+        const auto paintedHeight = nativeImage ? nativeImage->property("paintedHeight").toReal() : 0.0;
+        const bool fullImageFitsAtMinimumZoom = stageItem && nativeImage
+            && nativeImage->property("sourceSize").toSize() == source.size()
+            && paintedWidth > 0.0 && paintedHeight > 0.0
+            && paintedWidth <= stageItem->width() + 0.5
+            && paintedHeight <= stageItem->height() + 0.5
+            && bottomColor.isValid() && bottomColor.green() > bottomColor.red()
+            && bottomColor.green() > bottomColor.blue();
         const auto initialZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
         const bool zoomedIn = nativeViewer && QMetaObject::invokeMethod(
             nativeViewer, "adjustZoomFromWheel",
@@ -1345,7 +1382,11 @@ int main(int argc, char *argv[])
         const bool nativeZoomReady = zoomIn && zoomOut && zoomWheel && zoomSurface
             && zoomIn->width() >= 44 && zoomIn->height() >= 44
             && zoomOut->width() >= 44 && zoomOut->height() >= 44
-            && zoomSurface->property("renderCached").toBool()
+            // Qt's software scene graph can crop a transformed cached layer
+            // and clear the rest to black. The photo itself is cheap to
+            // transform and must stay live so every edge remains available.
+            && !zoomSurface->property("renderCached").toBool()
+            && fullImageFitsAtMinimumZoom
             && qFuzzyCompare(initialZoom, 1.0) && zoomedIn
             && enlargedZoom > 1.15 && enlargedZoom < 1.25
             && (!qFuzzyIsNull(anchoredPanX) || !qFuzzyIsNull(anchoredPanY))

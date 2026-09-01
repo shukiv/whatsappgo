@@ -9,11 +9,13 @@ Item {
     property string chatTitle: ""
     property url chatAvatarSource
     property string ownTitle: ""
+    property bool navigationHighlighted: false
     signal editRequested(string messageId, string body)
     signal deleteRequested(string messageId, string senderJid)
     signal replyRequested(string messageId, string body)
     signal pinRequested(string messageId, string senderJid, string body)
     signal imagePreviewRequested(var message)
+    signal quotedMessageRequested(string messageId)
 
     readonly property bool hasReply: Boolean(modelData.reply_to)
     readonly property bool hasMedia: Boolean(modelData.media_path)
@@ -285,8 +287,8 @@ Item {
         x: root.modelData.from_me ? Math.max(0, root.width - width - 40) : 40
         color: root.modelData.from_me ? Theme.outgoingBubble : Theme.incomingBubble
         radius: Theme.radiusLarge
-        border.color: Theme.bubbleBorder
-        border.width: root.modelData.from_me ? 0 : 1
+        border.color: root.navigationHighlighted ? Theme.primary : Theme.bubbleBorder
+        border.width: root.navigationHighlighted ? 2 : (root.modelData.from_me ? 0 : 1)
 
         HoverHandler { id: bubbleHover }
 
@@ -393,7 +395,7 @@ Item {
                 // What the quoted message would need if it were not elided.
                 readonly property real naturalWidth: Math.max(replySender.implicitWidth, replyLabel.implicitWidth) + 19
                 width: root.contentWidth
-                height: visible ? replyPreviewColumn.implicitHeight + 10 : 0
+                height: visible ? Math.max(44, replyPreviewColumn.implicitHeight + 10) : 0
                 color: Theme.replyBackground
                 radius: 5
                 Rectangle {
@@ -431,6 +433,21 @@ Item {
                         maximumLineCount: 2
                         wrapMode: Text.Wrap
                         textFormat: Text.RichText
+                    }
+                }
+
+                Button {
+                    objectName: "quotedMessagePreview"
+                    anchors.fill: parent
+                    flat: true
+                    focusPolicy: Qt.TabFocus
+                    Accessible.name: qsTr("Go to quoted message")
+                    background: Item {}
+                    contentItem: Item {}
+                    onClicked: root.quotedMessageRequested(String(root.modelData.reply_to || ""))
+
+                    HoverHandler {
+                        cursorShape: Qt.PointingHandCursor
                     }
                 }
             }

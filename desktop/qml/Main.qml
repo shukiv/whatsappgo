@@ -33,6 +33,9 @@ Kirigami.ApplicationWindow {
     property bool recordingVoice: Boolean(voiceRecorderLoader.item && voiceRecorderLoader.item.recording)
     property string replyTargetId: ""
     property string replyPreview: ""
+    property string pendingMessageJumpId: ""
+    property int pendingMessageJumpAttempts: 0
+    property string highlightedMessageId: ""
     property string chatFilter: "all"
     property bool newChatOpen: false
     property bool showArchived: false
@@ -214,6 +217,63 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    function finishMessageJump(messageId, index) {
+        pendingMessageJumpId = ""
+        pendingMessageJumpAttempts = 0
+        messageJumpRetry.stop()
+        messageList.followTail = false
+        highlightedMessageId = messageId
+        Qt.callLater(function() {
+            messageList.positionViewAtIndex(index, ListView.Center)
+        })
+        messageJumpHighlight.restart()
+    }
+
+    function resolvePendingMessageJump() {
+        const messageId = pendingMessageJumpId
+        if (!messageId)
+            return
+        const index = backend.messageIndex(messageId)
+        if (index >= 0) {
+            finishMessageJump(messageId, index)
+            return
+        }
+
+        // A quoted message may sit outside the current 50-message page. Load
+        // history page by page until it becomes part of the model, while
+        // keeping the reader's viewport away from the conversation tail.
+        if (pendingMessageJumpAttempts > 0 && !backend.canLoadOlderMessages()) {
+            pendingMessageJumpId = ""
+            pendingMessageJumpAttempts = 0
+            messageJumpRetry.stop()
+            transientNotice = qsTr("The quoted message is not available in this chat.")
+            noticeTimer.restart()
+            return
+        }
+        if (pendingMessageJumpAttempts >= 80) {
+            pendingMessageJumpId = ""
+            pendingMessageJumpAttempts = 0
+            messageJumpRetry.stop()
+            transientNotice = qsTr("The quoted message could not be loaded.")
+            noticeTimer.restart()
+            return
+        }
+        messageList.followTail = false
+        pendingMessageJumpAttempts += 1
+        backend.loadOlderMessages()
+        if (!messageJumpRetry.running)
+            messageJumpRetry.start()
+    }
+
+    function jumpToMessage(messageId) {
+        const target = String(messageId || "")
+        if (!target)
+            return
+        pendingMessageJumpId = target
+        pendingMessageJumpAttempts = 0
+        resolvePendingMessageJump()
+    }
+
     Loader {
         id: voiceRecorderLoader
         active: false
@@ -249,6 +309,17 @@ Kirigami.ApplicationWindow {
     }
     Timer { id: errorTimer; interval: 5000; onTriggered: window.transientError = "" }
     Timer { id: noticeTimer; interval: 3000; onTriggered: window.transientNotice = "" }
+    Timer {
+        id: messageJumpRetry
+        interval: 250
+        repeat: true
+        onTriggered: window.resolvePendingMessageJump()
+    }
+    Timer {
+        id: messageJumpHighlight
+        interval: 1600
+        onTriggered: window.highlightedMessageId = ""
+    }
 
     PairingPage {
         anchors.fill: parent
@@ -1035,9 +1106,7 @@ Kirigami.ApplicationWindow {
                             iconSource: Qt.resolvedUrl("icons/chevron-right.svg")
                             onClicked: {
                                 pinnedMessageMenu.close()
-                                const index = backend.messageIndex(pinnedMessageBar.pinned.id)
-                                if (index >= 0)
-                                    messageList.positionViewAtIndex(index, ListView.Center)
+                                window.jumpToMessage(pinnedMessageBar.pinned.id)
                             }
                         }
                     }
@@ -1060,6 +1129,7 @@ Kirigami.ApplicationWindow {
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: OverlayScrollBar {}
                         delegate: MessageDelegate {
+                            navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
                             chatTitle: backend.selectedChat.title || ""
                             chatAvatarSource: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
                             ownTitle: backend.status.user_name || ""
@@ -1078,6 +1148,7 @@ Kirigami.ApplicationWindow {
                                 window.replyPreview = body
                                 composer.forceActiveFocus()
                             }
+                            onQuotedMessageRequested: messageId => window.jumpToMessage(messageId)
                             onPinRequested: (messageId, senderJid, body) => {
                                 pinDialog.messageId = messageId
                                 pinDialog.senderJid = senderJid
@@ -1104,6 +1175,8 @@ Kirigami.ApplicationWindow {
                                 Qt.callLater(() => messageList.positionViewAtEnd())
                         }
                         onCountChanged: {
+                            if (window.pendingMessageJumpId)
+                                Qt.callLater(() => window.resolvePendingMessageJump())
                             if (count > 0 && initialPositionPending) {
                                 initialPositionPending = false
                                 followTail = true
@@ -1128,6 +1201,11 @@ Kirigami.ApplicationWindow {
                     Connections {
                         target: backend
                         function onSelectedChatChanged() {
+                            window.pendingMessageJumpId = ""
+                            window.pendingMessageJumpAttempts = 0
+                            window.highlightedMessageId = ""
+                            messageJumpRetry.stop()
+                            messageJumpHighlight.stop()
                             if (backend.selectedChat.jid)
                                 messageList.initialPositionPending = true
                             if (window.infoDrawerOpen && backend.selectedChat.jid !== window.infoDrawerChatJid) {

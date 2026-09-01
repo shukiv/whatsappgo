@@ -637,6 +637,11 @@ void RpcClient::loadOlderMessages()
                 });
 }
 
+bool RpcClient::canLoadOlderMessages() const
+{
+    return m_hasMore || m_loadingOlder || m_waitingRemoteHistory;
+}
+
 void RpcClient::requestRemoteHistory()
 {
 	if (m_waitingRemoteHistory || m_messages.isEmpty() || m_selectedChat.isEmpty())

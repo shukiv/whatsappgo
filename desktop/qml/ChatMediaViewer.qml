@@ -279,9 +279,11 @@ FocusScope {
             anchors.bottomMargin: -root.panY
             scale: root.zoomFactor
             transformOrigin: Item.Center
-            layer.enabled: true
-            layer.smooth: true
-            readonly property bool renderCached: layer.enabled
+            // Do not cache this transformed subtree. With Qt's software scene
+            // graph a layer can retain only the previously exposed rectangle,
+            // leaving a cropped photo surrounded by black after the viewer is
+            // opened or resized. Image already renders its texture efficiently.
+            readonly property bool renderCached: false
 
             Image {
                 id: fullImage
