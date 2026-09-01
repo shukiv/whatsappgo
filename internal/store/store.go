@@ -671,23 +671,28 @@ func (s *Store) ListStatusGroups(ctx context.Context, since int64, limit int) ([
 			message.SenderJID == "" || message.Kind == "system" || message.Kind == "unknown" {
 			continue
 		}
-		index, exists := indexes[message.SenderJID]
+		// Status messages can name a contact by either their privacy-preserving
+		// LID or their legacy phone-number JID. Chat rows are already canonical,
+		// so grouping on the raw sender would both duplicate stories and prevent
+		// the sidebar from finding the matching contact.
+		senderJID := s.canonicalChatJID(ctx, message.SenderJID)
+		index, exists := indexes[senderJID]
 		if !exists {
 			name := strings.TrimSpace(message.SenderName)
 			avatar := ""
-			if chat, chatErr := s.GetChat(ctx, message.SenderJID); chatErr == nil {
+			if chat, chatErr := s.GetChat(ctx, senderJID); chatErr == nil {
 				if strings.TrimSpace(chat.Title) != "" {
 					name = strings.TrimSpace(chat.Title)
 				}
 				avatar = chat.AvatarPath
 			}
 			if name == "" {
-				name = displayJID(message.SenderJID)
+				name = displayJID(senderJID)
 			}
 			index = len(groups)
-			indexes[message.SenderJID] = index
+			indexes[senderJID] = index
 			groups = append(groups, model.StatusGroup{
-				SenderJID: message.SenderJID, SenderName: name,
+				SenderJID: senderJID, SenderName: name,
 				AvatarPath: avatar, LatestAt: message.Timestamp,
 			})
 		}

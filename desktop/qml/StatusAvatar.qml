@@ -10,6 +10,7 @@ Item {
 
     implicitWidth: diameter
     implicitHeight: diameter
+    onItemCountChanged: ring.requestPaint()
 
     Canvas {
         id: ring

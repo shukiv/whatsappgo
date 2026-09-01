@@ -407,10 +407,27 @@ int main(int argc, char *argv[])
             {QStringLiteral("width"), 1200}, {QStringLiteral("height"), 800},
             {QStringLiteral("groups"), statusGroups}, {QStringLiteral("opened"), true},
         }));
-        if (!page || !viewer)
+        QQmlComponent chatStatusComponent(&engine,
+            QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ChatListDelegate.qml")));
+        std::unique_ptr<QObject> chatStatus(chatStatusComponent.createWithInitialProperties({
+            {QStringLiteral("width"), 436}, {QStringLiteral("height"), 72},
+            {QStringLiteral("modelData"), QVariantMap{
+                {QStringLiteral("jid"), QStringLiteral("bob@lid")},
+                {QStringLiteral("title"), QStringLiteral("Bob")},
+                {QStringLiteral("unread_count"), 0},
+            }},
+            {QStringLiteral("current"), false},
+            {QStringLiteral("statusGroupIndex"), 1},
+            {QStringLiteral("statusItemCount"), 2},
+        }));
+        if (!page || !viewer || !chatStatus)
             return EXIT_FAILURE;
         QCoreApplication::processEvents();
         auto *list = page->findChild<QObject *>(QStringLiteral("statusGroupList"));
+        auto *statusAvatar = qobject_cast<QQuickItem *>(chatStatus->findChild<QObject *>(QStringLiteral("chatStatusAvatar")));
+        auto *statusButton = qobject_cast<QQuickItem *>(chatStatus->findChild<QObject *>(QStringLiteral("chatStatusButton")));
+        const bool openedStatusFromChat = statusButton && QMetaObject::invokeMethod(statusButton, "click");
+        QCoreApplication::processEvents();
         const bool firstAdvance = QMetaObject::invokeMethod(viewer.get(), "advance");
         QCoreApplication::processEvents();
         const bool stayedWithAlice = viewer->property("groupIndex").toInt() == 0
@@ -430,6 +447,9 @@ int main(int argc, char *argv[])
                 && firstAdvance && stayedWithAlice && secondAdvance && movedToBob
                 && replyComposer && replyComposer->property("visible").toBool()
                 && submittedReply && replyTargetsCurrentStatus
+                && statusAvatar && statusAvatar->isVisible()
+                && statusButton->width() >= 44 && statusButton->height() >= 44
+                && openedStatusFromChat && chatStatus->property("statusGroupIndex").toInt() == 1
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (resizeRenderingTest) {

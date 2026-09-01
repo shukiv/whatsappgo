@@ -26,10 +26,13 @@ func TestStatusesListGroupsActiveUpdatesBySender(t *testing.T) {
 	if err := st.UpsertChat(ctx, model.Chat{JID: "alice@lid", Title: "Alice Address Book", AvatarPath: "/tmp/alice.jpg"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.LinkChatAliases(ctx, "alice@lid", "15551234567@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
 	updates := []model.Message{
 		{ID: "alice-2", ChatJID: "status@broadcast", SenderJID: "alice@lid", SenderName: "A", Timestamp: now - 1_000, Kind: "image", MediaPath: "/tmp/two.jpg", Status: "received"},
 		{ID: "bob-1", ChatJID: "status@broadcast", SenderJID: "bob@lid", SenderName: "Bob Push Name", Timestamp: now - 2_000, Kind: "text", Body: "hello", Status: "received"},
-		{ID: "alice-1", ChatJID: "status@broadcast", SenderJID: "alice@lid", SenderName: "A", Timestamp: now - 3_000, Kind: "text", Body: "first", Status: "received"},
+		{ID: "alice-1", ChatJID: "status@broadcast", SenderJID: "15551234567@s.whatsapp.net", SenderName: "A", Timestamp: now - 3_000, Kind: "text", Body: "first", Status: "received"},
 		{ID: "deleted", ChatJID: "status@broadcast", SenderJID: "bob@lid", SenderName: "Bob Push Name", Timestamp: now - 4_000, Kind: "image", Revoked: true, Status: "received"},
 		{ID: "expired", ChatJID: "status@broadcast", SenderJID: "old@lid", SenderName: "Expired", Timestamp: now - int64(25*time.Hour/time.Millisecond), Kind: "text", Body: "old", Status: "received"},
 	}

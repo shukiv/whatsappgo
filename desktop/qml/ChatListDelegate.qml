@@ -8,7 +8,10 @@ ItemDelegate {
     id: root
     required property var modelData
     required property bool current
+    property int statusGroupIndex: -1
+    property int statusItemCount: 0
     signal chosen(string jid, string title)
+    signal statusRequested(string jid)
 
     readonly property string displayTitle: {
         const jid = String(root.modelData.jid || "")
@@ -32,7 +35,9 @@ ItemDelegate {
     rightPadding: 12
     hoverEnabled: true
     clip: true
-    Accessible.name: displayTitle + (modelData.unread_count > 0 ? qsTr(", %1 unread messages").arg(modelData.unread_count) : "")
+    Accessible.name: displayTitle
+        + (modelData.unread_count > 0 ? qsTr(", %1 unread messages").arg(modelData.unread_count) : "")
+        + (statusGroupIndex >= 0 ? qsTr(", has a status update") : "")
     onClicked: chosen(modelData.jid, displayTitle)
 
     background: Rectangle {
@@ -53,14 +58,47 @@ ItemDelegate {
     contentItem: RowLayout {
         spacing: 13
 
-        Avatar {
-            Layout.preferredWidth: 49
-            Layout.preferredHeight: 49
+        Button {
+            id: statusButton
+            objectName: "chatStatusButton"
+            Layout.preferredWidth: 56
+            Layout.preferredHeight: 56
             Layout.alignment: Qt.AlignVCenter
-            diameter: 49
-            title: root.displayTitle
-            fallbackIdentity: root.fallbackIdentity
-            source: root.modelData.avatar_path ? "file://" + root.modelData.avatar_path : ""
+            padding: 0
+            flat: true
+            Accessible.name: root.statusGroupIndex >= 0
+                ? qsTr("View %1's status").arg(root.displayTitle)
+                : qsTr("Open chat with %1").arg(root.displayTitle)
+            onClicked: {
+                if (root.statusGroupIndex >= 0)
+                    root.statusRequested(root.modelData.jid)
+                else
+                    root.chosen(root.modelData.jid, root.displayTitle)
+            }
+            background: Rectangle {
+                radius: width / 2
+                color: statusButton.hovered ? Theme.hoverRow : "transparent"
+            }
+            contentItem: Item {
+                StatusAvatar {
+                    objectName: "chatStatusAvatar"
+                    anchors.centerIn: parent
+                    visible: root.statusGroupIndex >= 0
+                    diameter: 56
+                    itemCount: Math.max(1, root.statusItemCount)
+                    title: root.displayTitle
+                    source: root.modelData.avatar_path ? "file://" + root.modelData.avatar_path : ""
+                }
+                Avatar {
+                    anchors.centerIn: parent
+                    visible: root.statusGroupIndex < 0
+                    diameter: 49
+                    title: root.displayTitle
+                    fallbackIdentity: root.fallbackIdentity
+                    source: root.modelData.avatar_path ? "file://" + root.modelData.avatar_path : ""
+                }
+            }
+            HoverHandler { cursorShape: Qt.PointingHandCursor }
         }
 
         // Name and preview belong together as one block, so they sit on

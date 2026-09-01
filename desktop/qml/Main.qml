@@ -38,6 +38,7 @@ Kirigami.ApplicationWindow {
     property bool showArchived: false
     property bool infoDrawerOpen: false
     property string infoDrawerChatJid: ""
+    property bool statusViewerRequested: false
     property string activeSection: {
         const allowed = ["chats", "status", "calls", "channels", "communities", "profile"]
         const args = Qt.application.arguments
@@ -70,8 +71,11 @@ Kirigami.ApplicationWindow {
     }
     Component.onCompleted: {
         Theme.preferredMode = appearanceSettings.themeMode
-        if (backend.daemonConnected && activeSection !== "chats")
-            Qt.callLater(() => showSection(activeSection))
+        if (backend.daemonConnected) {
+            backend.refreshStatuses()
+            if (activeSection !== "chats")
+                Qt.callLater(() => showSection(activeSection))
+        }
     }
     Connections {
         target: Theme
@@ -100,6 +104,26 @@ Kirigami.ApplicationWindow {
         else if (section === "calls") backend.refreshCalls()
         else if (section === "channels") backend.refreshChannels()
         else if (section === "communities") backend.refreshCommunities()
+    }
+
+    function statusGroupIndexForJid(jid) {
+        const target = String(jid || "")
+        const groups = backend.statusUpdates
+        for (let index = 0; index < groups.length; ++index) {
+            if (String(groups[index].sender_jid || "") === target)
+                return index
+        }
+        return -1
+    }
+
+    function openStatusAt(index) {
+        if (index < 0)
+            return
+        statusViewerRequested = true
+        Qt.callLater(function() {
+            if (statusViewerLoader.item)
+                statusViewerLoader.item.openAt(index)
+        })
     }
 
     function openChatSearch() {
@@ -160,7 +184,10 @@ Kirigami.ApplicationWindow {
             noticeTimer.restart()
         }
         function onDaemonConnectedChanged() {
-            if (backend.daemonConnected && window.activeSection !== "chats")
+            if (!backend.daemonConnected)
+                return
+            backend.refreshStatuses()
+            if (window.activeSection !== "chats")
                 window.showSection(window.activeSection)
         }
         function onMediaReady(messageId, path) {
@@ -655,7 +682,11 @@ Kirigami.ApplicationWindow {
                         boundsBehavior: Flickable.StopAtBounds
                         delegate: ChatListDelegate {
                             current: backend.selectedChat.jid === modelData.jid
+                            statusGroupIndex: window.statusGroupIndexForJid(modelData.jid)
+                            statusItemCount: statusGroupIndex >= 0
+                                ? (backend.statusUpdates[statusGroupIndex].items || []).length : 0
                             onChosen: (jid, title) => backend.openChat(jid, title)
+                            onStatusRequested: jid => window.openStatusAt(window.statusGroupIndexForJid(jid))
                         }
 
                         Column {
@@ -1226,8 +1257,7 @@ Kirigami.ApplicationWindow {
             groups: backend.statusUpdates
             ownName: backend.status.user_name || backend.profile
             onGroupRequested: index => {
-                if (statusViewerLoader.item)
-                    statusViewerLoader.item.openAt(index)
+                window.openStatusAt(index)
             }
             onAvatarRequested: jid => backend.fetchStatusAvatar(jid)
         }
@@ -1237,9 +1267,10 @@ Kirigami.ApplicationWindow {
         id: statusViewerLoader
         anchors.fill: parent
         z: 100
-        active: window.activeSection === "status"
+        active: window.activeSection === "status" || window.statusViewerRequested
         sourceComponent: StatusViewer {
             groups: backend.statusUpdates
+            onCloseRequested: window.statusViewerRequested = false
             onMediaRequested: messageId => backend.ensureStatusMedia(messageId)
             onReplyRequested: (recipientJid, statusMessageId, text) =>
                 backend.sendStatusReply(recipientJid, statusMessageId, text)
