@@ -910,12 +910,7 @@ void RpcClient::unpinMessage(const QString &messageId, const QString &senderJid)
 
 int RpcClient::messageIndex(const QString &messageId) const
 {
-    const auto messages = m_messages.items();
-    for (int index = 0; index < messages.size(); ++index) {
-        if (messages.at(index).toMap().value(QStringLiteral("id")).toString() == messageId)
-            return index;
-    }
-    return -1;
+    return m_messages.viewRowForId(messageId);
 }
 
 void RpcClient::startChat(const QString &phone)

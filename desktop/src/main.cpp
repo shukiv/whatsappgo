@@ -28,8 +28,17 @@
 #include <QQuickItem>
 #include <QProcess>
 #include <QSystemTrayIcon>
+#include <QTemporaryDir>
 
 #include <cstdlib>
+
+// QtTest's wheel helper enters through this QtGui window-system seam. Calling
+// it here keeps the production target free of a QtTest dependency while the
+// embedded headless regression still receives a genuine spontaneous event.
+Q_GUI_EXPORT void qt_handleWheelEvent(QWindow *window, const QPointF &local,
+                                      const QPointF &global, QPoint pixelDelta,
+                                      QPoint angleDelta, Qt::KeyboardModifiers modifiers,
+                                      Qt::ScrollPhase phase);
 
 namespace {
 
@@ -1298,6 +1307,15 @@ int main(int argc, char *argv[])
         if (messageList == nullptr || messages == nullptr)
             return EXIT_FAILURE;
 
+        // This embedded test supplies its own model without opening a real
+        // account chat. Reveal the conversation column so window-system wheel
+        // events can actually hit the ListView rather than the empty-chat pane.
+        auto *messageViewport = messageList->parentItem();
+        auto *conversationColumn = messageViewport ? messageViewport->parentItem() : nullptr;
+        if (conversationColumn != nullptr)
+            conversationColumn->setVisible(true);
+        QCoreApplication::processEvents();
+
         bool passed = true;
         const auto require = [&passed](bool condition, const QString &description) {
             if (!condition) {
@@ -1310,8 +1328,14 @@ int main(int argc, char *argv[])
             QTimer::singleShot(80, &loop, &QEventLoop::quit);
             loop.exec();
         };
-        const auto makeMessage = [](int index) {
-            return QVariantMap{
+        QTemporaryDir scrollMediaDirectory;
+        const auto scrollPreviewPath = scrollMediaDirectory.filePath(QStringLiteral("scroll-preview.jpg"));
+        QImage scrollPreview(640, 360, QImage::Format_RGB32);
+        scrollPreview.fill(QColor(QStringLiteral("#25D366")));
+        require(scrollPreview.save(scrollPreviewPath),
+                QStringLiteral("the mixed-height scroll fixture could not be written"));
+        const auto makeMessage = [&scrollPreviewPath](int index) {
+            QVariantMap result{
                 {QStringLiteral("id"), QStringLiteral("scroll-%1").arg(index)},
                 {QStringLiteral("kind"), QStringLiteral("text")},
                 {QStringLiteral("body"), QStringLiteral("Message %1 with enough text to exercise row layout").arg(index)},
@@ -1319,12 +1343,26 @@ int main(int argc, char *argv[])
                 {QStringLiteral("timestamp"), index * 1000},
                 {QStringLiteral("status"), QStringLiteral("read")},
             };
+            if (index > 0 && index % 9 == 0) {
+                result.insert(QStringLiteral("kind"), QStringLiteral("image"));
+                result.insert(QStringLiteral("media_path"), scrollPreviewPath);
+                result.insert(QStringLiteral("media_thumbnail"), scrollPreviewPath);
+            } else if (index > 0 && index % 7 == 0) {
+                result.insert(QStringLiteral("body"),
+                              QStringLiteral("A deliberately taller message %1\nwith several lines\n"
+                                             "so the wheel test crosses mixed delegate heights\n"
+                                             "without changing its logical direction.").arg(index));
+            }
+            return result;
         };
 
         messageList->setProperty("initialPositionPending", true);
         messages->reset(QVariantList{makeMessage(0)});
         settle();
-        require(messageList->property("atYEnd").toBool(),
+        require(messageList->property("contentY").toReal()
+                    >= messageList->property("originY").toReal()
+                        + messageList->property("contentHeight").toReal()
+                        - messageList->height() - 48.0,
                 QStringLiteral("a short conversation did not open at its tail"));
         require(messageList->property("topMargin").toReal() > messageList->height() / 2.0,
                 QStringLiteral("a short conversation starts at the top instead of growing upward from the composer"));
@@ -1335,13 +1373,54 @@ int main(int argc, char *argv[])
         messageList->setProperty("initialPositionPending", true);
         messages->reset(history);
         settle();
-        require(messageList->property("atYEnd").toBool(),
+        require(messageList->property("contentY").toReal()
+                    >= messageList->property("originY").toReal()
+                        + messageList->property("contentHeight").toReal()
+                        - messageList->height() - 48.0,
                 QStringLiteral("a full conversation did not open at its newest message"));
+
+        // Exercise the same event path as a physical mouse wheel, delivered
+        // directly to WhatsAppGo's QQuickWindow so desktop focus or another
+        // application cannot affect the result.
+        const qreal wheelTailY = messageList->property("contentY").toReal();
+        const QPointF wheelPosition = messageList->mapToScene(
+            QPointF(messageList->width() / 2.0, messageList->height() / 2.0));
+        const QPointF globalWheelPosition = applicationWindow != nullptr
+            ? QPointF(applicationWindow->mapToGlobal(wheelPosition.toPoint()))
+            : wheelPosition;
+        qreal previousWheelY = wheelTailY;
+        bool wheelWasMonotonic = true;
+        for (int tick = 0; tick < 16; ++tick) {
+            if (applicationWindow != nullptr)
+                qt_handleWheelEvent(applicationWindow, wheelPosition, globalWheelPosition,
+                                    QPoint(), QPoint(0, 120), Qt::NoModifier,
+                                    Qt::NoScrollPhase);
+            QEventLoop wheelTickLoop;
+            QTimer::singleShot(40, &wheelTickLoop, &QEventLoop::quit);
+            wheelTickLoop.exec();
+            const qreal currentWheelY = messageList->property("contentY").toReal();
+            if (currentWheelY - 1.0 > previousWheelY)
+                wheelWasMonotonic = false;
+            previousWheelY = currentWheelY;
+        }
+        settle();
+        require(wheelWasMonotonic,
+                QStringLiteral("mixed-height rows made physical mouse-wheel scrolling jump backwards"));
+        require(messageList->property("contentY").toReal() < wheelTailY - 400.0,
+                QStringLiteral("physical mouse-wheel events stalled before reaching older messages"));
+
+        QMetaObject::invokeMethod(messageList, "cancelFlick");
+        messageList->setProperty("followTail", true);
+        QMetaObject::invokeMethod(messageList, "scheduleTailPosition");
+        settle();
 
         messageList->setProperty("followTail", true);
         messages->upsert(makeMessage(80));
         settle();
-        require(messageList->property("atYEnd").toBool(),
+        require(messageList->property("contentY").toReal()
+                    >= messageList->property("originY").toReal()
+                        + messageList->property("contentHeight").toReal()
+                        - messageList->height() - 48.0,
                 QStringLiteral("an appended message moved a tail-following conversation away from the bottom"));
 
         const qreal tailY = messageList->property("contentY").toReal();
@@ -1398,16 +1477,21 @@ int main(int argc, char *argv[])
         require(!messageList->property("initialPositionPending").toBool(),
                 QStringLiteral("refreshing metadata for the open chat re-armed its initial tail jump"));
 
-        // At the top boundary a wheel tick cannot change contentY, so Qt does
-        // not emit movementStarted/contentYChanged. The observed wheel event
-        // itself must still request the next local history page.
+        // Entering the top threshold must request another local history page
+        // without installing a WheelHandler in front of ListView. The latter
+        // consumes physical mouse-wheel ticks on Qt 6.8 even when configured
+        // with blocking=false.
         auto *olderMessagesTimer = messageList->findChild<QObject *>(QStringLiteral("olderMessagesTimer"));
-        messageList->setProperty("contentY", messageList->property("originY"));
-        const bool handledBoundaryWheel = QMetaObject::invokeMethod(messageList, "handleReaderWheel");
-        require(handledBoundaryWheel,
-                QStringLiteral("the message list did not expose its reader-wheel handler"));
+        messages->reset(history);
+        settle();
+        if (olderMessagesTimer != nullptr)
+            QMetaObject::invokeMethod(olderMessagesTimer, "stop");
+        messageList->setProperty("positioningTail", false);
+        const qreal historyStart = messageList->property("originY").toReal();
+        messageList->setProperty("contentY", historyStart + 200.0);
+        messageList->setProperty("contentY", historyStart + 40.0);
         require(olderMessagesTimer != nullptr && olderMessagesTimer->property("running").toBool(),
-                QStringLiteral("wheel input at the top boundary did not request older messages"));
+                QStringLiteral("entering the top boundary did not request older messages"));
         if (olderMessagesTimer != nullptr)
             QMetaObject::invokeMethod(olderMessagesTimer, "stop");
 

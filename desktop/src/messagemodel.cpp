@@ -1,9 +1,37 @@
 #include "messagemodel.h"
 
+#include <QImageReader>
+
 namespace {
 QString messageId(const QVariantMap &message)
 {
     return message.value(QStringLiteral("id")).toString();
+}
+
+QVariantMap withPreviewDimensions(QVariantMap message)
+{
+    if (message.value(QStringLiteral("preview_width")).toInt() > 0
+        && message.value(QStringLiteral("preview_height")).toInt() > 0)
+        return message;
+
+    const auto kind = message.value(QStringLiteral("kind")).toString();
+    QString previewPath;
+    if (kind == QStringLiteral("image") || kind == QStringLiteral("sticker"))
+        previewPath = message.value(QStringLiteral("media_path")).toString();
+    if (previewPath.isEmpty()
+        && (kind == QStringLiteral("image") || kind == QStringLiteral("video")
+            || kind == QStringLiteral("sticker")))
+        previewPath = message.value(QStringLiteral("media_thumbnail")).toString();
+    if (previewPath.isEmpty())
+        return message;
+
+    QImageReader reader(previewPath);
+    const auto size = reader.size();
+    if (size.isValid() && !size.isEmpty()) {
+        message.insert(QStringLiteral("preview_width"), size.width());
+        message.insert(QStringLiteral("preview_height"), size.height());
+    }
+    return message;
 }
 }
 
@@ -46,7 +74,7 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= count() || role != MessageRole)
         return QVariant();
-    return m_messages.at(index.row());
+    return m_messages.at(count() - 1 - index.row());
 }
 
 QHash<int, QByteArray> MessageListModel::roleNames() const
@@ -67,7 +95,10 @@ void MessageListModel::rebuildIndex()
 void MessageListModel::reset(const QVariantList &messages)
 {
     beginResetModel();
-    m_messages = messages;
+    m_messages.clear();
+    m_messages.reserve(messages.size());
+    for (const auto &message : messages)
+        m_messages.append(withPreviewDimensions(message.toMap()));
     rebuildIndex();
     endResetModel();
     emit countChanged();
@@ -77,8 +108,13 @@ void MessageListModel::prepend(const QVariantList &older)
 {
     if (older.isEmpty())
         return;
-    beginInsertRows(QModelIndex(), 0, static_cast<int>(older.size()) - 1);
-    QVariantList combined = older;
+    const int firstViewRow = count();
+    beginInsertRows(QModelIndex(), firstViewRow,
+                    firstViewRow + static_cast<int>(older.size()) - 1);
+    QVariantList combined;
+    combined.reserve(older.size() + m_messages.size());
+    for (const auto &message : older)
+        combined.append(withPreviewDimensions(message.toMap()));
     combined.append(m_messages);
     m_messages = combined;
     rebuildIndex();
@@ -88,7 +124,8 @@ void MessageListModel::prepend(const QVariantList &older)
 
 void MessageListModel::upsert(const QVariantMap &message)
 {
-    const auto id = messageId(message);
+    const auto prepared = withPreviewDimensions(message);
+    const auto id = messageId(prepared);
     if (id.isEmpty())
         return;
     const auto existing = m_rowById.constFind(id);
@@ -96,16 +133,16 @@ void MessageListModel::upsert(const QVariantMap &message)
         const int row = existing.value();
         if (row < 0 || row >= count())
             return;
-        if (m_messages.at(row).toMap() == message)
+        if (m_messages.at(row).toMap() == prepared)
             return;
-        m_messages[row] = message;
-        const auto changed = index(row, 0);
+        m_messages[row] = prepared;
+        const auto changed = index(count() - 1 - row, 0);
         emit dataChanged(changed, changed, {MessageRole});
         return;
     }
     const int row = count();
-    beginInsertRows(QModelIndex(), row, row);
-    m_messages.append(message);
+    beginInsertRows(QModelIndex(), 0, 0);
+    m_messages.append(prepared);
     m_rowById.insert(id, row);
     endInsertRows();
     emit countChanged();
@@ -146,7 +183,7 @@ void MessageListModel::applyReceipt(const QStringList &messageIds, const QString
             continue;
         message.insert(QStringLiteral("status"), status);
         m_messages[row] = message;
-        const auto changed = index(row, 0);
+        const auto changed = index(count() - 1 - row, 0);
         emit dataChanged(changed, changed, {MessageRole});
     }
 }
@@ -172,4 +209,12 @@ QVariantMap MessageListModel::at(int row) const
 QVariantMap MessageListModel::oldest() const
 {
     return m_messages.isEmpty() ? QVariantMap{} : m_messages.constFirst().toMap();
+}
+
+int MessageListModel::viewRowForId(const QString &id) const
+{
+    const auto found = m_rowById.constFind(id);
+    if (found == m_rowById.constEnd())
+        return -1;
+    return count() - 1 - found.value();
 }

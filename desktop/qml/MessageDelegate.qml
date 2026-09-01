@@ -61,6 +61,14 @@ Item {
     readonly property real maxBubbleWidth: Math.max(180, Math.min(root.width * 0.68, 620))
     readonly property real contentMaxWidth: maxBubbleWidth - 2 * horizontalPadding
     readonly property real mediaWidth: Math.min(contentMaxWidth, modelData.kind === "sticker" ? 160 : 300)
+    readonly property real mediaDisplayHeight: {
+        const previewWidth = Number(modelData.preview_width || 0)
+        const previewHeight = Number(modelData.preview_height || 0)
+        if (previewWidth <= 0 || previewHeight <= 0)
+            return modelData.kind === "sticker" ? 160 : 170
+        const natural = mediaWidth * (previewHeight / previewWidth)
+        return Math.max(110, Math.min(modelData.kind === "sticker" ? 160 : 320, natural))
+    }
 
     // Keep compact chat density while giving short bubbles a little more
     // presence and a comfortably readable baseline.
@@ -465,7 +473,7 @@ Item {
                 readonly property bool videoPlaceholder: root.modelData.kind === "video" && !previewReady
                 visible: previewReady || videoPlaceholder
                 width: root.mediaWidth
-                height: visible ? (previewReady ? mediaImage.displayHeight : 150) : 0
+                height: visible ? (previewReady ? root.mediaDisplayHeight : 150) : 0
 
                 Rectangle {
                     anchors.fill: parent
@@ -484,12 +492,6 @@ Item {
                     cache: true
                     smooth: true
                     mipmap: root.previewIsThumbnail
-                    readonly property real displayHeight: {
-                        if (implicitWidth <= 0 || implicitHeight <= 0)
-                            return 170
-                        const natural = root.mediaWidth * (implicitHeight / implicitWidth)
-                        return Math.max(110, Math.min(root.modelData.kind === "sticker" ? 160 : 320, natural))
-                    }
                     Accessible.name: root.modelData.body || root.mediaLabel
                 }
 

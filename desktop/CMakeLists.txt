@@ -176,7 +176,7 @@ if(BUILD_TESTING)
         src/messagemodel.h
     )
     target_include_directories(message-model-test PRIVATE src)
-    target_link_libraries(message-model-test PRIVATE Qt6::Core)
+    target_link_libraries(message-model-test PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME desktop-message-model COMMAND message-model-test)
     set_tests_properties(desktop-message-model PROPERTIES TIMEOUT 10)
 

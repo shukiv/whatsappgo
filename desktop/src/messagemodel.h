@@ -11,8 +11,10 @@
 // The conversation used to be a plain list property that was replaced whenever
 // anything changed. Replacing it rebuilt every delegate, so the view lost its
 // position, reloaded images, and re-triggered the "load older messages" edge.
-// Reporting insertions precisely lets the view keep the rows it already shows:
-// prepending an older page leaves the reader where they were.
+// Storage remains chronological for playback and history paging, while the
+// rows exposed to QML are newest-first. A BottomToTop ListView can therefore
+// keep row zero at the composer and grow older history away from the reader.
+// This avoids Qt's variable-height content estimate moving the visible rows.
 
 // nextAudioAfter returns the recording that follows messageId. Deleted and
 // system messages are stepped over because they are not part of what the
@@ -36,7 +38,8 @@ public:
 
     // Replaces the conversation, for example when another chat is opened.
     void reset(const QVariantList &messages);
-    // Adds an older page above the current contents.
+    // Adds an older page before the chronological storage and after the
+    // existing newest-first view rows.
     void prepend(const QVariantList &older);
     // Updates a message in place, or appends it when it is new.
     void upsert(const QVariantMap &message);
@@ -51,11 +54,12 @@ public:
     QVariantMap at(int row) const;
     QVariantMap oldest() const;
     QVariantList items() const { return m_messages; }
+    int viewRowForId(const QString &messageId) const;
 
 signals:
     void countChanged();
-    // Emitted when a message is added at the end, so a view that is already at
-    // the bottom can follow the conversation.
+    // Emitted when a message is added at the chronological end / view row zero,
+    // so a view that is already at the composer can follow the conversation.
     void appended();
 
 private:

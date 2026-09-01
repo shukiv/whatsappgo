@@ -2,6 +2,8 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QImage>
+#include <QTemporaryDir>
 #include <QVariantMap>
 
 namespace {
@@ -46,13 +48,13 @@ int main(int argc, char **argv)
     require(model.count() == 2, QStringLiteral("reset stores the conversation"));
     require(resets == 1, QStringLiteral("reset is reported once"));
 
-    // An older page must be reported as an insertion at the top. A reset here
-    // would scroll the reader away from what they were reading.
+    // QML sees newest-first rows for its BottomToTop list. Older history is
+    // inserted after the existing view rows, away from the composer edge.
     model.prepend({message(QStringLiteral("x")), message(QStringLiteral("y"))});
     require(model.count() == 4, QStringLiteral("prepend adds the older page"));
     require(resets == 1, QStringLiteral("prepend does not reset the model"));
-    require(insertions.size() == 1 && insertions.at(0).first == 0 && insertions.at(0).second == 1,
-            QStringLiteral("prepend is reported as rows 0-1"));
+    require(insertions.size() == 1 && insertions.at(0).first == 2 && insertions.at(0).second == 3,
+            QStringLiteral("older history is reported after the visible view rows"));
     require(model.at(0).value(QStringLiteral("id")).toString() == QStringLiteral("x"),
             QStringLiteral("the older page is above the newer messages"));
     require(model.oldest().value(QStringLiteral("id")).toString() == QStringLiteral("x"),
@@ -65,7 +67,7 @@ int main(int argc, char **argv)
     auto edited = message(QStringLiteral("b"), QStringLiteral("edited"));
     model.upsert(edited);
     require(insertions.size() == 1, QStringLiteral("editing a message inserts no row"));
-    require(changedRows.size() == 1 && changedRows.at(0) == 3, QStringLiteral("the edited row is reported"));
+    require(changedRows.size() == 1 && changedRows.at(0) == 0, QStringLiteral("the edited view row is reported"));
     require(model.at(3).value(QStringLiteral("body")).toString() == QStringLiteral("edited"),
             QStringLiteral("the edit is applied in place"));
 
@@ -76,17 +78,38 @@ int main(int argc, char **argv)
     model.upsert(message(QStringLiteral("c")));
     require(model.count() == 5, QStringLiteral("a new message is appended"));
     require(appended == 1, QStringLiteral("appending is announced so the view can follow"));
-    require(insertions.size() == 2 && insertions.at(1).first == 4, QStringLiteral("the append is reported at the end"));
+    require(insertions.size() == 2 && insertions.at(1).first == 0,
+            QStringLiteral("the newest message is inserted at the composer edge"));
 
     model.upsert({});
     require(model.count() == 5, QStringLiteral("a message without an id is rejected"));
 
-    require(model.data(model.index(4, 0), MessageListModel::MessageRole).toMap().value(QStringLiteral("id")).toString()
+    require(model.data(model.index(0, 0), MessageListModel::MessageRole).toMap().value(QStringLiteral("id")).toString()
                 == QStringLiteral("c"),
-            QStringLiteral("data() returns the message map"));
+            QStringLiteral("view row zero is the newest message"));
+    require(model.viewRowForId(QStringLiteral("x")) == 4
+                && model.viewRowForId(QStringLiteral("c")) == 0,
+            QStringLiteral("message ids map to newest-first view rows"));
     require(!model.data(model.index(99, 0), MessageListModel::MessageRole).isValid(),
             QStringLiteral("an out-of-range row has no data"));
     require(model.rowCount(model.index(0, 0)) == 0, QStringLiteral("the model is flat"));
+
+    // Media dimensions must be known before QML creates a recycled delegate.
+    // Otherwise every thumbnail starts at a guessed height and resizes after
+    // decoding, making the conversation jump while it is being scrolled.
+    QTemporaryDir mediaDirectory;
+    const auto thumbnailPath = mediaDirectory.filePath(QStringLiteral("video-poster.jpg"));
+    QImage thumbnail(640, 360, QImage::Format_RGB32);
+    thumbnail.fill(Qt::green);
+    require(thumbnail.save(thumbnailPath), QStringLiteral("the media-dimension fixture could not be written"));
+    model.reset({QVariantMap{
+        {QStringLiteral("id"), QStringLiteral("video-dimensions")},
+        {QStringLiteral("kind"), QStringLiteral("video")},
+        {QStringLiteral("media_thumbnail"), thumbnailPath},
+    }});
+    require(model.at(0).value(QStringLiteral("preview_width")).toInt() == 640
+                && model.at(0).value(QStringLiteral("preview_height")).toInt() == 360,
+            QStringLiteral("cached video-poster dimensions were not attached before delegate creation"));
 
     model.clear();
     require(model.count() == 0 && model.isEmpty(), QStringLiteral("clear empties the conversation"));
@@ -103,7 +126,7 @@ int main(int argc, char **argv)
             QStringLiteral("a sent message was not marked delivered"));
     require(model.at(1).value(QStringLiteral("status")).toString() == QStringLiteral("read"),
             QStringLiteral("a read message was pushed back to delivered"));
-    require(changedRows.size() == 1 && changedRows.at(0) == 0,
+    require(changedRows.size() == 1 && changedRows.at(0) == 1,
             QStringLiteral("only the message that changed should be reported"));
 
     model.applyReceipt({QStringLiteral("r1")}, QStringLiteral("read"));

@@ -1157,6 +1157,14 @@ Kirigami.ApplicationWindow {
                         model: backend.messages
                         clip: true
                         reuseItems: true
+                        verticalLayoutDirection: ListView.BottomToTop
+                        // Qt estimates a variable-height ListView from its
+                        // instantiated delegates. Keep several screens around
+                        // the viewport so alternating text and tall media do
+                        // not make that estimate lurch during each wheel tick.
+                        // Media dimensions are known before delegate creation,
+                        // so this cache no longer triggers decode-time relayouts.
+                        cacheBuffer: height * 3
                         spacing: 1
                         // Short conversations grow upward from the composer,
                         // just like long conversations whose tail is visible.
@@ -1165,10 +1173,29 @@ Kirigami.ApplicationWindow {
                         bottomMargin: 10
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: OverlayScrollBar {}
+                        // In a bottom-to-top chat, Qt's default wheel mapping
+                        // points toward the composer. Consume the wheel once
+                        // and move toward older rows explicitly; this also
+                        // avoids two competing kinetic-scroll animations.
                         WheelHandler {
                             target: null
-                            blocking: false
-                            onWheel: event => messageList.handleReaderWheel()
+                            blocking: true
+                            onWheel: event => {
+                                messageList.releaseTail()
+                                messageList.cancelFlick()
+                                const pixels = event.pixelDelta.y !== 0
+                                    ? event.pixelDelta.y
+                                    : event.angleDelta.y * 0.5
+                                const historyEdge = messageList.originY
+                                const composerEdge = messageList.originY
+                                    + messageList.contentHeight - messageList.height
+                                const minimum = Math.min(historyEdge, composerEdge)
+                                const maximum = Math.max(historyEdge, composerEdge)
+                                messageList.contentY = Math.max(minimum,
+                                    Math.min(maximum, messageList.contentY - pixels))
+                                if (messageList.nearHistoryStart())
+                                    olderMessagesTimer.restart()
+                            }
                         }
                         delegate: MessageDelegate {
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
@@ -1204,7 +1231,11 @@ Kirigami.ApplicationWindow {
                         property bool positioningTail: false
 
                         function nearTail() {
-                            return atYEnd || contentHeight + bottomMargin - contentY - height <= 48
+                            return contentY >= originY + contentHeight - height - 48
+                        }
+
+                        function nearHistoryStart() {
+                            return contentY <= originY + 80
                         }
 
                         function scheduleTailPosition() {
@@ -1215,21 +1246,10 @@ Kirigami.ApplicationWindow {
                         function releaseTail() {
                             tailPositionTimer.stop()
                             // A physical wheel event can arrive in the single
-                            // frame between positionViewAtEnd() and callLater.
+                            // frame between tail positioning and callLater.
                             // It still owns the scroll position: never let the
                             // programmatic-positioning guard ignore it.
                             followTail = false
-                        }
-
-                        function handleReaderWheel() {
-                            releaseTail()
-                            // StopAtBounds means another upward wheel tick at
-                            // the first loaded row does not change contentY and
-                            // emits no movement signal. Request history from
-                            // the observed wheel event so scrolling can carry
-                            // on naturally as soon as that page is prepended.
-                            if (contentY < originY + 80)
-                                olderMessagesTimer.restart()
                         }
 
                         function prepareForChat(chatJid) {
@@ -1258,12 +1278,7 @@ Kirigami.ApplicationWindow {
                                 if (!messageList.followTail)
                                     return
                                 messageList.positioningTail = true
-                                messageList.positionViewAtEnd()
-                                // positionViewAtEnd() stops at the last row but
-                                // does not include ListView's bottom margin.
-                                messageList.contentY = messageList.originY
-                                    + messageList.contentHeight - messageList.height
-                                    + messageList.bottomMargin
+                                messageList.positionViewAtBeginning()
                                 Qt.callLater(() => {
                                     messageList.positioningTail = false
                                 })
@@ -1288,7 +1303,7 @@ Kirigami.ApplicationWindow {
                             releaseTail()
                         }
                         onContentYChanged: {
-                            if (moving && contentY < originY + 80)
+                            if (!positioningTail && nearHistoryStart())
                                 olderMessagesTimer.restart()
                         }
                         onMovementEnded: {
@@ -1296,7 +1311,7 @@ Kirigami.ApplicationWindow {
                                 followTail = nearTail()
                             if (followTail)
                                 scheduleTailPosition()
-                            if (contentY < originY + 80)
+                            if (nearHistoryStart())
                                 olderMessagesTimer.restart()
                         }
                         onHeightChanged: scheduleTailPosition()
