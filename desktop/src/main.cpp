@@ -958,6 +958,25 @@ int main(int argc, char *argv[])
         require(playBadge != nullptr && playBadge->isVisible(),
                 QStringLiteral("video play badge is missing"));
 
+        // Playback is a lazy singleton. A video must wait until Main's overlay
+        // has supplied its VideoOutput; starting the decoder against a null
+        // surface produces audio with a permanently blank video pane.
+        QQmlEngine isolatedPlaybackEngine;
+        auto *playback = isolatedPlaybackEngine.singletonInstance<QObject *>(
+            QStringLiteral("org.whatsappgo"), QStringLiteral("Playback"));
+        require(playback != nullptr, QStringLiteral("video playback singleton is unavailable"));
+        if (playback != nullptr) {
+            const bool started = QMetaObject::invokeMethod(
+                playback, "start",
+                Q_ARG(QVariant, QVariant(QStringLiteral("layout-video"))),
+                Q_ARG(QVariant, QVariant(QStringLiteral("/tmp/not-opened-before-surface.mp4"))),
+                Q_ARG(QVariant, QVariant(true)));
+            require(started, QStringLiteral("video playback start function is unavailable"));
+            require(playback->property("waitingForVideoSurface").toBool(),
+                    QStringLiteral("video playback started before its display surface existed"));
+            QMetaObject::invokeMethod(playback, "stop");
+        }
+
         // The other person's name belongs above group messages only.
         for (const auto &chatJid : {QStringLiteral("123@s.whatsapp.net"), QStringLiteral("456@g.us")}) {
             const bool group = chatJid.endsWith(QStringLiteral("@g.us"));
@@ -1353,6 +1372,31 @@ int main(int argc, char *argv[])
                 QStringLiteral("starting reader movement did not release the tail anchor"));
         require(qAbs(messageList->property("contentY").toReal() - gestureReadingY) < 2.0,
                 QStringLiteral("a queued tail update snapped an active reader gesture back to the bottom"));
+
+        // The timer marks its one-frame tail correction as positioningTail.
+        // A wheel event can land during that exact frame; it must still cancel
+        // tail following instead of being undone by the queued callLater.
+        messageList->setProperty("followTail", true);
+        messageList->setProperty("positioningTail", true);
+        const bool releasedDuringPositioning = QMetaObject::invokeMethod(messageList, "releaseTail");
+        require(releasedDuringPositioning,
+                QStringLiteral("the message list did not expose its tail-release function"));
+        require(!messageList->property("followTail").toBool(),
+                QStringLiteral("a wheel gesture during tail positioning did not release the tail anchor"));
+        messageList->setProperty("positioningTail", false);
+
+        // Avatar/title refreshes emit selectedChatChanged for the chat that is
+        // already open. They must not arm another initial tail jump, otherwise
+        // the next incoming row snaps a reader out of older history.
+        messages->clear();
+        const bool preparedChat = QMetaObject::invokeMethod(
+            messageList, "prepareForChat", Q_ARG(QVariant, QVariant(QStringLiteral("stable@lid"))));
+        require(preparedChat, QStringLiteral("the message list did not expose its chat-position function"));
+        messageList->setProperty("initialPositionPending", false);
+        QMetaObject::invokeMethod(
+            messageList, "prepareForChat", Q_ARG(QVariant, QVariant(QStringLiteral("stable@lid"))));
+        require(!messageList->property("initialPositionPending").toBool(),
+                QStringLiteral("refreshing metadata for the open chat re-armed its initial tail jump"));
 
         // Returning to a chat in the same session must paint its last local
         // page synchronously instead of showing an empty conversation while

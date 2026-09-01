@@ -1152,6 +1152,7 @@ Kirigami.ApplicationWindow {
                         id: messageList
                         objectName: "messageList"
                         property bool initialPositionPending: false
+                        property string positionedChatJid: ""
                         anchors.fill: parent
                         model: backend.messages
                         clip: true
@@ -1213,8 +1214,26 @@ Kirigami.ApplicationWindow {
 
                         function releaseTail() {
                             tailPositionTimer.stop()
-                            if (!positioningTail)
-                                followTail = false
+                            // A physical wheel event can arrive in the single
+                            // frame between positionViewAtEnd() and callLater.
+                            // It still owns the scroll position: never let the
+                            // programmatic-positioning guard ignore it.
+                            followTail = false
+                        }
+
+                        function prepareForChat(chatJid) {
+                            const jid = String(chatJid || "")
+                            // selectedChatChanged also reports refreshed titles
+                            // and avatars. Only a real conversation change may
+                            // request the initial jump to the newest message.
+                            if (jid === positionedChatJid)
+                                return
+                            positionedChatJid = jid
+                            tailPositionTimer.stop()
+                            followTail = true
+                            initialPositionPending = jid !== "" && count === 0
+                            if (jid !== "" && count > 0)
+                                scheduleTailPosition()
                         }
 
                         // Geometry can change several times while a batch of
@@ -1236,7 +1255,6 @@ Kirigami.ApplicationWindow {
                                     + messageList.bottomMargin
                                 Qt.callLater(() => {
                                     messageList.positioningTail = false
-                                    messageList.followTail = true
                                 })
                             }
                         }
@@ -1301,8 +1319,7 @@ Kirigami.ApplicationWindow {
                             window.highlightedMessageId = ""
                             messageJumpRetry.stop()
                             messageJumpHighlight.stop()
-                            if (backend.selectedChat.jid)
-                                messageList.initialPositionPending = true
+                            messageList.prepareForChat(backend.selectedChat.jid)
                             if (window.infoDrawerOpen && backend.selectedChat.jid !== window.infoDrawerChatJid) {
                                 window.infoDrawerOpen = false
                                 backend.clearChatInfo()

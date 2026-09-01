@@ -23,12 +23,17 @@ Item {
     // The message waiting for its file to finish downloading.
     property string pendingId: ""
     property bool pendingIsVideo: false
+    // Loading a MediaPlayer and loading Main's video overlay are separate
+    // operations. Keep the requested start until both objects exist so the
+    // first frames cannot be sent to a null VideoOutput.
+    property bool startPending: false
 
     readonly property bool active: currentId !== ""
     readonly property bool playing: loader.item ? loader.item.playbackState === MediaPlayer.PlayingState : false
     readonly property int position: loader.item ? loader.item.position : 0
     readonly property int duration: loader.item ? loader.item.duration : 0
     readonly property bool videoActive: active && isVideo
+    readonly property bool waitingForVideoSurface: startPending && isVideo && !videoSurface
 
     signal downloadRequested(string messageId)
     signal failed(string message)
@@ -38,6 +43,16 @@ Item {
 
     function isCurrent(messageId) {
         return messageId !== "" && messageId === currentId
+    }
+
+    function beginPlayback() {
+        if (!startPending || !loader.item)
+            return
+        if (isVideo && !videoSurface)
+            return
+        loader.item.source = "file://" + currentPath
+        loader.item.play()
+        startPending = false
     }
 
     // start plays a message, downloading it first when it is not cached yet.
@@ -58,11 +73,9 @@ Item {
         currentId = messageId
         currentPath = String(path)
         isVideo = Boolean(video)
+        startPending = true
         loader.active = true
-        if (!loader.item)
-            return
-        loader.item.source = "file://" + currentPath
-        loader.item.play()
+        beginPlayback()
     }
 
     // fileReady resumes a start() that was waiting for a download.
@@ -85,6 +98,7 @@ Item {
 
     function stop() {
         pendingId = ""
+        startPending = false
         if (loader.item) {
             loader.item.stop()
             loader.item.source = ""
@@ -93,6 +107,8 @@ Item {
         currentPath = ""
         isVideo = false
     }
+
+    onVideoSurfaceChanged: beginPlayback()
 
     function seek(milliseconds) {
         if (loader.item && loader.item.seekable)
@@ -105,6 +121,7 @@ Item {
     Loader {
         id: loader
         active: false
+        onLoaded: root.beginPlayback()
         sourceComponent: Component {
             MediaPlayer {
                 audioOutput: AudioOutput {}
