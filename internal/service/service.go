@@ -60,10 +60,11 @@ type downloadParams struct {
 	MessageID string `json:"message_id"`
 }
 type sendTextParams struct {
-	ChatJID     string            `json:"chat_jid"`
-	Text        string            `json:"text"`
-	ReplyTo     string            `json:"reply_to"`
-	LinkPreview model.LinkPreview `json:"link_preview"`
+	ChatJID      string            `json:"chat_jid"`
+	Text         string            `json:"text"`
+	ReplyTo      string            `json:"reply_to"`
+	ReplyChatJID string            `json:"reply_chat_jid"`
+	LinkPreview  model.LinkPreview `json:"link_preview"`
 }
 type linkPreviewParams struct {
 	Text string `json:"text"`
@@ -276,7 +277,10 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if strings.TrimSpace(p.Text) == "" {
 			return nil, errors.New("text is required")
 		}
-		msg, err := s.gateway.SendText(ctx, gateway.TextRequest{ChatJID: p.ChatJID, Text: p.Text, ReplyTo: p.ReplyTo, Preview: p.LinkPreview})
+		msg, err := s.gateway.SendText(ctx, gateway.TextRequest{
+			ChatJID: p.ChatJID, Text: p.Text, ReplyTo: p.ReplyTo,
+			ReplyChatJID: p.ReplyChatJID, Preview: p.LinkPreview,
+		})
 		if err != nil {
 			return nil, err
 		}

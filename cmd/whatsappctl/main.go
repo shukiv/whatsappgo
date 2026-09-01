@@ -202,6 +202,7 @@ func sendCommand(ctx context.Context, client caller, args []string, stdin io.Rea
 	file := fs.String("file", "", "file, image, video, or audio path")
 	caption := fs.String("caption", "", "media caption")
 	replyTo := fs.String("reply-to", "", "message ID to reply to")
+	replyChat := fs.String("reply-chat", "", "chat JID containing the replied-to message; use status@broadcast for status replies")
 	voice := fs.Bool("voice", false, "send audio as a voice note")
 	noPreview := fs.Bool("no-preview", false, "do not attach an Open Graph preview")
 	if err := fs.Parse(args); err != nil {
@@ -215,6 +216,9 @@ func sendCommand(ctx context.Context, client caller, args []string, stdin io.Rea
 		return nil, err
 	}
 	if *file != "" {
+		if *replyChat != "" {
+			return nil, errors.New("send: --reply-chat is currently supported for text replies only")
+		}
 		if *textFlag != "" || fs.NArg() != 0 {
 			return nil, errors.New("send: use --caption, not text, when sending --file")
 		}
@@ -234,11 +238,17 @@ func sendCommand(ctx context.Context, client caller, args []string, stdin io.Rea
 	if *voice {
 		return nil, errors.New("send: --voice requires --file")
 	}
+	if *replyChat != "" && *replyTo == "" {
+		return nil, errors.New("send: --reply-chat requires --reply-to")
+	}
 	text, err := messageText(*textFlag, fs.Args(), stdin)
 	if err != nil {
 		return nil, err
 	}
-	params := map[string]any{"chat_jid": chatJID, "text": text, "reply_to": *replyTo, "link_preview": model.LinkPreview{}}
+	params := map[string]any{
+		"chat_jid": chatJID, "text": text, "reply_to": *replyTo,
+		"reply_chat_jid": *replyChat, "link_preview": model.LinkPreview{},
+	}
 	if !*noPreview {
 		previewRaw, previewErr := client.Call(ctx, "link.preview", map[string]any{"text": text})
 		if previewErr == nil {

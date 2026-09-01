@@ -260,7 +260,11 @@ func (c *Client) SendText(ctx context.Context, req gateway.TextRequest) (model.M
 	if req.ReplyTo == "" && req.Preview.URL == "" {
 		payload.Conversation = proto.String(req.Text)
 	} else {
-		extended := &waE2E.ExtendedTextMessage{Text: proto.String(req.Text), ContextInfo: c.replyContext(ctx, req.ChatJID, req.ReplyTo)}
+		quoteChatJID := req.ReplyChatJID
+		if quoteChatJID == "" {
+			quoteChatJID = req.ChatJID
+		}
+		extended := &waE2E.ExtendedTextMessage{Text: proto.String(req.Text), ContextInfo: c.replyContext(ctx, quoteChatJID, req.ReplyTo)}
 		if req.Preview.URL != "" {
 			extended.MatchedText = proto.String(req.Preview.URL)
 			extended.Title = proto.String(req.Preview.Title)
@@ -813,11 +817,19 @@ func (c *Client) replyContext(ctx context.Context, chatJID, replyTo string) *waE
 		if quoted.SenderJID != "" {
 			info.Participant = proto.String(quoted.SenderJID)
 		}
+		if payload, ok, _ := c.store.MediaPayload(ctx, chatJID, replyTo); ok {
+			var raw waE2E.Message
+			if proto.Unmarshal(payload, &raw) == nil {
+				info.QuotedMessage = &raw
+			}
+		}
 		text := quoted.Body
 		if text == "" {
 			text = quoted.Kind
 		}
-		info.QuotedMessage = &waE2E.Message{Conversation: proto.String(text)}
+		if info.QuotedMessage == nil {
+			info.QuotedMessage = &waE2E.Message{Conversation: proto.String(text)}
+		}
 	}
 	return info
 }

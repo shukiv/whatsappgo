@@ -419,8 +419,17 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         const bool movedToBob = viewer->property("groupIndex").toInt() == 1
             && viewer->property("itemIndex").toInt() == 0;
+        auto *replyComposer = viewer->findChild<QObject *>(QStringLiteral("statusReplyComposer"));
+        viewer->setProperty("replyText", QStringLiteral("Looks great"));
+        const bool submittedReply = QMetaObject::invokeMethod(viewer.get(), "submitReply");
+        QCoreApplication::processEvents();
+        const bool replyTargetsCurrentStatus = viewer->property("lastReplyRecipient").toString() == QStringLiteral("bob@lid")
+            && viewer->property("lastReplyStatusId").toString() == QStringLiteral("bob-1")
+            && viewer->property("lastReplyText").toString() == QStringLiteral("Looks great");
         return list && list->property("count").toInt() == 2
                 && firstAdvance && stayedWithAlice && secondAdvance && movedToBob
+                && replyComposer && replyComposer->property("visible").toBool()
+                && submittedReply && replyTargetsCurrentStatus
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (resizeRenderingTest) {

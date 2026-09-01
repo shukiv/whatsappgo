@@ -61,6 +61,9 @@ func TestStatusesListGroupsActiveUpdatesBySender(t *testing.T) {
 type fakeGateway struct {
 	gateway.Unavailable
 	sentText        string
+	sentChat        string
+	sentReplyTo     string
+	sentReplyChat   string
 	sentPreview     model.LinkPreview
 	historyChat     string
 	refreshedChat   string
@@ -71,8 +74,35 @@ type fakeGateway struct {
 func (f *fakeGateway) Subscribe(func(gateway.Event)) func() { return func() {} }
 func (f *fakeGateway) SendText(_ context.Context, req gateway.TextRequest) (model.Message, error) {
 	f.sentText = req.Text
+	f.sentChat = req.ChatJID
+	f.sentReplyTo = req.ReplyTo
+	f.sentReplyChat = req.ReplyChatJID
 	f.sentPreview = req.Preview
 	return model.Message{ID: "out-1", ChatJID: req.ChatJID, SenderJID: "me@s.whatsapp.net", Timestamp: 10, Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}, nil
+}
+
+func TestSendStatusReplySeparatesRecipientFromQuotedStatusChat(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+
+	_, err = svc.Handle(context.Background(), "message.send", json.RawMessage(`{
+		"chat_jid":"alice@lid",
+		"text":"Looks great",
+		"reply_to":"status-42",
+		"reply_chat_jid":"status@broadcast"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gw.sentChat != "alice@lid" || gw.sentReplyTo != "status-42" || gw.sentReplyChat != "status@broadcast" {
+		t.Fatalf("status reply was misrouted: chat=%q reply=%q quote chat=%q", gw.sentChat, gw.sentReplyTo, gw.sentReplyChat)
+	}
 }
 
 func (f *fakeGateway) RequestHistory(_ context.Context, chat string, _ int) error {

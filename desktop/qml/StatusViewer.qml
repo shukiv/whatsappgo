@@ -11,12 +11,21 @@ Item {
     property int groupIndex: 0
     property int itemIndex: 0
     property real progress: 0
+    property string replyText: ""
+    property bool replyPending: false
+    property string replyFeedback: ""
+    property bool replyFailed: false
+    property string lastReplyRecipient: ""
+    property string lastReplyStatusId: ""
+    property string lastReplyText: ""
     readonly property var currentGroup: groups && groupIndex >= 0 && groupIndex < groups.length ? groups[groupIndex] : ({})
     readonly property var currentItems: currentGroup.items || []
     readonly property var currentItem: itemIndex >= 0 && itemIndex < currentItems.length ? currentItems[itemIndex] : ({})
     readonly property bool videoReady: currentItem.kind === "video" && Boolean(currentItem.media_path)
+    readonly property bool interactionPaused: replyPending || replyComposer.activeFocus || statusEmojiPicker.opened
     signal closeRequested()
     signal mediaRequested(string messageId)
+    signal replyRequested(string recipientJid, string statusMessageId, string text)
 
     visible: opened
     focus: opened
@@ -40,9 +49,49 @@ Item {
 
     function close() {
         storyTimer.stop()
+        progressAnimation.stop()
         statusPlayer.stop()
+        statusEmojiPicker.close()
         opened = false
         closeRequested()
+    }
+
+    function pausePlayback() {
+        storyTimer.stop()
+        progressAnimation.stop()
+        if (statusPlayer.playbackState === MediaPlayer.PlayingState)
+            statusPlayer.pause()
+    }
+
+    function submitReply() {
+        const text = replyText.trim()
+        if (!text || replyPending || !currentGroup.sender_jid || !currentItem.id)
+            return
+        lastReplyRecipient = String(currentGroup.sender_jid)
+        lastReplyStatusId = String(currentItem.id)
+        lastReplyText = text
+        replyPending = true
+        replyFeedback = ""
+        replyFailed = false
+        replyRequested(lastReplyRecipient, lastReplyStatusId, text)
+    }
+
+    function finishReply(recipientJid, statusMessageId, success, message) {
+        if (recipientJid !== lastReplyRecipient || statusMessageId !== lastReplyStatusId)
+            return
+        replyPending = false
+        replyFailed = !success
+        replyFeedback = message || (success ? qsTr("Reply sent") : qsTr("Could not send the reply"))
+        if (success)
+            replyText = ""
+        replyFeedbackTimer.restart()
+    }
+
+    function insertReplyEmoji(emoji) {
+        const position = Math.max(0, replyComposer.cursorPosition)
+        replyComposer.insert(position, emoji)
+        replyComposer.cursorPosition = position + emoji.length
+        replyComposer.forceActiveFocus()
     }
 
     function advance() {
@@ -85,7 +134,7 @@ Item {
         if (currentItem.id && (currentItem.kind === "image" || currentItem.kind === "video") && !currentItem.media_path)
             mediaRequested(currentItem.id)
         Qt.callLater(function() {
-            if (!root.opened)
+            if (!root.opened || root.interactionPaused)
                 return
             if (root.videoReady) {
                 statusPlayer.source = root.mediaUrl(root.currentItem.media_path)
@@ -99,9 +148,17 @@ Item {
 
     onOpenedChanged: if (opened) restartPlayback(); else statusPlayer.stop()
     onCurrentItemChanged: {
+        replyText = ""
+        replyPending = false
+        replyFeedback = ""
+        lastReplyRecipient = ""
+        lastReplyStatusId = ""
+        lastReplyText = ""
+        statusEmojiPicker.close()
         if (opened)
             restartPlayback()
     }
+    onInteractionPausedChanged: interactionPaused ? pausePlayback() : restartPlayback()
 
     Keys.onEscapePressed: close()
     Keys.onLeftPressed: previous()
@@ -118,6 +175,112 @@ Item {
             opacity: status === Image.Ready ? 0.22 : 0
         }
         Rectangle { anchors.fill: parent; color: "#73000000" }
+    }
+
+    Label {
+        anchors.horizontalCenter: replyBar.horizontalCenter
+        anchors.bottom: replyBar.top
+        anchors.bottomMargin: 8
+        z: 21
+        visible: Boolean(root.replyFeedback)
+        text: root.replyFeedback
+        color: "#FFFFFF"
+        font.pixelSize: 13
+        leftPadding: 12
+        rightPadding: 12
+        topPadding: 7
+        bottomPadding: 7
+        background: Rectangle {
+            radius: 8
+            color: root.replyFailed ? "#CCB3261E" : "#CC202C33"
+        }
+    }
+
+    Rectangle {
+        id: replyBar
+        objectName: "statusReplyBar"
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 24
+        z: 20
+        width: Math.max(280, Math.min(parent.width - 120, 1040))
+        height: 56
+        radius: 12
+        color: "#B3202529"
+        border.width: replyComposer.activeFocus ? 2 : 1
+        border.color: replyComposer.activeFocus ? "#FFFFFFFF" : "#66FFFFFF"
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 6
+            anchors.rightMargin: 6
+            spacing: 4
+
+            ThemedToolButton {
+                id: replyEmojiButton
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                iconSource: Qt.resolvedUrl("icons/smile.svg")
+                iconTint: "#FFFFFF"
+                Accessible.name: qsTr("Choose an emoji for the status reply")
+                onClicked: statusEmojiPicker.opened ? statusEmojiPicker.close() : statusEmojiPicker.open()
+                background: Rectangle {
+                    radius: 22
+                    color: parent.hovered || statusEmojiPicker.opened ? "#33FFFFFF" : "transparent"
+                }
+            }
+
+            TextField {
+                id: replyComposer
+                objectName: "statusReplyComposer"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                text: root.replyText
+                placeholderText: qsTr("Type a reply")
+                placeholderTextColor: "#CCFFFFFF"
+                color: "#FFFFFF"
+                font.pixelSize: 15
+                leftPadding: 10
+                rightPadding: 10
+                enabled: !root.replyPending
+                Accessible.name: qsTr("Reply to %1's status").arg(root.currentGroup.sender_name || qsTr("contact"))
+                onTextChanged: if (root.replyText !== text) root.replyText = text
+                onAccepted: root.submitReply()
+                background: Item {}
+            }
+
+            BusyIndicator {
+                Layout.preferredWidth: 42
+                Layout.preferredHeight: 42
+                running: root.replyPending
+                visible: running
+                palette.dark: "#FFFFFF"
+                palette.light: "#FFFFFF"
+            }
+
+            ThemedToolButton {
+                visible: !root.replyPending
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                iconSource: Qt.resolvedUrl("icons/send.svg")
+                iconTint: enabled ? "#FFFFFF" : "#66FFFFFF"
+                enabled: Boolean(root.replyText.trim())
+                Accessible.name: qsTr("Send status reply")
+                onClicked: root.submitReply()
+                background: Rectangle {
+                    radius: 22
+                    color: parent.hovered && parent.enabled ? "#33FFFFFF" : "transparent"
+                }
+            }
+        }
+    }
+
+    EmojiPicker {
+        id: statusEmojiPicker
+        parent: replyEmojiButton
+        x: 0
+        y: -height - 12
+        onEmojiChosen: emoji => root.insertReplyEmoji(emoji)
     }
 
     Rectangle {
@@ -268,6 +431,7 @@ Item {
     }
 
     Timer { id: storyTimer; interval: 5500; onTriggered: root.advance() }
+    Timer { id: replyFeedbackTimer; interval: 2800; onTriggered: root.replyFeedback = "" }
     NumberAnimation {
         id: progressAnimation
         target: root

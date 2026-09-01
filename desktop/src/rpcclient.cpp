@@ -716,6 +716,33 @@ void RpcClient::sendMessage(const QString &text, const QString &replyTo)
                 });
 }
 
+void RpcClient::sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text)
+{
+    const auto reply = text.trimmed();
+    if (recipientJid.isEmpty() || statusMessageId.isEmpty() || reply.isEmpty()) {
+        emit statusReplyFinished(recipientJid, statusMessageId, false, tr("This status cannot be replied to."));
+        return;
+    }
+    if (!daemonConnected()) {
+        emit statusReplyFinished(recipientJid, statusMessageId, false, tr("The background service is not connected yet."));
+        reconnect();
+        return;
+    }
+    sendRequest(QStringLiteral("message.send"), {
+        {QStringLiteral("chat_jid"), recipientJid},
+        {QStringLiteral("text"), reply},
+        {QStringLiteral("reply_to"), statusMessageId},
+        {QStringLiteral("reply_chat_jid"), QStringLiteral("status@broadcast")},
+    }, [this, recipientJid, statusMessageId](const QJsonValue &, const QJsonObject &error) {
+        if (error.isEmpty()) {
+            emit statusReplyFinished(recipientJid, statusMessageId, true, tr("Reply sent"));
+            return;
+        }
+        emit statusReplyFinished(recipientJid, statusMessageId, false,
+                                 error.value(QStringLiteral("message")).toString(tr("Could not send the reply.")));
+    });
+}
+
 void RpcClient::requestLinkPreview(const QString &text)
 {
     static const QRegularExpression urlPattern(QStringLiteral("https?://[^\\s<>\\\"']+"),

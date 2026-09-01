@@ -94,6 +94,7 @@ public:
     Q_INVOKABLE void clearChatInfo();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
+    Q_INVOKABLE void sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text);
     Q_INVOKABLE void requestLinkPreview(const QString &text);
     Q_INVOKABLE void clearComposerLinkPreview();
     Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {});
@@ -141,6 +142,7 @@ signals:
     void busyChanged();
     void errorOccurred(const QString &message);
     void messageSent();
+    void statusReplyFinished(const QString &recipientJid, const QString &statusMessageId, bool success, const QString &message);
     void profileChanged();
     void profilesChanged();
     void profileUnreadCountsChanged();

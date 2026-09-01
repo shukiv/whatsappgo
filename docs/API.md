@@ -148,7 +148,7 @@ All parameter objects reject unknown fields.
 | `link.preview` | `text` | Open Graph metadata and thumbnail bytes |
 | `history.request` / `history.refresh` | `chat_jid`, `limit` | Ask WhatsApp for older/recent linked-device history |
 | `message.download` | `chat_jid`, `message_id` | Download/cache media and return its local path |
-| `message.send` | `chat_jid`, `text`, `reply_to`, `link_preview` | Sent message |
+| `message.send` | `chat_jid`, `text`, `reply_to`, `reply_chat_jid`, `link_preview` | Sent message; `reply_chat_jid` identifies a quoted message stored in a different chat |
 | `message.send_media` | `chat_jid`, `path`, `caption`, `reply_to`, `voice` | Sent media message; path must be local to WhatsAppGo |
 | `message.react` | `chat_jid`, `message_id`, `sender_jid`, `emoji` | Add reaction; empty emoji removes it |
 | `message.edit` | `chat_jid`, `message_id`, `text` | Edit eligible sent text |
@@ -158,6 +158,14 @@ All parameter objects reject unknown fields.
 
 The `params_example` values returned by `rpc.discover` are canonical examples
 for the installed version.
+
+To reply to a status, send the text to the status owner's direct JID while
+quoting the status message from `status@broadcast`:
+
+```bash
+whatsappctl send --to alice@lid --text "Great photo" \
+  --reply-to STATUS_MESSAGE_ID --reply-chat status@broadcast
+```
 
 ## Socket protocol
 

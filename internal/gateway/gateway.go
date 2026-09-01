@@ -21,10 +21,11 @@ type MediaRequest struct {
 }
 
 type TextRequest struct {
-	ChatJID string
-	Text    string
-	ReplyTo string
-	Preview model.LinkPreview
+	ChatJID      string
+	Text         string
+	ReplyTo      string
+	ReplyChatJID string
+	Preview      model.LinkPreview
 }
 
 type Gateway interface {

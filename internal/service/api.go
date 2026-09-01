@@ -46,7 +46,7 @@ var apiMethods = []MethodDescription{
 	method("history.request", "Request an older history page", true, map[string]any{"chat_jid": "123@lid", "limit": 50}),
 	method("history.refresh", "Request a recent history page", true, map[string]any{"chat_jid": "123@lid", "limit": 50}),
 	method("message.download", "Download and cache message media", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID"}),
-	method("message.send", "Send a text message", true, map[string]any{"chat_jid": "123@lid", "text": "Hello", "reply_to": "", "link_preview": map[string]any{}}),
+	method("message.send", "Send a text message", true, map[string]any{"chat_jid": "123@lid", "text": "Hello", "reply_to": "", "reply_chat_jid": "", "link_preview": map[string]any{}}),
 	method("message.send_media", "Send a file, image, video, audio, or voice note", true, map[string]any{"chat_jid": "123@lid", "path": "/absolute/file", "caption": "", "reply_to": "", "voice": false}),
 	method("message.react", "Add or remove a reaction", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": "", "emoji": "👍"}),
 	method("message.edit", "Edit a sent text message", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "text": "Corrected"}),

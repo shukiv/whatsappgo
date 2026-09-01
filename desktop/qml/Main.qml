@@ -1241,6 +1241,16 @@ Kirigami.ApplicationWindow {
         sourceComponent: StatusViewer {
             groups: backend.statusUpdates
             onMediaRequested: messageId => backend.ensureStatusMedia(messageId)
+            onReplyRequested: (recipientJid, statusMessageId, text) =>
+                backend.sendStatusReply(recipientJid, statusMessageId, text)
+        }
+    }
+
+    Connections {
+        target: backend
+        function onStatusReplyFinished(recipientJid, statusMessageId, success, message) {
+            if (statusViewerLoader.item)
+                statusViewerLoader.item.finishReply(recipientJid, statusMessageId, success, message)
         }
     }
 

@@ -61,6 +61,23 @@ func TestSendResolvesPhoneAndAddsPreview(t *testing.T) {
 	}
 }
 
+func TestSendStatusReplyIncludesStatusQuoteChat(t *testing.T) {
+	fake := &fakeCaller{results: map[string]json.RawMessage{
+		"message.send": json.RawMessage(`{"id":"sent"}`),
+	}}
+	_, err := sendCommand(context.Background(), fake, []string{
+		"--to", "alice@lid", "--text", "Great photo", "--reply-to", "status-42",
+		"--reply-chat", "status@broadcast", "--no-preview",
+	}, strings.NewReader(""), &strings.Builder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := fake.params[0].(map[string]any)
+	if params["chat_jid"] != "alice@lid" || params["reply_to"] != "status-42" || params["reply_chat_jid"] != "status@broadcast" {
+		t.Fatalf("status reply params = %#v", params)
+	}
+}
+
 func TestMessageTextPreservesMultilineInput(t *testing.T) {
 	got, err := messageText("-", nil, strings.NewReader("first\nsecond\n"))
 	if err != nil {
