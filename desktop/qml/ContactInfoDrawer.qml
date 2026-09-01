@@ -14,6 +14,7 @@ Rectangle {
     property var info: ({})
     property var sharedContent: []
     property bool sharedContentHasMore: false
+    property bool sharedContentLoading: false
 
     signal closeRequested()
     signal sharedRequested(string category)
@@ -44,7 +45,7 @@ Rectangle {
 
     function localUrl(path) {
         const value = String(path || "")
-        return value ? (value.indexOf("file:") === 0 || value.indexOf("data:") === 0 ? value : "file://" + value) : ""
+        return value ? (value.indexOf("file:") === 0 || value.indexOf("data:") === 0 || value.indexOf("qrc:") === 0 ? value : "file://" + value) : ""
     }
 
     function messageUrl(message) {
@@ -239,6 +240,7 @@ Rectangle {
                                 color: Theme.surfaceMuted
                                 clip: true
                                 Image {
+                                    id: previewImage
                                     anchors.fill: parent
                                     source: root.localUrl(modelData.media_thumbnail || modelData.media_path || modelData.link_thumbnail)
                                     fillMode: Image.PreserveAspectCrop
@@ -246,11 +248,12 @@ Rectangle {
                                     visible: source !== "" && status !== Image.Error
                                 }
                                 TintedIcon {
+                                    objectName: "contactPreviewFallback"
                                     anchors.centerIn: parent
                                     width: 28
                                     height: 28
-                                    visible: !parent.children[0].visible
-                                    source: Qt.resolvedUrl(modelData.kind === "document" ? "icons/document.svg" : modelData.link_url ? "icons/link.svg" : "icons/gallery.svg")
+                                    visible: previewImage.source === "" || previewImage.status === Image.Error
+                                    source: Qt.resolvedUrl("icons/gallery.svg")
                                     tint: Theme.icon
                                 }
                                 MouseArea {
@@ -349,11 +352,15 @@ Rectangle {
     Component {
         id: sharedPage
         ColumnLayout {
+            anchors.fill: parent
             spacing: 0
 
             RowLayout {
                 Layout.fillWidth: true
+                Layout.fillHeight: false
                 Layout.preferredHeight: 58
+                Layout.minimumHeight: 58
+                Layout.maximumHeight: 58
                 spacing: 0
                 Repeater {
                     model: [
@@ -399,6 +406,7 @@ Rectangle {
             Loader {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.minimumHeight: 0
                 sourceComponent: root.activeCategory === "media" ? mediaGrid : sharedList
             }
         }
@@ -411,7 +419,8 @@ Rectangle {
             objectName: "contactMediaGrid"
             clip: true
             model: root.sharedContent
-            cellWidth: Math.max(112, width / Math.max(2, Math.floor(width / 128)))
+            readonly property int columnCount: Math.max(2, Math.floor(Math.max(1, width - leftMargin - rightMargin) / 128))
+            cellWidth: Math.floor(Math.max(1, width - leftMargin - rightMargin) / columnCount)
             cellHeight: cellWidth
             topMargin: 16
             leftMargin: 16
@@ -429,6 +438,8 @@ Rectangle {
                     color: Theme.surfaceMuted
                     clip: true
                     Image {
+                        id: mediaImage
+                        objectName: "contactMediaImage"
                         anchors.fill: parent
                         source: root.localUrl(modelData.media_thumbnail || modelData.media_path)
                         fillMode: Image.PreserveAspectCrop
@@ -438,7 +449,7 @@ Rectangle {
                         anchors.centerIn: parent
                         width: 32
                         height: 32
-                        visible: parent.children[0].status !== Image.Ready
+                        visible: mediaImage.status === Image.Null || mediaImage.status === Image.Error
                         source: Qt.resolvedUrl("icons/gallery.svg")
                         tint: Theme.icon
                     }
@@ -456,10 +467,18 @@ Rectangle {
             }
             Label {
                 anchors.centerIn: parent
-                visible: grid.count === 0
+                visible: grid.count === 0 && !root.sharedContentLoading
                 text: qsTr("No media in this chat")
                 color: Theme.textMuted
                 font.pixelSize: 16
+            }
+            BusyIndicator {
+                anchors.centerIn: parent
+                width: 44
+                height: 44
+                running: visible
+                visible: grid.count === 0 && root.sharedContentLoading
+                Accessible.name: qsTr("Loading shared media")
             }
         }
     }
@@ -499,6 +518,7 @@ Rectangle {
                         color: Theme.surfaceMuted
                         clip: true
                         Image {
+                            id: sharedThumbnail
                             anchors.fill: parent
                             source: root.localUrl(modelData.link_thumbnail)
                             fillMode: Image.PreserveAspectCrop
@@ -511,7 +531,7 @@ Rectangle {
                             height: 24
                             source: Qt.resolvedUrl(root.activeCategory === "links" ? "icons/link.svg" : "icons/document.svg")
                             tint: Theme.icon
-                            visible: !parent.children[0].visible
+                            visible: root.activeCategory !== "links" || sharedThumbnail.source === "" || sharedThumbnail.status === Image.Error
                         }
                     }
                     ColumnLayout {
@@ -547,10 +567,18 @@ Rectangle {
             }
             Label {
                 anchors.centerIn: parent
-                visible: list.count === 0
+                visible: list.count === 0 && !root.sharedContentLoading
                 text: root.activeCategory === "documents" ? qsTr("No documents in this chat") : qsTr("No links in this chat")
                 color: Theme.textMuted
                 font.pixelSize: 16
+            }
+            BusyIndicator {
+                anchors.centerIn: parent
+                width: 44
+                height: 44
+                running: visible
+                visible: list.count === 0 && root.sharedContentLoading
+                Accessible.name: qsTr("Loading shared content")
             }
         }
     }

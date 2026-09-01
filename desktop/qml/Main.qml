@@ -1206,6 +1206,7 @@ Kirigami.ApplicationWindow {
                 info: backend.chatInfo
                 sharedContent: backend.sharedContent
                 sharedContentHasMore: backend.sharedContentHasMore
+                sharedContentLoading: backend.sharedContentLoading
                 onCloseRequested: {
                     window.infoDrawerOpen = false
                     backend.clearChatInfo()

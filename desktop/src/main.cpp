@@ -317,24 +317,49 @@ int main(int argc, char *argv[])
             {QStringLiteral("link_count"), 1},
             {QStringLiteral("preview"), QVariantList{}},
         };
+        const QVariantList sharedContent{
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("photo-1")},
+                        {QStringLiteral("kind"), QStringLiteral("image")},
+                        {QStringLiteral("media_path"), QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/assets/chat-background.png")}},
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("photo-2")},
+                        {QStringLiteral("kind"), QStringLiteral("image")},
+                        {QStringLiteral("media_path"), QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/assets/chat-background.png")}},
+        };
         std::unique_ptr<QObject> drawer(component.createWithInitialProperties({
             {QStringLiteral("opened"), true},
             {QStringLiteral("width"), 440},
             {QStringLiteral("height"), 800},
             {QStringLiteral("selectedChat"), chat},
             {QStringLiteral("info"), info},
+            {QStringLiteral("sharedContent"), sharedContent},
         }));
         if (!drawer)
             return EXIT_FAILURE;
         QCoreApplication::processEvents();
         auto *back = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactInfoBackButton")));
         drawer->setProperty("sharedView", true);
+        drawer->setProperty("activeCategory", QStringLiteral("media"));
+        QCoreApplication::processEvents();
+        auto *drawerItem = qobject_cast<QQuickItem *>(drawer.get());
+        auto *grid = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactMediaGrid")));
+        const auto gridTop = grid && drawerItem ? grid->mapToItem(drawerItem, QPointF(0, 0)).y() : -1.0;
+        const auto gridHeight = grid ? grid->height() : -1.0;
+        const auto gridCount = grid ? grid->property("count").toInt() : -1;
+        qInfo().noquote() << QStringLiteral("contact shared grid top=%1 height=%2 count=%3")
+                                .arg(gridTop).arg(gridHeight).arg(gridCount);
+
         drawer->setProperty("activeCategory", QStringLiteral("links"));
         QCoreApplication::processEvents();
+        auto *list = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactSharedList")));
+        const auto listTop = list && drawerItem ? list->mapToItem(drawerItem, QPointF(0, 0)).y() : -1.0;
         return back != nullptr && back->width() >= 44 && back->height() >= 44
                 && drawer->property("sharedView").toBool()
                 && drawer->property("activeCategory").toString() == QStringLiteral("links")
                 && drawer->property("width").toReal() >= 320
+                && gridCount == 2
+                && gridTop >= 120.0 && gridTop <= 150.0 && gridHeight >= 600.0
+                && list != nullptr && list->property("count").toInt() == 2
+                && listTop >= 120.0 && listTop <= 150.0 && list->height() >= 600.0
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }

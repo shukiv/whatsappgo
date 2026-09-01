@@ -32,6 +32,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantList sharedContent READ sharedContent NOTIFY sharedContentChanged)
     Q_PROPERTY(bool sharedContentHasMore READ sharedContentHasMore NOTIFY sharedContentChanged)
     Q_PROPERTY(QString sharedContentCategory READ sharedContentCategory NOTIFY sharedContentChanged)
+    Q_PROPERTY(bool sharedContentLoading READ sharedContentLoading NOTIFY sharedContentChanged)
     Q_PROPERTY(QString pairingQr READ pairingQr NOTIFY pairingQrChanged)
     Q_PROPERTY(QString pairingCode READ pairingCode NOTIFY pairingCodeChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
@@ -61,6 +62,7 @@ public:
     QVariantList sharedContent() const { return m_sharedContent; }
     bool sharedContentHasMore() const { return m_sharedContentHasMore; }
     QString sharedContentCategory() const { return m_sharedContentCategory; }
+    bool sharedContentLoading() const { return m_sharedContentLoading; }
     QString pairingQr() const { return m_pairingQr; }
     QString pairingCode() const { return m_pairingCode; }
     bool busy() const { return m_busy; }
@@ -183,6 +185,7 @@ private:
     QVariantList m_sharedContent;
     bool m_sharedContentHasMore = false;
     QString m_sharedContentCategory;
+    bool m_sharedContentLoading = false;
     QVariantList m_searchResults;
     QVariantList m_statusUpdates;
     QVariantList m_callLogs;

@@ -529,12 +529,25 @@ void RpcClient::refreshSharedContent(const QString &category, bool append)
     const auto normalized = category.isEmpty() ? QStringLiteral("media") : category;
     const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
     const int offset = append && normalized == m_sharedContentCategory ? m_sharedContent.size() : 0;
+    if (!append || normalized != m_sharedContentCategory) {
+        m_sharedContent.clear();
+        m_sharedContentHasMore = false;
+    }
+    m_sharedContentCategory = normalized;
+    m_sharedContentLoading = true;
+    emit sharedContentChanged();
     sendRequest(QStringLiteral("chat.shared"),
                 {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("category"), normalized},
                  {QStringLiteral("offset"), offset}, {QStringLiteral("limit"), 60}},
                 [this, chatJid, normalized, append, offset](const QJsonValue &result, const QJsonObject &error) {
-                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+                    if (m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid
+                        || m_sharedContentCategory != normalized)
                         return;
+                    m_sharedContentLoading = false;
+                    if (!error.isEmpty()) {
+                        emit sharedContentChanged();
+                        return;
+                    }
                     const auto page = result.toObject();
                     const auto items = page.value(QStringLiteral("messages")).toArray().toVariantList();
                     if (append && offset > 0 && normalized == m_sharedContentCategory)
@@ -550,11 +563,13 @@ void RpcClient::refreshSharedContent(const QString &category, bool append)
 void RpcClient::clearChatInfo()
 {
     const bool hadInfo = !m_chatInfo.isEmpty();
-    const bool hadContent = !m_sharedContent.isEmpty() || !m_sharedContentCategory.isEmpty() || m_sharedContentHasMore;
+    const bool hadContent = !m_sharedContent.isEmpty() || !m_sharedContentCategory.isEmpty()
+        || m_sharedContentHasMore || m_sharedContentLoading;
     m_chatInfo.clear();
     m_sharedContent.clear();
     m_sharedContentCategory.clear();
     m_sharedContentHasMore = false;
+    m_sharedContentLoading = false;
     if (hadInfo)
         emit chatInfoChanged();
     if (hadContent)

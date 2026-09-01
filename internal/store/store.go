@@ -522,7 +522,10 @@ func (s *Store) ChatInfo(ctx context.Context, jid string) (model.ChatInfo, error
 	if err != nil {
 		return model.ChatInfo{}, err
 	}
-	preview, err := s.ListSharedMessages(ctx, jid, "all", 0, 6)
+	// Match WhatsApp's compact strip: it previews visual media only. Links and
+	// documents remain included in SharedCount and are available in their own
+	// tabs, but must not displace locally cached photo/video thumbnails here.
+	preview, err := s.ListSharedMessages(ctx, jid, "media", 0, 6)
 	if err != nil {
 		return model.ChatInfo{}, err
 	}

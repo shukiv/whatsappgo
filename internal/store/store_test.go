@@ -762,8 +762,10 @@ func TestChatInfoAndSharedContentUseCanonicalHistory(t *testing.T) {
 		{ID: "photo", ChatJID: lid, Timestamp: 10, Kind: "image", MediaPath: "/cache/photo.jpg", Status: "received"},
 		{ID: "video", ChatJID: lid, Timestamp: 9, Kind: "video", MediaThumbnail: "/cache/video.jpg", Status: "received"},
 		{ID: "doc", ChatJID: lid, Timestamp: 8, Kind: "document", Body: "copy at https://example.net/invoice", MediaName: "invoice.pdf", Status: "received"},
-		{ID: "link", ChatJID: lid, Timestamp: 7, Kind: "text", Body: "see https://example.com", LinkURL: "https://example.com", LinkTitle: "Example", Status: "received"},
-		{ID: "plain-link", ChatJID: lid, Timestamp: 6, Kind: "text", Body: "https://example.org/path", Status: "received"},
+		// Newer links must not displace the media thumbnails in the contact-info
+		// preview strip. Links and documents have their own tabs in the full view.
+		{ID: "link", ChatJID: lid, Timestamp: 12, Kind: "text", Body: "see https://example.com", LinkURL: "https://example.com", LinkTitle: "Example", Status: "received"},
+		{ID: "plain-link", ChatJID: lid, Timestamp: 11, Kind: "text", Body: "https://example.org/path", Status: "received"},
 		{ID: "revoked", ChatJID: lid, Timestamp: 5, Kind: "image", Revoked: true, Status: "received"},
 	}
 	for _, message := range messages {
@@ -778,7 +780,7 @@ func TestChatInfoAndSharedContentUseCanonicalHistory(t *testing.T) {
 	if info.Chat.JID != lid || info.Phone != "573133878085" || info.MediaCount != 2 || info.DocumentCount != 1 || info.LinkCount != 3 || info.SharedCount != 5 {
 		t.Fatalf("unexpected chat info: %#v", info)
 	}
-	if len(info.Preview) != 5 || info.Preview[0].ID != "photo" {
+	if len(info.Preview) != 2 || info.Preview[0].ID != "photo" || info.Preview[1].ID != "video" {
 		t.Fatalf("unexpected preview: %#v", info.Preview)
 	}
 	media, err := s.ListSharedMessages(ctx, phoneJID, "media", 0, 1)
@@ -799,7 +801,7 @@ func TestChatInfoAndSharedContentUseCanonicalHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(links.Messages) != 3 || links.Messages[0].ID != "doc" || links.Messages[1].ID != "link" || links.Messages[2].ID != "plain-link" {
+	if len(links.Messages) != 3 || links.Messages[0].ID != "link" || links.Messages[1].ID != "plain-link" || links.Messages[2].ID != "doc" {
 		t.Fatalf("unexpected links: %#v", links)
 	}
 }
