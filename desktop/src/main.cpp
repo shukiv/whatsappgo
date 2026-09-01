@@ -132,6 +132,8 @@ int main(int argc, char *argv[])
     parser.addOption(resizeRenderingTestOption);
     QCommandLineOption messageLayoutTestOption(QStringLiteral("message-layout-test"), QStringLiteral("Verify message bubble width limits, padding, and media previews"));
     parser.addOption(messageLayoutTestOption);
+    QCommandLineOption messageScrollTestOption(QStringLiteral("message-scroll-test"), QStringLiteral("Verify conversations open and remain anchored at the newest message"));
+    parser.addOption(messageScrollTestOption);
     QCommandLineOption desktopIntegrationTestOption(QStringLiteral("desktop-integration-test"), QStringLiteral("Verify system tray and notification integration"));
     parser.addOption(desktopIntegrationTestOption);
     QCommandLineOption contactInfoTestOption(QStringLiteral("contact-info-test"), QStringLiteral("Verify the contact information and shared-content drawer"));
@@ -155,13 +157,15 @@ int main(int argc, char *argv[])
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
     const bool messageLayoutTest = parser.isSet(messageLayoutTestOption);
+    const bool messageScrollTest = parser.isSet(messageScrollTestOption);
     const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
     const bool contactInfoTest = parser.isSet(contactInfoTestOption);
     const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
-        || messageLayoutTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest || !screenshotPath.isEmpty();
+        || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
+        || !screenshotPath.isEmpty();
 
     if (automatedRun)
         qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
@@ -791,6 +795,10 @@ int main(int argc, char *argv[])
                 QStringLiteral("bubble %1 exceeds 70%% of the %2 pane").arg(longBubble->width()).arg(paneWidth));
         require(longBubble->width() >= 200.0,
                 QStringLiteral("bubble %1 collapsed below a readable width").arg(longBubble->width()));
+        require(longDelegate->property("bodyFontSize").toInt() >= 15,
+                QStringLiteral("message body text is smaller than 15 px"));
+        require(longDelegate->property("horizontalPadding").toReal() >= 11.0,
+                QStringLiteral("message bubble horizontal padding is below 11 px"));
 
         const auto bodyLeft = longBody->mapToItem(longBubble, QPointF(0, 0)).x();
         const auto bodyRight = longBody->mapToItem(longBubble, QPointF(longBody->width(), 0)).x();
@@ -858,7 +866,7 @@ int main(int argc, char *argv[])
             if (shapeBubble == nullptr)
                 return EXIT_FAILURE;
             qInfo().noquote() << QStringLiteral("shape %1 bubble=%2").arg(QString::fromLatin1(shape.name)).arg(shapeBubble->width());
-            require(shapeBubble->width() <= 420.0,
+            require(shapeBubble->width() <= 460.0,
                     QStringLiteral("%1 bubble is %2 px wide; it should hug its text")
                         .arg(QString::fromLatin1(shape.name)).arg(shapeBubble->width()));
         }
@@ -1260,6 +1268,72 @@ int main(int argc, char *argv[])
         require(documentAction != nullptr && documentAction->isVisible(),
                 QStringLiteral("document download action is missing"));
         QFile::remove(thumbnailPath);
+        return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (messageScrollTest) {
+        auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
+        auto *messageList = mainRoot
+            ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("messageList")))
+            : nullptr;
+        auto *messages = qobject_cast<MessageListModel *>(backend.messages());
+        if (messageList == nullptr || messages == nullptr)
+            return EXIT_FAILURE;
+
+        bool passed = true;
+        const auto require = [&passed](bool condition, const QString &description) {
+            if (!condition) {
+                passed = false;
+                qInfo().noquote() << QStringLiteral("FAIL: ") + description;
+            }
+        };
+        const auto settle = [] {
+            QEventLoop loop;
+            QTimer::singleShot(80, &loop, &QEventLoop::quit);
+            loop.exec();
+        };
+        const auto makeMessage = [](int index) {
+            return QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("scroll-%1").arg(index)},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("Message %1 with enough text to exercise row layout").arg(index)},
+                {QStringLiteral("from_me"), index % 2 == 0},
+                {QStringLiteral("timestamp"), index * 1000},
+                {QStringLiteral("status"), QStringLiteral("read")},
+            };
+        };
+
+        messageList->setProperty("initialPositionPending", true);
+        messages->reset(QVariantList{makeMessage(0)});
+        settle();
+        require(messageList->property("atYEnd").toBool(),
+                QStringLiteral("a short conversation did not open at its tail"));
+        require(messageList->property("topMargin").toReal() > messageList->height() / 2.0,
+                QStringLiteral("a short conversation starts at the top instead of growing upward from the composer"));
+
+        QVariantList history;
+        for (int index = 0; index < 80; ++index)
+            history.append(makeMessage(index));
+        messageList->setProperty("initialPositionPending", true);
+        messages->reset(history);
+        settle();
+        require(messageList->property("atYEnd").toBool(),
+                QStringLiteral("a full conversation did not open at its newest message"));
+
+        messageList->setProperty("followTail", true);
+        messages->upsert(makeMessage(80));
+        settle();
+        require(messageList->property("atYEnd").toBool(),
+                QStringLiteral("an appended message moved a tail-following conversation away from the bottom"));
+
+        const qreal tailY = messageList->property("contentY").toReal();
+        messageList->setProperty("followTail", false);
+        messageList->setProperty("contentY", tailY - 220.0);
+        const qreal readingY = messageList->property("contentY").toReal();
+        messages->upsert(makeMessage(81));
+        settle();
+        require(qAbs(messageList->property("contentY").toReal() - readingY) < 2.0,
+                QStringLiteral("an appended message interrupted a reader browsing older history"));
+
         return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (mediaPreviewTest) {

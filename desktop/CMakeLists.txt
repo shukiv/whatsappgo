@@ -212,6 +212,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-backend-lifecycle COMMAND whatsappgo --profile lifecycle-test --backend-lifecycle-test)
     add_test(NAME desktop-resize-rendering COMMAND whatsappgo --resize-rendering-test)
     add_test(NAME desktop-message-layout COMMAND whatsappgo --message-layout-test)
+    add_test(NAME desktop-message-scroll COMMAND whatsappgo --message-scroll-test)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
@@ -236,7 +237,7 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )
-    set_tests_properties(desktop-resize-rendering desktop-message-layout PROPERTIES
+    set_tests_properties(desktop-resize-rendering desktop-message-layout desktop-message-scroll PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )

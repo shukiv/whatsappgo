@@ -57,14 +57,15 @@ Item {
     // Every width limit inside the bubble derives from the conversation width.
     // Nothing may size itself from the bubble, because the bubble sizes itself
     // from its content and the two together would form a binding loop.
-    readonly property real horizontalPadding: 9
+    readonly property real horizontalPadding: 11
     readonly property real maxBubbleWidth: Math.max(180, Math.min(root.width * 0.68, 620))
     readonly property real contentMaxWidth: maxBubbleWidth - 2 * horizontalPadding
     readonly property real mediaWidth: Math.min(contentMaxWidth, modelData.kind === "sticker" ? 160 : 300)
 
-    // WhatsApp Web's message metrics: 14.2 px body text on a 19 px line.
-    readonly property int bodyFontSize: 14
-    readonly property int captionFontSize: 13
+    // Keep compact chat density while giving short bubbles a little more
+    // presence and a comfortably readable baseline.
+    readonly property int bodyFontSize: 15
+    readonly property int captionFontSize: 14
     readonly property int metaFontSize: 11
 
     readonly property bool playingThis: Playback.isCurrent(modelData.id)
@@ -278,7 +279,7 @@ Item {
         width: implicitWidth
         // The meta line is placed rather than stacked, so a short message can
         // keep its timestamp beside the text instead of below it.
-        implicitHeight: messageContent.implicitHeight + 12 + (root.metaBeside ? 0 : metaRow.height + 2)
+        implicitHeight: messageContent.implicitHeight + 14 + (root.metaBeside ? 0 : metaRow.height + 2)
         // Positioned, never anchored. Anchoring one side or the other by
         // sender needs two bindings, and they do not change together: while a
         // reused delegate is rebound to a message from the other side, both
@@ -369,7 +370,7 @@ Item {
         Column {
             id: messageContent
             x: root.horizontalPadding
-            y: 6
+            y: 7
             width: root.contentWidth
             spacing: 3
 

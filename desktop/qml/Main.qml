@@ -1150,13 +1150,18 @@ Kirigami.ApplicationWindow {
 
                     ListView {
                         id: messageList
+                        objectName: "messageList"
                         property bool initialPositionPending: false
                         anchors.fill: parent
                         model: backend.messages
                         clip: true
                         reuseItems: true
+                        cacheBuffer: height
                         spacing: 1
-                        topMargin: 10
+                        // Short conversations grow upward from the composer,
+                        // just like long conversations whose tail is visible.
+                        // ListView's contentHeight excludes its margins.
+                        topMargin: count > 0 ? Math.max(10, height - contentHeight - bottomMargin) : 10
                         bottomMargin: 10
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: OverlayScrollBar {}
@@ -1190,37 +1195,80 @@ Kirigami.ApplicationWindow {
                             }
                             onImagePreviewRequested: message => window.openChatImage(message)
                         }
-                        // Following the tail only while the reader is already at
-                        // the bottom keeps an incoming message from yanking the
-                        // view away from older history they are reading.
                         property bool followTail: true
-                        onContentYChanged: {
-                            followTail = atYEnd
-                            if (contentY < 80)
-                                backend.loadOlderMessages()
+                        property bool positioningTail: false
+
+                        function nearTail() {
+                            return atYEnd || contentHeight + bottomMargin - contentY - height <= 48
                         }
-                        // Pictures and waveforms settle after the page is
-                        // shown, which used to leave the view a message short
-                        // of the bottom. Following the growth keeps it there.
-                        onContentHeightChanged: {
+
+                        function scheduleTailPosition() {
                             if (followTail)
-                                Qt.callLater(() => messageList.positionViewAtEnd())
+                                tailPositionTimer.restart()
                         }
+
+                        // Geometry can change several times while a batch of
+                        // delegates and image previews settles. One position
+                        // per event-loop turn avoids visible stop-start jumps.
+                        Timer {
+                            id: tailPositionTimer
+                            interval: 0
+                            repeat: false
+                            onTriggered: {
+                                if (!messageList.followTail)
+                                    return
+                                messageList.positioningTail = true
+                                messageList.positionViewAtEnd()
+                                // positionViewAtEnd() stops at the last row but
+                                // does not include ListView's bottom margin.
+                                messageList.contentY = messageList.originY
+                                    + messageList.contentHeight - messageList.height
+                                    + messageList.bottomMargin
+                                Qt.callLater(() => {
+                                    messageList.positioningTail = false
+                                    messageList.followTail = true
+                                })
+                            }
+                        }
+
+                        Timer {
+                            id: olderMessagesTimer
+                            interval: 120
+                            repeat: false
+                            onTriggered: backend.loadOlderMessages()
+                        }
+
+                        // Only physical movement by the reader changes whether
+                        // the tail is followed. Layout-driven contentY changes
+                        // must not turn following off halfway through a batch.
+                        onContentYChanged: {
+                            if (moving && !positioningTail)
+                                followTail = nearTail()
+                            if (moving && contentY < originY + 80)
+                                olderMessagesTimer.restart()
+                        }
+                        onMovementEnded: {
+                            if (!positioningTail)
+                                followTail = nearTail()
+                            if (contentY < originY + 80)
+                                olderMessagesTimer.restart()
+                        }
+                        onContentHeightChanged: scheduleTailPosition()
+                        onHeightChanged: scheduleTailPosition()
                         onCountChanged: {
                             if (window.pendingMessageJumpId)
                                 Qt.callLater(() => window.resolvePendingMessageJump())
                             if (count > 0 && initialPositionPending) {
                                 initialPositionPending = false
                                 followTail = true
-                                Qt.callLater(() => positionViewAtEnd())
+                                scheduleTailPosition()
                             }
                         }
 
                         Connections {
                             target: backend.messages
                             function onAppended() {
-                                if (messageList.followTail)
-                                    Qt.callLater(() => messageList.positionViewAtEnd())
+                                messageList.scheduleTailPosition()
                                 if (window.infoDrawerOpen) {
                                     backend.refreshChatInfo()
                                     if (contactInfoDrawer.sharedView)
