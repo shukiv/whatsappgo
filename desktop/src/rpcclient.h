@@ -122,6 +122,8 @@ public:
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
     Q_INVOKABLE void copyText(const QString &text);
     Q_INVOKABLE void refreshStatuses();
+    Q_INVOKABLE void fetchStatusAvatar(const QString &jid);
+    Q_INVOKABLE void ensureStatusMedia(const QString &messageId);
     Q_INVOKABLE void refreshCalls();
     Q_INVOKABLE void refreshChannels();
     Q_INVOKABLE void refreshCommunities();
@@ -216,6 +218,8 @@ private:
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
     QSet<QString> m_requestedMedia;
+    QSet<QString> m_requestedStatusAvatars;
+    QSet<QString> m_requestedStatusMedia;
     QStringList m_mediaQueue;
     int m_mediaInFlight = 0;
 };

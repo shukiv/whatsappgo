@@ -4,12 +4,59 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/store"
 )
+
+func TestStatusesListGroupsActiveUpdatesBySender(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, &fakeGateway{}, events.New())
+	defer svc.Close()
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	if err := st.UpsertChat(ctx, model.Chat{JID: "alice@lid", Title: "Alice Address Book", AvatarPath: "/tmp/alice.jpg"}); err != nil {
+		t.Fatal(err)
+	}
+	updates := []model.Message{
+		{ID: "alice-2", ChatJID: "status@broadcast", SenderJID: "alice@lid", SenderName: "A", Timestamp: now - 1_000, Kind: "image", MediaPath: "/tmp/two.jpg", Status: "received"},
+		{ID: "bob-1", ChatJID: "status@broadcast", SenderJID: "bob@lid", SenderName: "Bob Push Name", Timestamp: now - 2_000, Kind: "text", Body: "hello", Status: "received"},
+		{ID: "alice-1", ChatJID: "status@broadcast", SenderJID: "alice@lid", SenderName: "A", Timestamp: now - 3_000, Kind: "text", Body: "first", Status: "received"},
+		{ID: "deleted", ChatJID: "status@broadcast", SenderJID: "bob@lid", SenderName: "Bob Push Name", Timestamp: now - 4_000, Kind: "image", Revoked: true, Status: "received"},
+		{ID: "expired", ChatJID: "status@broadcast", SenderJID: "old@lid", SenderName: "Expired", Timestamp: now - int64(25*time.Hour/time.Millisecond), Kind: "text", Body: "old", Status: "received"},
+	}
+	for _, update := range updates {
+		if err := st.UpsertMessage(ctx, update, "Status", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := svc.Handle(ctx, "statuses.list", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := result.([]model.StatusGroup)
+	if len(groups) != 2 {
+		t.Fatalf("expected two active senders, got %#v", groups)
+	}
+	if groups[0].SenderJID != "alice@lid" || groups[0].SenderName != "Alice Address Book" || groups[0].AvatarPath != "/tmp/alice.jpg" {
+		t.Fatalf("contact identity was not resolved: %#v", groups[0])
+	}
+	if len(groups[0].Items) != 2 || groups[0].Items[0].ID != "alice-1" || groups[0].Items[1].ID != "alice-2" {
+		t.Fatalf("story playback order is wrong: %#v", groups[0].Items)
+	}
+	if groups[1].SenderJID != "bob@lid" || groups[1].SenderName != "Bob Push Name" || len(groups[1].Items) != 1 {
+		t.Fatalf("push-name fallback or revoked filtering is wrong: %#v", groups[1])
+	}
+}
 
 type fakeGateway struct {
 	gateway.Unavailable

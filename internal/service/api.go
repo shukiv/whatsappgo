@@ -36,7 +36,7 @@ var apiMethods = []MethodDescription{
 	method("chat.read", "Send receipts and clear the local unread count", true, map[string]any{"chat_jid": "123@lid", "sender_jid": "456@lid", "message_ids": []string{"MESSAGE_ID"}, "timestamp": 0}),
 	method("chat.typing", "Set composing or paused presence", true, map[string]any{"chat_jid": "123@lid", "typing": true}),
 	method("chat.avatar", "Fetch and cache a chat avatar", true, map[string]any{"chat_jid": "123@lid"}),
-	method("statuses.list", "List locally synchronized statuses", false, nil),
+	method("statuses.list", "List active status stories grouped by sender", false, nil),
 	method("calls.list", "List synchronized call records", false, nil),
 	method("channels.list", "List followed channels", false, nil),
 	method("communities.list", "List joined communities", false, nil),

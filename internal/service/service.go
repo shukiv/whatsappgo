@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
@@ -200,14 +201,7 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		}
 		return okResult(), err
 	case "statuses.list":
-		page, err := s.store.ListMessages(ctx, "status@broadcast", 0, 200)
-		if err != nil {
-			return nil, err
-		}
-		for i, j := 0, len(page.Messages)-1; i < j; i, j = i+1, j-1 {
-			page.Messages[i], page.Messages[j] = page.Messages[j], page.Messages[i]
-		}
-		return page.Messages, nil
+		return s.store.ListStatusGroups(ctx, time.Now().Add(-24*time.Hour).UnixMilli(), 200)
 	case "calls.list":
 		return s.store.ListCallLogs(ctx, 200)
 	case "channels.list":

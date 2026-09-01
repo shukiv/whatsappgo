@@ -878,6 +878,8 @@ void RpcClient::switchProfile(const QString &profile)
     m_selectedChat.clear();
     m_searchResults.clear();
     m_statusUpdates.clear();
+    m_requestedStatusAvatars.clear();
+    m_requestedStatusMedia.clear();
     m_callLogs.clear();
     m_channels.clear();
     m_communities.clear();
@@ -1115,6 +1117,30 @@ void RpcClient::refreshStatuses()
         m_statusUpdates = result.toArray().toVariantList();
         emit statusUpdatesChanged();
     });
+}
+
+void RpcClient::fetchStatusAvatar(const QString &jid)
+{
+    if (jid.isEmpty() || m_requestedStatusAvatars.contains(jid))
+        return;
+    m_requestedStatusAvatars.insert(jid);
+    sendRequest(QStringLiteral("chat.avatar"), {{QStringLiteral("chat_jid"), jid}},
+                [this](const QJsonValue &, const QJsonObject &) {
+                    refreshStatuses();
+                });
+}
+
+void RpcClient::ensureStatusMedia(const QString &messageId)
+{
+    if (messageId.isEmpty() || m_requestedStatusMedia.contains(messageId))
+        return;
+    m_requestedStatusMedia.insert(messageId);
+    sendRequest(QStringLiteral("message.download"),
+                {{QStringLiteral("chat_jid"), QStringLiteral("status@broadcast")},
+                 {QStringLiteral("message_id"), messageId}},
+                [this](const QJsonValue &, const QJsonObject &) {
+                    refreshStatuses();
+                });
 }
 
 void RpcClient::refreshCalls()

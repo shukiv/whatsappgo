@@ -139,7 +139,7 @@ All parameter objects reject unknown fields.
 | `chat.read` | `chat_jid`, `sender_jid`, `message_ids`, `timestamp` | Send receipts and clear local unread state |
 | `chat.typing` | `chat_jid`, `typing` | Set composing/paused presence |
 | `chat.avatar` | `chat_jid` | Fetch/cache avatar and return its path |
-| `statuses.list` | `{}` | Locally synchronized statuses |
+| `statuses.list` | `{}` | Active (last 24 hours) status stories grouped by sender; each group contains resolved identity fields and chronologically ordered `items` |
 | `calls.list` | `{}` | Locally synchronized call records |
 | `channels.list` | `{}` | Followed channels |
 | `communities.list` | `{}` | Joined communities |

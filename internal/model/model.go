@@ -97,6 +97,16 @@ type MessagePage struct {
 	NextBefore int64     `json:"next_before,omitempty"`
 }
 
+// StatusGroup is one contact's active story. Items are ordered from oldest to
+// newest so a viewer can play them in the same order they were posted.
+type StatusGroup struct {
+	SenderJID  string    `json:"sender_jid"`
+	SenderName string    `json:"sender_name"`
+	AvatarPath string    `json:"avatar_path,omitempty"`
+	LatestAt   int64     `json:"latest_at"`
+	Items      []Message `json:"items"`
+}
+
 // ChatInfo is the local information WhatsAppGo can show for a conversation.
 // Shared content is paged separately so opening the drawer stays inexpensive
 // even for chats with years of history.

@@ -135,6 +135,8 @@ int main(int argc, char *argv[])
     parser.addOption(desktopIntegrationTestOption);
     QCommandLineOption contactInfoTestOption(QStringLiteral("contact-info-test"), QStringLiteral("Verify the contact information and shared-content drawer"));
     parser.addOption(contactInfoTestOption);
+    QCommandLineOption statusStoriesTestOption(QStringLiteral("status-stories-test"), QStringLiteral("Verify grouped status rows and sequential story playback"));
+    parser.addOption(statusStoriesTestOption);
     QCommandLineOption screenshotOption(QStringLiteral("screenshot"), QStringLiteral("Render the interface to a PNG and exit"), QStringLiteral("path"));
     parser.addOption(screenshotOption);
     QCommandLineOption themeOption(QStringLiteral("theme"), QStringLiteral("Override the appearance for this run (system, light, or dark)"), QStringLiteral("mode"));
@@ -154,10 +156,11 @@ int main(int argc, char *argv[])
     const bool messageLayoutTest = parser.isSet(messageLayoutTestOption);
     const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
     const bool contactInfoTest = parser.isSet(contactInfoTestOption);
+    const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
-        || messageLayoutTest || desktopIntegrationTest || contactInfoTest || !screenshotPath.isEmpty();
+        || messageLayoutTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest || !screenshotPath.isEmpty();
 
     if (automatedRun)
         qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
@@ -366,6 +369,60 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (statusStoriesTest) {
+        const QVariantList aliceItems{
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("alice-1")},
+                        {QStringLiteral("kind"), QStringLiteral("text")},
+                        {QStringLiteral("body"), QStringLiteral("first")},
+                        {QStringLiteral("timestamp"), 1}},
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("alice-2")},
+                        {QStringLiteral("kind"), QStringLiteral("image")},
+                        {QStringLiteral("media_thumbnail"), QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/assets/chat-background.png")},
+                        {QStringLiteral("timestamp"), 2}},
+        };
+        const QVariantList statusGroups{
+            QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("alice@lid")},
+                        {QStringLiteral("sender_name"), QStringLiteral("Alice")},
+                        {QStringLiteral("avatar_path"), QStringLiteral("/tmp/alice.jpg")},
+                        {QStringLiteral("latest_at"), 2},
+                        {QStringLiteral("items"), aliceItems}},
+            QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("bob@lid")},
+                        {QStringLiteral("sender_name"), QStringLiteral("Bob")},
+                        {QStringLiteral("latest_at"), 3},
+                        {QStringLiteral("items"), QVariantList{
+                            QVariantMap{{QStringLiteral("id"), QStringLiteral("bob-1")},
+                                        {QStringLiteral("kind"), QStringLiteral("text")},
+                                        {QStringLiteral("body"), QStringLiteral("second person")},
+                                        {QStringLiteral("timestamp"), 3}},
+                        }}},
+        };
+
+        QQmlComponent pageComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/StatusPage.qml")));
+        std::unique_ptr<QObject> page(pageComponent.createWithInitialProperties({
+            {QStringLiteral("width"), 1200}, {QStringLiteral("height"), 800},
+            {QStringLiteral("groups"), statusGroups},
+        }));
+        QQmlComponent viewerComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/StatusViewer.qml")));
+        std::unique_ptr<QObject> viewer(viewerComponent.createWithInitialProperties({
+            {QStringLiteral("width"), 1200}, {QStringLiteral("height"), 800},
+            {QStringLiteral("groups"), statusGroups}, {QStringLiteral("opened"), true},
+        }));
+        if (!page || !viewer)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *list = page->findChild<QObject *>(QStringLiteral("statusGroupList"));
+        const bool firstAdvance = QMetaObject::invokeMethod(viewer.get(), "advance");
+        QCoreApplication::processEvents();
+        const bool stayedWithAlice = viewer->property("groupIndex").toInt() == 0
+            && viewer->property("itemIndex").toInt() == 1;
+        const bool secondAdvance = QMetaObject::invokeMethod(viewer.get(), "advance");
+        QCoreApplication::processEvents();
+        const bool movedToBob = viewer->property("groupIndex").toInt() == 1
+            && viewer->property("itemIndex").toInt() == 0;
+        return list && list->property("count").toInt() == 2
+                && firstAdvance && stayedWithAlice && secondAdvance && movedToBob
+            ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
     if (resizeRenderingTest) {
         if (engine.rootObjects().isEmpty())
             return EXIT_FAILURE;
@@ -422,16 +479,17 @@ int main(int argc, char *argv[])
             : EXIT_FAILURE;
     }
     if (layoutRegressionTest) {
-        QQmlComponent accountComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/AccountProfileChip.qml")));
+        QQmlComponent accountComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/AccountSwitcherButton.qml")));
         std::unique_ptr<QObject> accountChip(accountComponent.createWithInitialProperties({
-            {QStringLiteral("profileName"), QStringLiteral("work")},
-            {QStringLiteral("unreadCount"), 12},
-            {QStringLiteral("checked"), false},
+            {QStringLiteral("profiles"), QStringList{QStringLiteral("default"), QStringLiteral("work")}},
+            {QStringLiteral("currentProfile"), QStringLiteral("work")},
+            {QStringLiteral("unreadCounts"), QVariantMap{{QStringLiteral("default"), 12}, {QStringLiteral("work"), 0}}},
         }));
         if (!accountChip)
             return EXIT_FAILURE;
         QCoreApplication::processEvents();
-        auto *accountUnreadBadge = qobject_cast<QQuickItem *>(accountChip->findChild<QObject *>(QStringLiteral("accountUnreadBadge")));
+        auto *accountUnreadBadge = qobject_cast<QQuickItem *>(accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherUnreadBadge")));
+        auto *accountChipItem = qobject_cast<QQuickItem *>(accountChip.get());
 
         QQmlComponent chatComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ChatListDelegate.qml")));
         const QVariantMap chat{
@@ -489,8 +547,9 @@ int main(int argc, char *argv[])
         auto *chatViewport = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListViewport"))) : nullptr;
         auto *chatListItem = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatList"))) : nullptr;
         auto *chatScrollBar = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListScrollBar"))) : nullptr;
-        return accountUnreadBadge && accountUnreadBadge->isVisible()
-                && accountUnreadBadge->width() >= 18.0 && accountChip->property("width").toReal() >= 62.0
+        return accountUnreadBadge && accountUnreadBadge->isVisible() && accountChipItem
+                && accountUnreadBadge->width() >= 19.0 && accountChip->property("width").toReal() == 44.0
+                && accountChip->property("totalUnread").toInt() == 12
                 && qAbs(timestampRight - badgeRight) <= 2.0
                 && chatItem->height() <= 76.0
                 && chatItem->x() >= 8.0

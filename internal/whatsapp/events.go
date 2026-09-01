@@ -296,10 +296,10 @@ func syncDirectoryContact(ctx context.Context, st *localstore.Store, pn, lid typ
 		}
 		canonical = lid
 	}
-	if name != "" {
-		return st.UpdateChatTitle(ctx, canonical.String(), name)
-	}
-	return nil
+	// A directory-only contact does not appear in the normal chat list until it
+	// has messages, but retaining its identity lets status stories resolve the
+	// same saved name WhatsApp Web shows.
+	return st.UpsertChat(ctx, model.Chat{JID: canonical.String(), Title: name})
 }
 
 func syncDirectoryContactInfo(ctx context.Context, st *localstore.Store, pn, lid types.JID, info types.ContactInfo) error {

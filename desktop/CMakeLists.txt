@@ -45,7 +45,10 @@ qt_add_qml_module(whatsappgo
         qml/ChatListDelegate.qml
         qml/ChatFilterBar.qml
         qml/ChatFilterChip.qml
-        qml/AccountProfileChip.qml
+        qml/AccountSwitcherButton.qml
+        qml/StatusAvatar.qml
+        qml/StatusPage.qml
+        qml/StatusViewer.qml
         qml/ComposerLinkPreview.qml
         qml/NewChatPane.qml
         qml/MessageDelegate.qml
@@ -189,6 +192,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
+    add_test(NAME desktop-status-stories COMMAND whatsappgo --status-stories-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
@@ -219,6 +223,10 @@ if(BUILD_TESTING)
         TIMEOUT 10
     )
     set_tests_properties(desktop-contact-info PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 10
+    )
+    set_tests_properties(desktop-status-stories PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )

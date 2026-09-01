@@ -7,6 +7,7 @@ ItemDelegate {
     id: root
     property url iconSource
     property bool destructive: false
+    property string trailingText: ""
 
     width: parent ? parent.width : 256
     height: 46
@@ -41,6 +42,14 @@ ItemDelegate {
             color: root.destructive ? Theme.danger : Theme.text
             font.pixelSize: 14
             elide: Text.ElideRight
+        }
+
+        Label {
+            visible: root.trailingText.length > 0
+            text: root.trailingText
+            color: Theme.primary
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
         }
 
         Label {

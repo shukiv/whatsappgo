@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -654,6 +655,51 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 	return model.MessagePage{Messages: items, HasMore: hasMore, NextBefore: next}, nil
 }
 
+// ListStatusGroups returns active status stories grouped by their actual
+// sender. Status messages live in one shared broadcast conversation, but the
+// interface is contact-centric, so exposing those raw rows produces duplicate
+// and mislabelled entries.
+func (s *Store) ListStatusGroups(ctx context.Context, since int64, limit int) ([]model.StatusGroup, error) {
+	page, err := s.ListMessages(ctx, "status@broadcast", 0, limit)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]model.StatusGroup, 0)
+	indexes := make(map[string]int)
+	for _, message := range page.Messages { // oldest first
+		if message.Timestamp < since || message.FromMe || message.Revoked ||
+			message.SenderJID == "" || message.Kind == "system" || message.Kind == "unknown" {
+			continue
+		}
+		index, exists := indexes[message.SenderJID]
+		if !exists {
+			name := strings.TrimSpace(message.SenderName)
+			avatar := ""
+			if chat, chatErr := s.GetChat(ctx, message.SenderJID); chatErr == nil {
+				if strings.TrimSpace(chat.Title) != "" {
+					name = strings.TrimSpace(chat.Title)
+				}
+				avatar = chat.AvatarPath
+			}
+			if name == "" {
+				name = displayJID(message.SenderJID)
+			}
+			index = len(groups)
+			indexes[message.SenderJID] = index
+			groups = append(groups, model.StatusGroup{
+				SenderJID: message.SenderJID, SenderName: name,
+				AvatarPath: avatar, LatestAt: message.Timestamp,
+			})
+		}
+		groups[index].Items = append(groups[index].Items, message)
+		groups[index].LatestAt = message.Timestamp
+	}
+	sort.SliceStable(groups, func(left, right int) bool {
+		return groups[left].LatestAt > groups[right].LatestAt
+	})
+	return groups, nil
+}
+
 func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (model.Message, error) {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	var m model.Message
@@ -909,7 +955,8 @@ func (s *Store) ListPlaceholderContactJIDs(ctx context.Context, limit int) ([]st
 
 func (s *Store) UpdateChatAvatar(ctx context.Context, jid, path string) error {
 	jid = s.canonicalChatJID(ctx, jid)
-	_, err := s.db.ExecContext(ctx, `UPDATE chats SET avatar_path=? WHERE jid=?`, path, jid)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,avatar_path) VALUES(?,?,?)
+	 ON CONFLICT(jid) DO UPDATE SET avatar_path=excluded.avatar_path`, jid, displayJID(jid), path)
 	return err
 }
 

@@ -419,40 +419,21 @@ Kirigami.ApplicationWindow {
                             font.weight: Font.Bold
                         }
 
-                        Flickable {
+                        Item {
                             Layout.fillWidth: true
-                            Layout.minimumWidth: 72
-                            Layout.preferredHeight: 36
-                            clip: true
-                            contentWidth: accountTabsRow.implicitWidth
-                            contentHeight: height
-                            boundsBehavior: Flickable.StopAtBounds
-                            Accessible.name: qsTr("Active account profile")
-                            Row {
-                                id: accountTabsRow
-                                height: parent.height
-                                spacing: 4
-                                Repeater {
-                                    model: backend.profiles
-                                    AccountProfileChip {
-                                        required property string modelData
-                                        profileName: modelData
-                                        unreadCount: Number(backend.profileUnreadCounts[modelData] || 0)
-                                        checked: modelData === backend.profile
-                                        onClicked: backend.switchProfile(modelData)
-                                    }
-                                }
-                            }
+                            Layout.minimumWidth: 8
                         }
 
-                        ThemedToolButton {
-                            Layout.preferredWidth: 40
-                            Layout.preferredHeight: 40
-                            iconSource: Qt.resolvedUrl("icons/new-chat.svg")
-                            iconSize: 20
-                            Accessible.name: qsTr("Start a new chat")
-                            onClicked: window.openNewChat()
-                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                        AccountSwitcherButton {
+                            id: accountSwitcherButton
+                            objectName: "accountSwitcherButton"
+                            Layout.preferredWidth: 44
+                            Layout.preferredHeight: 44
+                            profiles: backend.profiles
+                            currentProfile: backend.profile
+                            unreadCounts: backend.profileUnreadCounts
+                            popupParent: Overlay.overlay
+                            onSwitchRequested: profile => backend.switchProfile(profile)
                             ToolTip.visible: hovered
                             ToolTip.text: Accessible.name
                         }
@@ -542,6 +523,22 @@ Kirigami.ApplicationWindow {
                                     onClicked: { Theme.preferredMode = "dark"; appearanceMenu.close() }
                                 }
                             }
+                        }
+
+                        ThemedToolButton {
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/new-chat.svg")
+                            iconTint: Theme.primaryText
+                            iconSize: 20
+                            Accessible.name: qsTr("Start a new chat")
+                            onClicked: window.openNewChat()
+                            background: Rectangle {
+                                radius: 20
+                                color: parent.down ? Qt.darker(Theme.primary, 1.12) : Theme.primary
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
                         }
                     }
                 }
@@ -1218,8 +1215,32 @@ Kirigami.ApplicationWindow {
         FeatureSection {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            visible: window.activeSection !== "chats"
+            visible: window.activeSection !== "chats" && window.activeSection !== "status"
             section: window.activeSection
+        }
+
+        StatusPage {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: window.activeSection === "status"
+            groups: backend.statusUpdates
+            ownName: backend.status.user_name || backend.profile
+            onGroupRequested: index => {
+                if (statusViewerLoader.item)
+                    statusViewerLoader.item.openAt(index)
+            }
+            onAvatarRequested: jid => backend.fetchStatusAvatar(jid)
+        }
+    }
+
+    Loader {
+        id: statusViewerLoader
+        anchors.fill: parent
+        z: 100
+        active: window.activeSection === "status"
+        sourceComponent: StatusViewer {
+            groups: backend.statusUpdates
+            onMediaRequested: messageId => backend.ensureStatusMedia(messageId)
         }
     }
 
