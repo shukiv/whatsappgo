@@ -462,6 +462,23 @@ func TestNotificationBodyDescribesMessages(t *testing.T) {
 	}
 }
 
+func TestShouldNotifyMessageExcludesStatusUpdates(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  model.Message
+		want bool
+	}{
+		{"incoming chat message", model.Message{ChatJID: "alice@lid"}, true},
+		{"outgoing chat message", model.Message{ChatJID: "alice@lid", FromMe: true}, false},
+		{"incoming status update", model.Message{ChatJID: "status@broadcast"}, false},
+	}
+	for _, tc := range cases {
+		if got := shouldNotifyMessage(tc.msg); got != tc.want {
+			t.Errorf("%s: shouldNotifyMessage = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestNotificationTitlePrefersResolvedChatName(t *testing.T) {
 	cases := []struct {
 		name      string

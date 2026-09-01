@@ -426,7 +426,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	}
 	c.rememberMediaPayload(msg, evt.Message)
 	c.emit(gateway.Event{Name: "message.upsert", Data: msg})
-	if !msg.FromMe {
+	if shouldNotifyMessage(msg) {
 		chatInfo, _ := c.store.GetChat(context.Background(), msg.ChatJID)
 		notifyTitle := notificationTitle(chatInfo, title, msg.ChatJID)
 		muted := chatInfo.MutedUntil > time.Now().UnixMilli()
@@ -457,6 +457,10 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	if downloadable := downloadableFromMessage(evt.Message); downloadable != nil && !evt.IsViewOnce {
 		go c.cacheMedia(msg, downloadable, evt.Message)
 	}
+}
+
+func shouldNotifyMessage(msg model.Message) bool {
+	return !msg.FromMe && msg.ChatJID != "status@broadcast"
 }
 
 // notificationTitle keeps native notifications consistent with the chat list.
