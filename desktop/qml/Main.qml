@@ -434,28 +434,12 @@ Kirigami.ApplicationWindow {
                                 spacing: 4
                                 Repeater {
                                     model: backend.profiles
-                                    Button {
+                                    AccountProfileChip {
                                         required property string modelData
-                                        width: Math.max(62, accountTabLabel.implicitWidth + 22)
-                                        height: 34
-                                        checkable: true
+                                        profileName: modelData
+                                        unreadCount: Number(backend.profileUnreadCounts[modelData] || 0)
                                         checked: modelData === backend.profile
                                         onClicked: backend.switchProfile(modelData)
-                                        contentItem: Label {
-                                            id: accountTabLabel
-                                            text: modelData
-                                            color: parent.checked ? Theme.primary : Theme.textMuted
-                                            font.pixelSize: 12
-                                            font.weight: parent.checked ? Font.DemiBold : Font.Normal
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                        background: Rectangle {
-                                            radius: 17
-                                            color: parent.checked ? Theme.primaryContainer : parent.hovered ? Theme.hoverRow : Theme.surfaceMuted
-                                            border.color: parent.checked ? Theme.primary : Theme.border
-                                        }
-                                        Accessible.name: qsTr("Switch to account %1").arg(modelData)
                                     }
                                 }
                             }

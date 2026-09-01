@@ -1,4 +1,5 @@
 #include "rpcclient.h"
+#include "profilemonitor.h"
 
 #include <QDir>
 #include <QCoreApplication>
@@ -38,6 +39,16 @@ QString daemonExecutable()
             return QDir::cleanPath(candidate);
     }
     return QStringLiteral("whatsappd");
+}
+
+QString socketPathForProfile(const QString &profile)
+{
+    auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (runtime.isEmpty())
+        runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    return QDir(runtime).filePath(profile == QStringLiteral("default")
+                                     ? QStringLiteral("whatsappgo/whatsappd.sock")
+                                     : QStringLiteral("whatsappgo/whatsappd-%1.sock").arg(profile));
 }
 }
 
@@ -104,11 +115,15 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     });
     connect(&m_socket, &QLocalSocket::errorOccurred, this, [this](QLocalSocket::LocalSocketError error) {
         if (error == QLocalSocket::ServerNotFoundError || error == QLocalSocket::ConnectionRefusedError)
-            startBackendForCurrentProfile();
+            startBackendForProfile(m_profile);
         if (!m_reconnectTimer.isActive())
             m_reconnectTimer.start();
     });
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &RpcClient::clipboardChanged);
+    if (qEnvironmentVariableIntValue("WHATSAPPGO_DISABLE_PROFILE_MONITORS") <= 0) {
+        for (const auto &profile : std::as_const(m_profiles))
+            ensureProfileMonitor(profile);
+    }
     connectSocket();
 }
 
@@ -125,13 +140,13 @@ RpcClient::~RpcClient()
     stopOwnedBackends();
 }
 
-void RpcClient::startBackendForCurrentProfile()
+void RpcClient::startBackendForProfile(const QString &profile)
 {
-    auto *running = m_ownedBackends.value(m_profile, nullptr);
+    auto *running = m_ownedBackends.value(profile, nullptr);
     if (running != nullptr && running->state() != QProcess::NotRunning)
         return;
     if (running != nullptr) {
-        m_ownedBackends.remove(m_profile);
+        m_ownedBackends.remove(profile);
         running->deleteLater();
     }
 
@@ -143,8 +158,7 @@ void RpcClient::startBackendForCurrentProfile()
 
     // A crashed process can leave its filesystem socket behind. This method is
     // called only after connecting failed, so no live listener owns the path.
-    QLocalServer::removeServer(socketPath());
-    const auto profile = m_profile;
+    QLocalServer::removeServer(socketPathForProfile(profile));
     auto *process = new QProcess(this);
     process->setObjectName(QStringLiteral("whatsappBackend-%1").arg(profile));
     process->setProgram(executable);
@@ -176,6 +190,25 @@ void RpcClient::startBackendForCurrentProfile()
     });
     m_ownedBackends.insert(profile, process);
     process->start();
+}
+
+void RpcClient::ensureProfileMonitor(const QString &profile)
+{
+    if (qEnvironmentVariableIntValue("WHATSAPPGO_DISABLE_PROFILE_MONITORS") > 0)
+        return;
+    if (m_profileMonitors.contains(profile))
+        return;
+    auto *monitor = new ProfileMonitor(profile, socketPathForProfile(profile), this);
+    m_profileMonitors.insert(profile, monitor);
+    connect(monitor, &ProfileMonitor::backendUnavailable, this, &RpcClient::startBackendForProfile);
+    connect(monitor, &ProfileMonitor::countChanged, this, [this](const QString &changedProfile, int count) {
+        if (m_profileUnreadCounts.value(changedProfile).toInt() == count
+            && m_profileUnreadCounts.contains(changedProfile)) {
+            return;
+        }
+        m_profileUnreadCounts.insert(changedProfile, count);
+        emit profileUnreadCountsChanged();
+    });
 }
 
 void RpcClient::stopOwnedBackends()
@@ -213,11 +246,7 @@ bool RpcClient::clipboardHasImage() const
 
 QString RpcClient::socketPath() const
 {
-    const auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
-    if (!runtime.isEmpty())
-        return QDir(runtime).filePath(m_profile == QStringLiteral("default") ? QStringLiteral("whatsappgo/whatsappd.sock") : QStringLiteral("whatsappgo/whatsappd-%1.sock").arg(m_profile));
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation))
-        .filePath(m_profile == QStringLiteral("default") ? QStringLiteral("whatsappgo/whatsappd.sock") : QStringLiteral("whatsappgo/whatsappd-%1.sock").arg(m_profile));
+    return socketPathForProfile(m_profile);
 }
 
 void RpcClient::connectSocket()
@@ -889,6 +918,7 @@ void RpcClient::addProfile(const QString &name)
     m_profiles.append(slug);
     QSettings settings;
     settings.setValue(QStringLiteral("accounts/profiles"), m_profiles);
+    ensureProfileMonitor(slug);
     emit profilesChanged();
     switchProfile(slug);
 }

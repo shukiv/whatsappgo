@@ -156,6 +156,12 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return map[string]int{"count": count}, nil
+	case "chats.unread_count":
+		count, err := s.store.UnreadMessageCount(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]int{"count": count}, nil
 	case "chat.info":
 		var p messageListParams
 		if err := decode(raw, &p); err != nil {

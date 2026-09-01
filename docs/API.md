@@ -132,6 +132,7 @@ All parameter objects reject unknown fields.
 | `account.logout` | `{}` | Unlink the profile; destructive |
 | `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array |
 | `chats.archived_count` | `{}` | Archived count |
+| `chats.unread_count` | `{}` | Exact unread-message total for the profile's visible chats |
 | `chat.info` | `chat_jid` | Contact/chat metadata, phone alias, exact shared-content counts, and a six-item preview |
 | `chat.shared` | `chat_jid`, `category`, `offset`, `limit` | Page local `media`, `documents`, or `links` for one chat; `all` is also accepted |
 | `chat.pin` / `chat.mute` / `chat.archive` / `chat.set_read` | `chat_jid`, `value` | Change synchronized chat state |

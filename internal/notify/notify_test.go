@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +10,31 @@ import (
 	"testing"
 	"time"
 )
+
+func TestFreedesktopMessageNotificationCarriesAvatarAndSound(t *testing.T) {
+	dir := privateDir(t)
+	avatar := filepath.Join(dir, "avatar.jpg")
+	if err := os.WriteFile(avatar, []byte("avatar"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := Message{ChatJID: "123@s.whatsapp.net", Title: "Alice", Body: "Hello", IconPath: avatar}
+	appIcon, hints := freedesktopMessage(n)
+	if appIcon != avatar {
+		t.Fatalf("app icon = %q, want %q", appIcon, avatar)
+	}
+	if got := hints["image-path"].Value(); got != avatar {
+		t.Fatalf("image-path = %#v, want %q", got, avatar)
+	}
+	if got := hints["sound-name"].Value(); got != notificationSoundName {
+		t.Fatalf("sound-name = %#v, want %q", got, notificationSoundName)
+	}
+}
+
+func TestNoopAcceptsStructuredMessage(t *testing.T) {
+	if err := (Noop{}).Notify(context.Background(), Message{ChatJID: "chat", Title: "Alice", Body: "Hello"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // privateDir returns a temporary directory that only its owner can write to.
 // The default ACL of a shared checkout can otherwise grant group write to new

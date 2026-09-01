@@ -30,8 +30,9 @@ protocol implementation is Go, but it is an internal application component.
 The user never starts or manages it. The desktop launches a helper when an
 account socket is unavailable, keeps helpers alive while the application is
 open, and terminates the helpers it owns during shutdown. Switching account
-tabs starts that account's helper if necessary and leaves already selected
-accounts connected until the desktop closes.
+tabs starts that account's helper if necessary. Lightweight monitor connections
+keep every saved account online and its unread total current until the desktop
+closes, including while another account tab is selected.
 
 An already-running compatible helper can still be used during development,
 but normal packages do not install or require systemd user units.
@@ -58,7 +59,8 @@ but normal packages do not install or require systemd user units.
   notification service or portal when no desktop tray host is available
 - exposes a small local RPC API; it does not expose HTTP or a network port
 
-Native notifications are always owned by the backend. It first uses or asks
+Native notifications are always owned by the backend. Sender avatars and the
+desktop's instant-message sound are included in the platform payload. It first uses or asks
 D-Bus to activate the freedesktop notification service. Minimal X11 sessions
 sometimes install `notification-daemon` without activating it; in that case the
 backend starts only a trusted system copy and waits for it to own the service.

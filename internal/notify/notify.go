@@ -36,8 +36,20 @@ var notificationDaemonCandidates = []string{
 	"/usr/libexec/notification-daemon",
 }
 
+const notificationSoundName = "message-new-instant"
+
+// Message is everything the desktop needs to present one incoming message.
+// Keeping the avatar with the text prevents notification integrations from
+// silently losing sender identity as their platform payloads evolve.
+type Message struct {
+	ChatJID  string
+	Title    string
+	Body     string
+	IconPath string
+}
+
 type Notifier interface {
-	Notify(context.Context, string, string, string) error
+	Notify(context.Context, Message) error
 	Close() error
 }
 
@@ -58,6 +70,8 @@ type Desktop struct {
 	launcher          string
 	uiSocket          string
 	closeOnce         sync.Once
+	serverPlaysSound  bool
+	playSound         func()
 }
 
 func NewDesktop(profile string) (*Desktop, error) {
@@ -65,7 +79,7 @@ func NewDesktop(profile string) (*Desktop, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), profile: profile}
+	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), profile: profile, playSound: playNotificationSound}
 	lookupOwner := func() (string, error) {
 		var current string
 		err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&current)
@@ -96,6 +110,19 @@ func NewDesktop(profile string) (*Desktop, error) {
 		}
 	}
 	d.notificationOwner = owner
+	if owner != "" {
+		var capabilities []string
+		if err := conn.Object(notificationService, dbus.ObjectPath(notificationPath)).
+			CallWithContext(context.Background(), notificationInterface+".GetCapabilities", 0).
+			Store(&capabilities); err == nil {
+			for _, capability := range capabilities {
+				if capability == "sound" {
+					d.serverPlaysSound = true
+					break
+				}
+			}
+		}
+	}
 	d.launcher = resolveDesktopExecutable(os.Executable, exec.LookPath)
 	d.uiSocket = desktopSocketPath(profile)
 	// Signals are not restricted to the owner of an interface name, so the
@@ -169,23 +196,19 @@ func launchNotificationDaemon(path string) error {
 // are evicted in the order they were created.
 const maxTrackedNotifications = 256
 
-func (d *Desktop) Notify(ctx context.Context, chatJID, title, body string) error {
+func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	if d.usePortal {
-		return d.notifyPortal(ctx, chatJID, title, body)
+		return d.notifyPortal(ctx, message)
 	}
 	actions := []string{}
 	if d.canOpenChat() {
 		actions = []string{"default", "Open"}
 	}
-	hints := map[string]dbus.Variant{
-		"desktop-entry":                   dbus.MakeVariant("org.whatsappgo.Desktop"),
-		"category":                        dbus.MakeVariant("im.received"),
-		"x-canonical-private-synchronous": dbus.MakeVariant("whatsappgo-" + chatJID),
-	}
+	appIcon, hints := freedesktopMessage(message)
 	// The D-Bus round trip is not guarded, so delivering a notification never
 	// blocks the signal watcher that resolves earlier notification clicks.
 	call := d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).CallWithContext(ctx, notificationInterface+".Notify", 0,
-		"WhatsAppGo", uint32(0), "", title, body, actions, hints, int32(8000))
+		"WhatsAppGo", uint32(0), appIcon, message.Title, message.Body, actions, hints, int32(8000))
 	if call.Err != nil {
 		return call.Err
 	}
@@ -195,22 +218,62 @@ func (d *Desktop) Notify(ctx context.Context, chatJID, title, body string) error
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.trackActionLocked(id, chatJID)
+	d.trackActionLocked(id, message.ChatJID)
+	if !d.serverPlaysSound && d.playSound != nil {
+		go d.playSound()
+	}
 	return nil
 }
 
-func (d *Desktop) notifyPortal(ctx context.Context, chatJID, title, body string) error {
+func freedesktopMessage(message Message) (string, map[string]dbus.Variant) {
+	hints := map[string]dbus.Variant{
+		"desktop-entry":                   dbus.MakeVariant("org.whatsappgo.Desktop"),
+		"category":                        dbus.MakeVariant("im.received"),
+		"sound-name":                      dbus.MakeVariant(notificationSoundName),
+		"x-canonical-private-synchronous": dbus.MakeVariant("whatsappgo-" + message.ChatJID),
+	}
+	icon := notificationImagePath(message.IconPath)
+	if icon != "" {
+		hints["image-path"] = dbus.MakeVariant(icon)
+	}
+	return icon, hints
+}
+
+func notificationImagePath(path string) string {
+	if !filepath.IsAbs(path) {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func playNotificationSound() {
+	const player = "/usr/bin/paplay"
+	const sound = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
+	if !isTrustedExecutable(player) || notificationImagePath(sound) == "" {
+		return
+	}
+	command := exec.Command(player, sound)
+	if command.Start() == nil {
+		_ = command.Process.Release()
+	}
+}
+
+func (d *Desktop) notifyPortal(ctx context.Context, message Message) error {
 	d.mu.Lock()
 	d.nextPortalID++
 	id := "whatsappgo-" + strconv.FormatInt(time.Now().UnixMilli(), 10) + "-" + strconv.FormatUint(d.nextPortalID, 10)
 	if d.canOpenChat() {
-		d.trackPortalActionLocked(id, chatJID)
+		d.trackPortalActionLocked(id, message.ChatJID)
 	}
 	d.mu.Unlock()
 
 	notification := map[string]dbus.Variant{
-		"title":    dbus.MakeVariant(title),
-		"body":     dbus.MakeVariant(body),
+		"title":    dbus.MakeVariant(message.Title),
+		"body":     dbus.MakeVariant(message.Body),
 		"category": dbus.MakeVariant("im.received"),
 		"priority": dbus.MakeVariant("normal"),
 	}
@@ -223,6 +286,8 @@ func (d *Desktop) notifyPortal(ctx context.Context, chatJID, title, body string)
 		d.mu.Lock()
 		d.forgetPortalActionLocked(id)
 		d.mu.Unlock()
+	} else if d.playSound != nil {
+		go d.playSound()
 	}
 	return call.Err
 }
@@ -451,5 +516,5 @@ func (d *Desktop) Close() error {
 
 type Noop struct{}
 
-func (Noop) Notify(context.Context, string, string, string) error { return nil }
-func (Noop) Close() error                                         { return nil }
+func (Noop) Notify(context.Context, Message) error { return nil }
+func (Noop) Close() error                          { return nil }

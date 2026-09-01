@@ -28,6 +28,7 @@ import (
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/mediastore"
 	"github.com/shukiv/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/notify"
 	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
@@ -411,16 +412,27 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 			notifyTitle = displayJID(msg.ChatJID)
 		}
 		if !muted {
+			body := notificationBody(msg, evt.Info.IsGroup)
 			c.emit(gateway.Event{Name: "notification.received", Data: map[string]string{
-				"chat_jid": msg.ChatJID,
-				"title":    notifyTitle,
-				"body":     notificationBody(msg, evt.Info.IsGroup),
+				"chat_jid":    msg.ChatJID,
+				"title":       notifyTitle,
+				"body":        body,
+				"avatar_path": chatInfo.AvatarPath,
 			}})
-			go func() {
-				if err := c.notifier.Notify(context.Background(), msg.ChatJID, notifyTitle, notificationBody(msg, evt.Info.IsGroup)); err != nil {
+			go func(notification notify.Message) {
+				if notification.IconPath == "" {
+					ctx, cancel := context.WithTimeout(c.baseCtx, 3*time.Second)
+					defer cancel()
+					if path, err := c.FetchAvatar(ctx, notification.ChatJID); err == nil && path != "" {
+						notification.IconPath = path
+						_ = c.store.UpdateChatAvatar(context.Background(), notification.ChatJID, path)
+						c.emit(gateway.Event{Name: "chat.updated", Data: map[string]string{"jid": notification.ChatJID, "avatar_path": path}})
+					}
+				}
+				if err := c.notifier.Notify(context.Background(), notification); err != nil {
 					log.Printf("deliver desktop notification: %v", err)
 				}
-			}()
+			}(notify.Message{ChatJID: msg.ChatJID, Title: notifyTitle, Body: body, IconPath: chatInfo.AvatarPath})
 		}
 	}
 	if downloadable := downloadableFromMessage(evt.Message); downloadable != nil && !evt.IsViewOnce {

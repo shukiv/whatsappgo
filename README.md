@@ -68,7 +68,7 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
   Media, Documents, and Links views backed by SQLite history
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
-- native system notifications independent of the tray, minimize-to-tray with
+- native system notifications with sender avatars and message sounds, independent of the tray; minimize-to-tray with
   late GNOME AppIndicator discovery, light/dark/system
   appearance, RTL text, selectable message text, clickable links, and
   accessible controls

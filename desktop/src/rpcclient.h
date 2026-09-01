@@ -16,6 +16,7 @@
 #include <functional>
 
 class QProcess;
+class ProfileMonitor;
 
 class RpcClient final : public QObject
 {
@@ -38,6 +39,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString profile READ profile NOTIFY profileChanged)
     Q_PROPERTY(QStringList profiles READ profiles NOTIFY profilesChanged)
+    Q_PROPERTY(QVariantMap profileUnreadCounts READ profileUnreadCounts NOTIFY profileUnreadCountsChanged)
     Q_PROPERTY(QVariantList searchResults READ searchResults NOTIFY searchResultsChanged)
     Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
     Q_PROPERTY(QVariantList callLogs READ callLogs NOTIFY callLogsChanged)
@@ -68,6 +70,7 @@ public:
     bool busy() const { return m_busy; }
     QString profile() const { return m_profile; }
     QStringList profiles() const { return m_profiles; }
+    QVariantMap profileUnreadCounts() const { return m_profileUnreadCounts; }
     QVariantList searchResults() const { return m_searchResults; }
     QVariantList statusUpdates() const { return m_statusUpdates; }
     QVariantList callLogs() const { return m_callLogs; }
@@ -138,6 +141,7 @@ signals:
     void messageSent();
     void profileChanged();
     void profilesChanged();
+    void profileUnreadCountsChanged();
     void searchResultsChanged();
     void statusUpdatesChanged();
     void callLogsChanged();
@@ -167,7 +171,8 @@ private:
     QString clipboardDirectory() const;
     bool isClipboardFile(const QString &path) const;
     QString socketPath() const;
-    void startBackendForCurrentProfile();
+    void startBackendForProfile(const QString &profile);
+    void ensureProfileMonitor(const QString &profile);
     void stopOwnedBackends();
 
     QLocalSocket m_socket;
@@ -197,8 +202,10 @@ private:
     QString m_pairingCode;
     QString m_profile = QStringLiteral("default");
     QStringList m_profiles{QStringLiteral("default")};
+    QVariantMap m_profileUnreadCounts;
     bool m_busy = false;
     QHash<QString, QProcess *> m_ownedBackends;
+    QHash<QString, ProfileMonitor *> m_profileMonitors;
     bool m_shuttingDown = false;
     QString m_initialChat;
     bool m_loadingOlder = false;

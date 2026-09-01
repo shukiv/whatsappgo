@@ -159,6 +159,9 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || desktopIntegrationTest || contactInfoTest || !screenshotPath.isEmpty();
 
+    if (automatedRun)
+        qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
+
     auto initialProfile = parser.value(profileOption);
     const QRegularExpression validProfile(QStringLiteral("^[a-z0-9][a-z0-9_-]{0,31}$"));
     if (!validProfile.match(initialProfile).hasMatch())
@@ -419,6 +422,17 @@ int main(int argc, char *argv[])
             : EXIT_FAILURE;
     }
     if (layoutRegressionTest) {
+        QQmlComponent accountComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/AccountProfileChip.qml")));
+        std::unique_ptr<QObject> accountChip(accountComponent.createWithInitialProperties({
+            {QStringLiteral("profileName"), QStringLiteral("work")},
+            {QStringLiteral("unreadCount"), 12},
+            {QStringLiteral("checked"), false},
+        }));
+        if (!accountChip)
+            return EXIT_FAILURE;
+        QCoreApplication::processEvents();
+        auto *accountUnreadBadge = qobject_cast<QQuickItem *>(accountChip->findChild<QObject *>(QStringLiteral("accountUnreadBadge")));
+
         QQmlComponent chatComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ChatListDelegate.qml")));
         const QVariantMap chat{
             {QStringLiteral("jid"), QStringLiteral("123@s.whatsapp.net")},
@@ -475,7 +489,9 @@ int main(int argc, char *argv[])
         auto *chatViewport = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListViewport"))) : nullptr;
         auto *chatListItem = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatList"))) : nullptr;
         auto *chatScrollBar = mainRoot ? qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("chatListScrollBar"))) : nullptr;
-        return qAbs(timestampRight - badgeRight) <= 2.0
+        return accountUnreadBadge && accountUnreadBadge->isVisible()
+                && accountUnreadBadge->width() >= 18.0 && accountChip->property("width").toReal() >= 62.0
+                && qAbs(timestampRight - badgeRight) <= 2.0
                 && chatItem->height() <= 76.0
                 && chatItem->x() >= 8.0
                 && rowBackground->property("radius").toReal() >= 10.0

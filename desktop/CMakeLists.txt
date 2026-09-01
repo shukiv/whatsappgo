@@ -16,6 +16,8 @@ qt_add_executable(whatsappgo
     src/main.cpp
     src/messagemodel.cpp
     src/messagemodel.h
+    src/profilemonitor.cpp
+    src/profilemonitor.h
     src/rpcclient.cpp
     src/rpcclient.h
     src/traybehavior.cpp
@@ -43,6 +45,7 @@ qt_add_qml_module(whatsappgo
         qml/ChatListDelegate.qml
         qml/ChatFilterBar.qml
         qml/ChatFilterChip.qml
+        qml/AccountProfileChip.qml
         qml/ComposerLinkPreview.qml
         qml/NewChatPane.qml
         qml/MessageDelegate.qml
@@ -119,10 +122,22 @@ install(FILES ../assets/org.whatsappgo.Desktop.svg
 
 include(CTest)
 if(BUILD_TESTING)
+    qt_add_executable(profile-monitor-test
+        tests/ProfileMonitor.cpp
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+    )
+    target_include_directories(profile-monitor-test PRIVATE src)
+    target_link_libraries(profile-monitor-test PRIVATE Qt6::Core Qt6::Network)
+    add_test(NAME desktop-profile-monitor COMMAND profile-monitor-test)
+    set_tests_properties(desktop-profile-monitor PROPERTIES TIMEOUT 10)
+
     qt_add_executable(pairing-auto-start-test
         tests/PairingAutoStart.cpp
         src/messagemodel.cpp
         src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
     )

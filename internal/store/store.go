@@ -698,6 +698,17 @@ func (s *Store) ArchivedChatCount(ctx context.Context) (int, error) {
 	return count, err
 }
 
+// UnreadMessageCount is the exact unread total shown on an account switcher.
+// Archived chats and non-chat broadcast/newsletter rows are intentionally not
+// included, matching the main conversation list.
+func (s *Store) UnreadMessageCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(unread_count),0) FROM chats
+ WHERE archived=0 AND unread_count>0
+ AND jid NOT LIKE '%@broadcast' AND jid NOT LIKE '%@newsletter'`).Scan(&count)
+	return count, err
+}
+
 func (s *Store) SaveMediaPayload(ctx context.Context, chatJID, messageID string, payload []byte) error {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	if chatJID == "" || messageID == "" || len(payload) == 0 {

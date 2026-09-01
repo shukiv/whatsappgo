@@ -1056,3 +1056,24 @@ func TestUpdateChatMutedAndArchived(t *testing.T) {
 		t.Fatal("an empty conversation id should be rejected")
 	}
 }
+
+func TestUnreadMessageCountExcludesArchivedAndBroadcastChats(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, chat := range []model.Chat{
+		{JID: "visible@s.whatsapp.net", Title: "Visible", UnreadCount: 3},
+		{JID: "archived@s.whatsapp.net", Title: "Archived", UnreadCount: 4, Archived: true},
+		{JID: "status@broadcast", Title: "Status", UnreadCount: 5},
+	} {
+		if err := s.UpsertChat(ctx, chat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.UnreadMessageCount(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
+		t.Fatalf("unread message count = %d, want 3", got)
+	}
+}
