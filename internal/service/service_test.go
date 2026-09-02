@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -11,6 +14,36 @@ import (
 	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/store"
 )
+
+func TestMessagesListConvertsWebPStickersForQt(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	data, err := base64.StdEncoding.DecodeString("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	webpPath := filepath.Join(t.TempDir(), "sticker.webp")
+	if err := os.WriteFile(webpPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := st.UpsertMessage(ctx, model.Message{ID: "s1", ChatJID: "alice@lid", Timestamp: 1, Kind: "sticker", MediaPath: webpPath}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st, &fakeGateway{}, events.New())
+	defer svc.Close()
+	result, err := svc.Handle(ctx, "messages.list", json.RawMessage(`{"chat_jid":"alice@lid","limit":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := result.(model.MessagePage)
+	if len(page.Messages) != 1 || filepath.Ext(page.Messages[0].MediaPath) != ".png" {
+		t.Fatalf("sticker path was not converted: %#v", page.Messages)
+	}
+}
 
 func TestStatusesListGroupsActiveUpdatesBySender(t *testing.T) {
 	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
@@ -77,6 +110,30 @@ type fakeGateway struct {
 	unpinnedMessage string
 	fetchedAvatar   string
 	refreshedAvatar string
+	presenceChat    string
+}
+
+func (f *fakeGateway) SubscribePresence(_ context.Context, jid string) error {
+	f.presenceChat = jid
+	return nil
+}
+
+func TestContactPresenceSubscriptionUsesGateway(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+
+	if _, err := svc.Handle(context.Background(), "contact.presence.subscribe", json.RawMessage(`{"chat_jid":"alice@lid"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if gw.presenceChat != "alice@lid" {
+		t.Fatalf("presence subscription did not reach the selected contact: %q", gw.presenceChat)
+	}
 }
 
 func (f *fakeGateway) FetchAvatar(_ context.Context, jid string) (string, error) {

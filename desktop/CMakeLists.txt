@@ -156,6 +156,18 @@ if(BUILD_TESTING)
     target_include_directories(pairing-auto-start-test PRIVATE src)
     target_link_libraries(pairing-auto-start-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
+    qt_add_executable(presence-updates-test
+        tests/PresenceUpdates.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+    )
+    target_include_directories(presence-updates-test PRIVATE src)
+    target_link_libraries(presence-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
     qt_add_executable(profile-display-names-test
         tests/ProfileDisplayNames.cpp
         src/messagemodel.cpp
@@ -214,6 +226,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-message-layout COMMAND whatsappgo --message-layout-test)
     add_test(NAME desktop-message-scroll COMMAND whatsappgo --message-scroll-test)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
+    add_test(NAME desktop-presence-updates COMMAND presence-updates-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
     add_test(NAME desktop-status-stories COMMAND whatsappgo --status-stories-test)
@@ -241,7 +254,7 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )
-    set_tests_properties(desktop-pairing-auto-start PROPERTIES TIMEOUT 5)
+    set_tests_properties(desktop-pairing-auto-start desktop-presence-updates PROPERTIES TIMEOUT 5)
     set_tests_properties(desktop-system-integration PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10

@@ -29,6 +29,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChatsChanged)
     Q_PROPERTY(QAbstractItemModel *messages READ messages CONSTANT)
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
+    Q_PROPERTY(QVariantMap selectedPresence READ selectedPresence NOTIFY selectedPresenceChanged)
     Q_PROPERTY(QVariantMap chatInfo READ chatInfo NOTIFY chatInfoChanged)
     Q_PROPERTY(QVariantList sharedContent READ sharedContent NOTIFY sharedContentChanged)
     Q_PROPERTY(bool sharedContentHasMore READ sharedContentHasMore NOTIFY sharedContentChanged)
@@ -61,6 +62,7 @@ public:
     int archivedCount() const { return m_archivedCount; }
     QAbstractItemModel *messages() { return &m_messages; }
     QVariantMap selectedChat() const { return m_selectedChat; }
+    QVariantMap selectedPresence() const { return m_selectedPresence; }
     QVariantMap chatInfo() const { return m_chatInfo; }
     QVariantList sharedContent() const { return m_sharedContent; }
     bool sharedContentHasMore() const { return m_sharedContentHasMore; }
@@ -143,6 +145,7 @@ signals:
     void chatsChanged();
     void archivedChatsChanged();
     void selectedChatChanged();
+    void selectedPresenceChanged();
     void chatInfoChanged();
     void sharedContentChanged();
     void pairingQrChanged();
@@ -202,6 +205,7 @@ private:
     QHash<QString, QVariantList> m_messageCache;
     QStringList m_messageCacheOrder;
     QVariantMap m_selectedChat;
+    QVariantMap m_selectedPresence;
     QVariantMap m_chatInfo;
     QVariantList m_sharedContent;
     bool m_sharedContentHasMore = false;

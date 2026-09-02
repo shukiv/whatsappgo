@@ -859,7 +859,7 @@ Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    height: visible ? Math.min(150, Math.max(90, width * 0.52)) : 0
+                    height: visible ? Math.min(240, Math.max(120, width * 0.5625)) : 0
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true

@@ -1178,6 +1178,8 @@ int main(int argc, char *argv[])
         auto *linkBubble = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         require(card != nullptr && card->isVisible(), QStringLiteral("link preview card is missing"));
         require(cardImage != nullptr && cardImage->isVisible(), QStringLiteral("link preview picture is missing"));
+        if (cardImage != nullptr)
+            require(cardImage->height() > 150.0, QStringLiteral("link preview picture is too short"));
         require(linkHover != nullptr, QStringLiteral("message links have no pointing-hand hover handler"));
         if (card != nullptr && linkBubble != nullptr) {
             qInfo().noquote() << QStringLiteral("link card width=%1 height=%2 bubble=%3")

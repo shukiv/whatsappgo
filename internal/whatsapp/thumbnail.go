@@ -75,6 +75,20 @@ func (c *Client) withCachedLinkPreview(msg model.Message, raw *waE2E.Message) mo
 	return msg
 }
 
+func (c *Client) withCachedOutgoingLinkPreview(msg model.Message, preview model.LinkPreview) model.Message {
+	if preview.URL == "" || len(preview.Thumbnail) == 0 {
+		return msg
+	}
+	extension := ".jpg"
+	if preview.ThumbnailMIME == "image/png" {
+		extension = ".png"
+	}
+	if path := c.writeThumbnail(msg.ChatJID+"-"+msg.ID+"-link", preview.Thumbnail, extension); path != "" {
+		msg.LinkThumbnail = path
+	}
+	return msg
+}
+
 func (c *Client) writeThumbnail(key string, data []byte, ext string) string {
 	return c.writeThumbnailFile(key, data, ext, false)
 }

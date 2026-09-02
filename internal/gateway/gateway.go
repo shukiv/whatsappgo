@@ -50,6 +50,7 @@ type Gateway interface {
 	FetchAvatar(context.Context, string) (string, error)
 	RefreshAvatar(context.Context, string) (string, error)
 	MarkRead(context.Context, string, string, []string, int64) error
+	SubscribePresence(context.Context, string) error
 	SetTyping(context.Context, string, bool) error
 	SetChatPinned(context.Context, string, bool) error
 	SetChatMuted(context.Context, string, bool) error
@@ -103,6 +104,7 @@ func (Unavailable) RefreshAvatar(context.Context, string) (string, error) {
 func (Unavailable) MarkRead(context.Context, string, string, []string, int64) error {
 	return ErrUnavailable
 }
+func (Unavailable) SubscribePresence(context.Context, string) error       { return ErrUnavailable }
 func (Unavailable) SetTyping(context.Context, string, bool) error         { return ErrUnavailable }
 func (Unavailable) SetChatPinned(context.Context, string, bool) error     { return ErrUnavailable }
 func (Unavailable) SetChatMuted(context.Context, string, bool) error      { return ErrUnavailable }

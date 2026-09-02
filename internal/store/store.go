@@ -277,6 +277,12 @@ func (s *Store) canonicalChatJID(ctx context.Context, jid string) string {
 	return jid
 }
 
+// CanonicalChatJID resolves a phone-number or device-address alias to the
+// conversation key used by the desktop.
+func (s *Store) CanonicalChatJID(ctx context.Context, jid string) string {
+	return s.canonicalChatJID(ctx, jid)
+}
+
 // LinkChatAliases consolidates WhatsApp's privacy-preserving LID and legacy
 // phone-number JID into one local conversation without deleting history.
 func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID string) error {
@@ -1429,5 +1435,16 @@ func (s *Store) UpdateMediaThumbnail(ctx context.Context, chatJID, messageID, pa
 	}
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET media_thumbnail=? WHERE chat_jid=? AND id=?`, path, chatJID, messageID)
+	return err
+}
+
+// UpdateMediaPath records a renderer-compatible cache file without changing
+// the attachment payload kept in the media database.
+func (s *Store) UpdateMediaPath(ctx context.Context, chatJID, messageID, path string) error {
+	if chatJID == "" || messageID == "" {
+		return errors.New("chat_jid and message_id are required")
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET media_path=? WHERE chat_jid=? AND id=?`, path, chatJID, messageID)
 	return err
 }

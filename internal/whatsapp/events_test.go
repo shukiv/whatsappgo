@@ -103,6 +103,29 @@ func TestSendReactionStoresAndEmitsSuccessfulOwnReaction(t *testing.T) {
 	}
 }
 
+func TestPresenceEventUsesCanonicalChatAndKeepsUnknownLastSeenEmpty(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	if err := st.UpsertChat(ctx, model.Chat{JID: "alice@lid", Title: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkChatAliases(ctx, "alice@lid", "15551234567@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st, subs: make(map[uint64]func(gateway.Event))}
+	var emitted gateway.Event
+	c.Subscribe(func(event gateway.Event) { emitted = event })
+	c.handleEvent(&waEvents.Presence{From: types.NewJID("15551234567", types.DefaultUserServer), Unavailable: true})
+	data := emitted.Data.(map[string]any)
+	if emitted.Name != "contact.presence" || data["jid"] != "alice@lid" || data["last_seen"] != int64(0) {
+		t.Fatalf("unexpected presence event: %#v", emitted)
+	}
+}
+
 func TestPinInChatEventUpdatesPinnedMessageProjection(t *testing.T) {
 	st, err := localstore.OpenMemory()
 	if err != nil {

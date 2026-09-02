@@ -186,6 +186,32 @@ Kirigami.ApplicationWindow {
         return Qt.formatDateTime(new Date(timestamp), Qt.DefaultLocaleShortDate)
     }
 
+    function selectedPresenceText() {
+        const presence = backend.selectedPresence || ({})
+        if (String(presence.chat_state || "") === "composing")
+            return String(presence.media || "") === "audio" ? qsTr("Recording audio…") : qsTr("Typing…")
+        if (String(presence.state || "") === "online")
+            return qsTr("Online")
+        if (String(presence.state || "") !== "offline")
+            return ""
+        const timestamp = Number(presence.last_seen || 0)
+        if (timestamp <= 0)
+            return qsTr("Offline")
+        const seen = new Date(timestamp)
+        const today = new Date()
+        const sameDay = seen.getFullYear() === today.getFullYear()
+            && seen.getMonth() === today.getMonth() && seen.getDate() === today.getDate()
+        if (sameDay)
+            return qsTr("Last seen today at %1").arg(Qt.formatTime(seen, "HH:mm"))
+        const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
+        const wasYesterday = seen.getFullYear() === yesterday.getFullYear()
+            && seen.getMonth() === yesterday.getMonth() && seen.getDate() === yesterday.getDate()
+        if (wasYesterday)
+            return qsTr("Last seen yesterday at %1").arg(Qt.formatTime(seen, "HH:mm"))
+        return qsTr("Last seen %1 at %2").arg(Qt.formatDate(seen, Qt.DefaultLocaleShortDate))
+            .arg(Qt.formatTime(seen, "HH:mm"))
+    }
+
     function openChatImage(message) {
         if (!message)
             return
@@ -1036,7 +1062,9 @@ Kirigami.ApplicationWindow {
                                         elide: Text.ElideRight
                                     }
                                     Label {
-                                        text: backend.daemonConnected ? qsTr("Connected") : qsTr("Offline")
+                                        objectName: "contactPresenceLabel"
+                                        text: window.selectedPresenceText()
+                                        visible: text !== ""
                                         color: Theme.textMuted
                                         font.pixelSize: 12
                                     }

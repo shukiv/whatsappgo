@@ -51,6 +51,12 @@ QString socketPathForProfile(const QString &profile)
                                      ? QStringLiteral("whatsappgo/whatsappd.sock")
                                      : QStringLiteral("whatsappgo/whatsappd-%1.sock").arg(profile));
 }
+
+QString bareJid(QString jid)
+{
+    jid.replace(QRegularExpression(QStringLiteral(":\\d+@")), QStringLiteral("@"));
+    return jid;
+}
 }
 
 RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, QObject *parent)
@@ -105,6 +111,10 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
         m_pending.clear();
+        if (!m_selectedPresence.isEmpty()) {
+            m_selectedPresence.clear();
+            emit selectedPresenceChanged();
+        }
         emit daemonConnectedChanged();
         if (!m_reconnectTimer.isActive())
             m_reconnectTimer.start();
@@ -320,6 +330,38 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
     if (name == QStringLiteral("connection.changed")) {
         m_status = data.toObject().toVariantMap();
         emit statusChanged();
+    } else if (name == QStringLiteral("contact.presence")) {
+        const auto payload = data.toObject();
+        if (bareJid(payload.value(QStringLiteral("jid")).toString())
+                != bareJid(m_selectedChat.value(QStringLiteral("jid")).toString()))
+            return;
+        const auto chatState = m_selectedPresence.value(QStringLiteral("chat_state"));
+        const auto chatMedia = m_selectedPresence.value(QStringLiteral("media"));
+        m_selectedPresence = payload.toVariantMap();
+        m_selectedPresence.insert(QStringLiteral("state"),
+                                  payload.value(QStringLiteral("unavailable")).toBool()
+                                      ? QStringLiteral("offline") : QStringLiteral("online"));
+        if (!chatState.toString().isEmpty()) {
+            m_selectedPresence.insert(QStringLiteral("chat_state"), chatState);
+            m_selectedPresence.insert(QStringLiteral("media"), chatMedia);
+        }
+        emit selectedPresenceChanged();
+    } else if (name == QStringLiteral("chat.presence")) {
+        const auto payload = data.toObject();
+        if (bareJid(payload.value(QStringLiteral("chat_jid")).toString())
+                != bareJid(m_selectedChat.value(QStringLiteral("jid")).toString()))
+            return;
+        const auto state = payload.value(QStringLiteral("state")).toString();
+        if (state == QStringLiteral("paused")) {
+            m_selectedPresence.remove(QStringLiteral("chat_state"));
+            m_selectedPresence.remove(QStringLiteral("media"));
+            m_selectedPresence.remove(QStringLiteral("sender_jid"));
+        } else {
+            m_selectedPresence.insert(QStringLiteral("chat_state"), state);
+            m_selectedPresence.insert(QStringLiteral("media"), payload.value(QStringLiteral("media")).toString());
+            m_selectedPresence.insert(QStringLiteral("sender_jid"), payload.value(QStringLiteral("sender_jid")).toString());
+        }
+        emit selectedPresenceChanged();
     } else if (name == QStringLiteral("pairing.qr")) {
         const auto payload = data.toObject();
         m_pairingQr = QStringLiteral("data:image/png;base64,") + payload.value(QStringLiteral("png_base64")).toString();
@@ -500,6 +542,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     m_requestedMedia.clear();
     clearChatInfo();
     m_selectedChat = {{QStringLiteral("jid"), jid}, {QStringLiteral("title"), title}};
+    m_selectedPresence.clear();
     if (const auto cached = m_messageCache.constFind(jid); cached != m_messageCache.cend())
         m_messages.reset(cached.value());
     else
@@ -507,7 +550,10 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     m_hasMore = false;
     m_nextBefore = 0;
     emit selectedChatChanged();
-	refreshChatInfo();
+    emit selectedPresenceChanged();
+    if (!jid.endsWith(QStringLiteral("@g.us")) && !jid.endsWith(QStringLiteral("@broadcast")))
+        sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}});
+    refreshChatInfo();
     // The daemon serves requests sequentially per connection. Read its local
     // database before asking WhatsApp for a remote refresh so opening a chat
     // is never held behind network history synchronisation.
@@ -564,10 +610,12 @@ void RpcClient::closeChat()
     m_loadingOlder = false;
     clearComposerLinkPreview();
     m_selectedChat.clear();
+    m_selectedPresence.clear();
     clearChatInfo();
     m_searchResults.clear();
     m_messages.clear();
     emit selectedChatChanged();
+    emit selectedPresenceChanged();
     emit searchResultsChanged();
 }
 

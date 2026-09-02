@@ -11,6 +11,7 @@ import (
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/linkpreview"
+	"github.com/shukiv/whatsappgo/internal/mediaformat"
 	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/store"
 )
@@ -31,6 +32,23 @@ func New(st *store.Store, gw gateway.Gateway, broker *events.Broker) *Service {
 func (s *Service) Close() {
 	if s.unsubscribe != nil {
 		s.unsubscribe()
+	}
+}
+
+func (s *Service) normalizeStickerMessages(ctx context.Context, messages []model.Message) {
+	for index := range messages {
+		message := &messages[index]
+		if message.Kind != "sticker" {
+			continue
+		}
+		if converted, err := mediaformat.StickerPNG(message.MediaPath); err == nil && converted != message.MediaPath {
+			message.MediaPath = converted
+			_ = s.store.UpdateMediaPath(ctx, message.ChatJID, message.ID, converted)
+		}
+		if converted, err := mediaformat.StickerPNG(message.MediaThumbnail); err == nil && converted != message.MediaThumbnail {
+			message.MediaThumbnail = converted
+			_ = s.store.UpdateMediaThumbnail(ctx, message.ChatJID, message.ID, converted)
+		}
 	}
 }
 
@@ -109,6 +127,9 @@ type typingParams struct {
 	ChatJID string `json:"chat_jid"`
 	Typing  bool   `json:"typing"`
 }
+type presenceParams struct {
+	ChatJID string `json:"chat_jid"`
+}
 type searchParams struct {
 	Query string `json:"query"`
 	Limit int    `json:"limit"`
@@ -179,13 +200,23 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if strings.TrimSpace(p.ChatJID) == "" {
 			return nil, errors.New("chat_jid is required")
 		}
-		return s.store.ChatInfo(ctx, p.ChatJID)
+		info, err := s.store.ChatInfo(ctx, p.ChatJID)
+		if err != nil {
+			return nil, err
+		}
+		s.normalizeStickerMessages(ctx, info.Preview)
+		return info, nil
 	case "chat.shared":
 		var p sharedListParams
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		return s.store.ListSharedMessages(ctx, p.ChatJID, p.Category, p.Offset, p.Limit)
+		page, err := s.store.ListSharedMessages(ctx, p.ChatJID, p.Category, p.Offset, p.Limit)
+		if err != nil {
+			return nil, err
+		}
+		s.normalizeStickerMessages(ctx, page.Messages)
+		return page, nil
 	// "chat.read" already marks messages read for receipts; this one changes
 	// the conversation's own read state, which WhatsApp tracks separately.
 	case "chat.pin", "chat.mute", "chat.archive", "chat.set_read":
@@ -221,7 +252,12 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		return s.store.ListMessages(ctx, p.ChatJID, p.Before, p.Limit)
+		page, err := s.store.ListMessages(ctx, p.ChatJID, p.Before, p.Limit)
+		if err != nil {
+			return nil, err
+		}
+		s.normalizeStickerMessages(ctx, page.Messages)
+		return page, nil
 	case "messages.search":
 		var p searchParams
 		if err := decode(raw, &p); err != nil {
@@ -465,6 +501,15 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return okResult(), s.gateway.SetTyping(ctx, p.ChatJID, p.Typing)
+	case "contact.presence.subscribe":
+		var p presenceParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		return okResult(), s.gateway.SubscribePresence(ctx, p.ChatJID)
 	default:
 		return nil, fmt.Errorf("unknown method %q", method)
 	}

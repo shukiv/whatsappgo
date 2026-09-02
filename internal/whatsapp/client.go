@@ -281,7 +281,8 @@ func (c *Client) SendText(ctx context.Context, req gateway.TextRequest) (model.M
 	if err != nil {
 		return model.Message{}, err
 	}
-	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}, nil
+	result := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}
+	return c.withCachedOutgoingLinkPreview(result, req.Preview), nil
 }
 
 func (c *Client) RequestHistory(ctx context.Context, chatJID string, count int) error {
@@ -357,7 +358,11 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 	}
 	if msg.MediaPath != "" {
 		if _, statErr := os.Stat(msg.MediaPath); statErr == nil {
-			return msg, nil
+			converted := c.withDisplayableSticker(msg)
+			if converted.MediaPath != msg.MediaPath {
+				_ = c.store.UpsertMessage(ctx, converted, "", false)
+			}
+			return converted, nil
 		}
 	}
 	// The attachment database is the durable copy. Clearing the media cache
@@ -370,6 +375,7 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 			if info, statErr := os.Stat(path); statErr == nil {
 				msg.MediaSize = info.Size()
 			}
+			msg = c.withDisplayableSticker(msg)
 			if err := c.store.UpsertMessage(ctx, msg, "", false); err != nil {
 				return model.Message{}, err
 			}
@@ -906,6 +912,17 @@ func (c *Client) MarkRead(ctx context.Context, chatJID, senderJID string, ids []
 		}
 	}
 	return c.wa.MarkRead(ctx, messageIDs, at, chat, sender)
+}
+
+func (c *Client) SubscribePresence(ctx context.Context, chatJID string) error {
+	contact, err := types.ParseJID(chatJID)
+	if err != nil {
+		return err
+	}
+	if contact.Server == types.GroupServer || contact.Server == types.BroadcastServer {
+		return nil
+	}
+	return c.wa.SubscribePresence(ctx, contact.ToNonAD())
 }
 
 func (c *Client) SetTyping(ctx context.Context, chatJID string, typing bool) error {

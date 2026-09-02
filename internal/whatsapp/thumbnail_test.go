@@ -269,3 +269,16 @@ func TestBackfillLinkPreviewsUpgradesLowResolutionYouTubeCard(t *testing.T) {
 		t.Fatalf("historical thumbnail stayed at %dx%d", width, height)
 	}
 }
+
+func TestOutgoingLinkPreviewKeepsItsLocalThumbnail(t *testing.T) {
+	c := &Client{mediaDir: t.TempDir()}
+	message := c.withCachedOutgoingLinkPreview(model.Message{ChatJID: "alice@lid", ID: "out-1"}, model.LinkPreview{
+		URL: "https://example.com", Thumbnail: jpegSized(t, 640, 360), ThumbnailMIME: "image/jpeg",
+	})
+	if message.LinkThumbnail == "" {
+		t.Fatal("outgoing link thumbnail was discarded")
+	}
+	if width, height := imageSize(t, message.LinkThumbnail); width != 640 || height != 360 {
+		t.Fatalf("cached thumbnail is %dx%d", width, height)
+	}
+}

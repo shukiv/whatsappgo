@@ -26,6 +26,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/mediaformat"
 	"github.com/shukiv/whatsappgo/internal/mediastore"
 	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/notify"
@@ -87,9 +88,21 @@ func (c *Client) handleEvent(raw any) {
 	case *waEvents.MediaRetry:
 		c.handleMediaRetry(evt)
 	case *waEvents.ChatPresence:
-		c.emit(gateway.Event{Name: "chat.presence", Data: map[string]any{"chat_jid": evt.Chat.String(), "sender_jid": evt.Sender.String(), "state": string(evt.State), "media": string(evt.Media)}})
+		chatJID := evt.Chat.String()
+		if c.store != nil {
+			chatJID = c.store.CanonicalChatJID(context.Background(), chatJID)
+		}
+		c.emit(gateway.Event{Name: "chat.presence", Data: map[string]any{"chat_jid": chatJID, "sender_jid": evt.Sender.String(), "state": string(evt.State), "media": string(evt.Media)}})
 	case *waEvents.Presence:
-		c.emit(gateway.Event{Name: "contact.presence", Data: map[string]any{"jid": evt.From.String(), "unavailable": evt.Unavailable, "last_seen": evt.LastSeen.UnixMilli()}})
+		jid := evt.From.String()
+		if c.store != nil {
+			jid = c.store.CanonicalChatJID(context.Background(), jid)
+		}
+		lastSeen := int64(0)
+		if !evt.LastSeen.IsZero() {
+			lastSeen = evt.LastSeen.UnixMilli()
+		}
+		c.emit(gateway.Event{Name: "contact.presence", Data: map[string]any{"jid": jid, "unavailable": evt.Unavailable, "last_seen": lastSeen}})
 	case *waEvents.HistorySync:
 		go c.handleHistorySync(evt)
 	case *waEvents.AppState:
@@ -658,6 +671,16 @@ func (c *Client) cachePath(msg model.Message) string {
 	return filepath.Join(c.mediaDir, msg.Kind, safeName(msg.ChatJID+"-"+msg.ID)+extensionForMIME(msg.MediaMIME))
 }
 
+func (c *Client) withDisplayableSticker(msg model.Message) model.Message {
+	if msg.Kind != "sticker" || msg.MediaPath == "" {
+		return msg
+	}
+	if path, err := mediaformat.StickerPNG(msg.MediaPath); err == nil {
+		msg.MediaPath = path
+	}
+	return msg
+}
+
 func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message) (model.Message, error) {
 	dir := filepath.Join(c.mediaDir, msg.Kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -735,6 +758,7 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store attachment: " + err.Error()}})
 		}
 	}
+	msg = c.withDisplayableSticker(msg)
 	if err := c.store.UpsertMessage(ctx, msg, "", false); err != nil {
 		return model.Message{}, err
 	}
