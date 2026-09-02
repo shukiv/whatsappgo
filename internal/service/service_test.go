@@ -250,6 +250,10 @@ func (f *fakeGateway) DownloadMedia(_ context.Context, chat, messageID string) (
 	return model.Message{ID: messageID, ChatJID: chat, Kind: "document", MediaPath: "/tmp/report.pdf"}, nil
 }
 
+func (f *fakeGateway) RefreshLinkPreview(_ context.Context, chat, messageID string) (model.Message, error) {
+	return model.Message{ID: messageID, ChatJID: chat, Kind: "text", LinkURL: "https://example.com"}, nil
+}
+
 func (f *fakeGateway) ResolvePhone(_ context.Context, phone string) (model.Chat, error) {
 	f.resolvedPhone = phone
 	return model.Chat{JID: "123@lid", Title: "123"}, nil

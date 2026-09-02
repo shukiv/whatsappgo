@@ -39,6 +39,7 @@ type Gateway interface {
 	SendText(context.Context, TextRequest) (model.Message, error)
 	SendMedia(context.Context, MediaRequest) (model.Message, error)
 	DownloadMedia(context.Context, string, string) (model.Message, error)
+	RefreshLinkPreview(context.Context, string, string) (model.Message, error)
 	RequestHistory(context.Context, string, int) error
 	RefreshHistory(context.Context, string, int) error
 	SendReaction(context.Context, string, string, string, string) error
@@ -79,6 +80,9 @@ func (Unavailable) SendMedia(context.Context, MediaRequest) (model.Message, erro
 	return model.Message{}, ErrUnavailable
 }
 func (Unavailable) DownloadMedia(context.Context, string, string) (model.Message, error) {
+	return model.Message{}, ErrUnavailable
+}
+func (Unavailable) RefreshLinkPreview(context.Context, string, string) (model.Message, error) {
 	return model.Message{}, ErrUnavailable
 }
 func (Unavailable) RequestHistory(context.Context, string, int) error { return ErrUnavailable }

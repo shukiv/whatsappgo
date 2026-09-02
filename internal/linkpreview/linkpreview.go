@@ -32,8 +32,8 @@ const (
 var webURL = regexp.MustCompile(`https?://[^\s<>"']+`)
 
 // Resolve fetches the first public HTTP(S) URL in text and returns the page's
-// Open Graph card. Conversation rendering never calls this: fetching happens
-// only while the user is actively composing a link.
+// Open Graph card. It is used while composing a link and when the desktop asks
+// to replace a tiny thumbnail on a card currently visible to the user.
 func Resolve(ctx context.Context, text string) (model.LinkPreview, error) {
 	rawURL := extractURL(text)
 	if rawURL == "" {

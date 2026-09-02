@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -18,6 +19,8 @@ import (
 	"github.com/shukiv/whatsappgo/internal/model"
 	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
+
+const minimumLinkPreviewWidth = 640
 
 // maxInlineThumbnail bounds what is written to the cache. WhatsApp's inline
 // previews are a few kilobytes; anything larger is not a thumbnail.
@@ -87,6 +90,58 @@ func (c *Client) withCachedOutgoingLinkPreview(msg model.Message, preview model.
 		msg.LinkThumbnail = path
 	}
 	return msg
+}
+
+// RefreshLinkPreview replaces the tiny inline image WhatsApp sometimes puts
+// in a synced link card. It is called only for a card the desktop is already
+// displaying, so opening one chat does not crawl links from other private
+// conversations.
+func (c *Client) RefreshLinkPreview(ctx context.Context, chatJID, messageID string) (model.Message, error) {
+	message, err := c.store.GetMessage(ctx, chatJID, messageID)
+	if err != nil {
+		return model.Message{}, err
+	}
+	if message.LinkURL == "" {
+		return message, nil
+	}
+	if file, err := os.Open(message.LinkThumbnail); err == nil {
+		config, _, decodeErr := image.DecodeConfig(file)
+		file.Close()
+		if decodeErr == nil && config.Width >= minimumLinkPreviewWidth {
+			return message, nil
+		}
+	}
+	resolver := c.resolveLinkPreview
+	if resolver == nil {
+		resolver = linkpreview.Resolve
+	}
+	preview, err := resolver(ctx, message.LinkURL)
+	if err != nil {
+		return model.Message{}, err
+	}
+	extension := ".jpg"
+	if preview.ThumbnailMIME == "image/png" {
+		extension = ".png"
+	}
+	path := c.writeThumbnailReplacing(message.ChatJID+"-"+message.ID+"-link-hq", preview.Thumbnail, extension)
+	if path == "" {
+		return model.Message{}, errors.New("link preview has no usable image")
+	}
+	if err := c.store.UpdateLinkPreview(ctx, message.ChatJID, message.ID, preview.URL, preview.Title, preview.Description, path); err != nil {
+		return model.Message{}, err
+	}
+	if preview.URL != "" {
+		message.LinkURL = preview.URL
+	}
+	if preview.Title != "" {
+		message.LinkTitle = preview.Title
+	}
+	if preview.Description != "" {
+		message.LinkDescription = preview.Description
+	}
+	message.LinkThumbnail = path
+	c.emit(gateway.Event{Name: "message.upsert", Data: message})
+	return message, nil
 }
 
 func (c *Client) writeThumbnail(key string, data []byte, ext string) string {

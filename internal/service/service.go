@@ -276,6 +276,15 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return model.LinkPreview{}, nil
 		}
 		return preview, nil
+	case "link.preview.refresh":
+		var p downloadParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		return s.gateway.RefreshLinkPreview(ctx, p.ChatJID, p.MessageID)
 	case "history.request":
 		var p historyRequestParams
 		if err := decode(raw, &p); err != nil {

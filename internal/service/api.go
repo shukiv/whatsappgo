@@ -44,6 +44,7 @@ var apiMethods = []MethodDescription{
 	method("messages.list", "Page through one chat's messages", false, map[string]any{"chat_jid": "123@lid", "before": 0, "limit": 50}),
 	method("messages.search", "Search local message text", false, map[string]any{"query": "invoice", "limit": 50}),
 	method("link.preview", "Resolve Open Graph metadata for composer text", false, map[string]any{"text": "https://example.com"}),
+	method("link.preview.refresh", "Replace a small cached link image with its full preview", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID"}),
 	method("history.request", "Request an older history page", true, map[string]any{"chat_jid": "123@lid", "limit": 50}),
 	method("history.refresh", "Request a recent history page", true, map[string]any{"chat_jid": "123@lid", "limit": 50}),
 	method("message.download", "Download and cache message media", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID"}),

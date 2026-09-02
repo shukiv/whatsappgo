@@ -282,3 +282,32 @@ func TestOutgoingLinkPreviewKeepsItsLocalThumbnail(t *testing.T) {
 		t.Fatalf("cached thumbnail is %dx%d", width, height)
 	}
 }
+
+func TestRefreshLinkPreviewUpgradesTinyCachedImage(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	client := &Client{store: st, mediaDir: t.TempDir()}
+	lowPath := client.writeThumbnail("tiny-link", jpegSized(t, 80, 80), ".jpg")
+	message := model.Message{ID: "link-1", ChatJID: "alice@lid", Timestamp: 1, Kind: "text",
+		Body: "https://example.com/page", LinkURL: "https://example.com/page", LinkThumbnail: lowPath}
+	if err := st.UpsertMessage(ctx, message, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	client.resolveLinkPreview = func(context.Context, string) (model.LinkPreview, error) {
+		return model.LinkPreview{URL: message.LinkURL, Title: "Example", Thumbnail: jpegSized(t, 1138, 640), ThumbnailMIME: "image/jpeg"}, nil
+	}
+	upgraded, err := client.RefreshLinkPreview(ctx, message.ChatJID, message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upgraded.LinkThumbnail == lowPath {
+		t.Fatal("tiny cached link image was not replaced")
+	}
+	if width, height := imageSize(t, upgraded.LinkThumbnail); width != 1138 || height != 640 {
+		t.Fatalf("upgraded image is %dx%d", width, height)
+	}
+}

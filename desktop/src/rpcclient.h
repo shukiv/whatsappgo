@@ -180,6 +180,7 @@ private:
     void setBusy(bool value);
     void upsertMessage(const QVariantMap &message);
     void rememberMessages(const QString &chatJid, const QVariantList &messages);
+    void upgradeSmallLinkPreviews(const QVariantList &messages);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
     void refreshOpenMessages();
@@ -236,6 +237,7 @@ private:
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
     QSet<QString> m_requestedMedia;
+    QSet<QString> m_requestedLinkPreviews;
     QSet<QString> m_requestedStatusAvatars;
     QSet<QString> m_pendingChatAvatars;
     QHash<QString, qint64> m_chatAvatarRequestedAt;

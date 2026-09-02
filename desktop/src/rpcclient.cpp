@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalServer>
@@ -531,6 +532,40 @@ void RpcClient::rememberMessages(const QString &chatJid, const QVariantList &mes
         m_messageCache.remove(m_messageCacheOrder.takeFirst());
 }
 
+void RpcClient::upgradeSmallLinkPreviews(const QVariantList &messages)
+{
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    if (chatJid.isEmpty() || !daemonConnected())
+        return;
+    for (const auto &entry : messages) {
+        const auto message = entry.toMap();
+        const auto messageId = message.value(QStringLiteral("id")).toString();
+        const auto linkURL = message.value(QStringLiteral("link_url")).toString();
+        const auto thumbnail = message.value(QStringLiteral("link_thumbnail")).toString();
+        if (messageId.isEmpty() || linkURL.isEmpty() || thumbnail.isEmpty())
+            continue;
+        QImageReader reader(thumbnail);
+        const auto size = reader.size();
+        if (!size.isValid() || size.width() >= 640)
+            continue;
+        const auto requestKey = chatJid + QStringLiteral(":") + messageId;
+        if (m_requestedLinkPreviews.contains(requestKey))
+            continue;
+        m_requestedLinkPreviews.insert(requestKey);
+        sendRequest(QStringLiteral("link.preview.refresh"),
+                    {{QStringLiteral("chat_jid"), chatJid},
+                     {QStringLiteral("message_id"), messageId}},
+                    [this, chatJid](const QJsonValue &result, const QJsonObject &error) {
+                        if (!error.isEmpty()
+                            || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+                            return;
+                        const auto refreshed = result.toObject().toVariantMap();
+                        if (!refreshed.isEmpty())
+                            upsertMessage(refreshed);
+                    });
+    }
+}
+
 void RpcClient::openChat(const QString &jid, const QString &title)
 {
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
@@ -566,6 +601,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
                     const auto loadedMessages = page.value(QStringLiteral("messages")).toArray().toVariantList();
                     rememberMessages(jid, loadedMessages);
                     m_messages.reset(loadedMessages);
+                    upgradeSmallLinkPreviews(loadedMessages);
                     m_hasMore = page.value(QStringLiteral("has_more")).toBool();
                     m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
                     QHash<QString, QJsonArray> unreadBySender;
@@ -707,7 +743,9 @@ void RpcClient::loadOlderMessages()
                     if (!error.isEmpty())
                         return;
                     const auto page = result.toObject();
-                    m_messages.prepend(page.value(QStringLiteral("messages")).toArray().toVariantList());
+                    const auto loadedMessages = page.value(QStringLiteral("messages")).toArray().toVariantList();
+                    m_messages.prepend(loadedMessages);
+                    upgradeSmallLinkPreviews(loadedMessages);
                     m_hasMore = page.value(QStringLiteral("has_more")).toBool();
                     m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
 					if (!m_hasMore)
@@ -756,7 +794,9 @@ void RpcClient::loadRemoteHistoryPage()
 			if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
 				return;
 			const auto page = result.toObject();
-			m_messages.prepend(page.value(QStringLiteral("messages")).toArray().toVariantList());
+			const auto loadedMessages = page.value(QStringLiteral("messages")).toArray().toVariantList();
+			m_messages.prepend(loadedMessages);
+			upgradeSmallLinkPreviews(loadedMessages);
 			m_hasMore = page.value(QStringLiteral("has_more")).toBool();
 			m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
 		});
@@ -774,7 +814,9 @@ void RpcClient::refreshOpenMessages()
 			if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
 				return;
 			const auto page = result.toObject();
-			m_messages.reset(page.value(QStringLiteral("messages")).toArray().toVariantList());
+			const auto loadedMessages = page.value(QStringLiteral("messages")).toArray().toVariantList();
+			m_messages.reset(loadedMessages);
+			upgradeSmallLinkPreviews(loadedMessages);
 			m_hasMore = page.value(QStringLiteral("has_more")).toBool();
 			m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
 		});
@@ -1029,6 +1071,7 @@ void RpcClient::switchProfile(const QString &profile)
     m_selectedChat.clear();
     m_searchResults.clear();
     m_statusUpdates.clear();
+    m_requestedLinkPreviews.clear();
     m_requestedStatusAvatars.clear();
     m_requestedStatusMedia.clear();
     m_callLogs.clear();
