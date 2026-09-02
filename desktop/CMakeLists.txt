@@ -243,6 +243,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
     add_test(NAME desktop-status-stories COMMAND whatsappgo --status-stories-test)
+    add_test(NAME desktop-presence-display COMMAND whatsappgo --presence-display-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
@@ -277,6 +278,10 @@ if(BUILD_TESTING)
         TIMEOUT 10
     )
     set_tests_properties(desktop-status-stories PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 10
+    )
+    set_tests_properties(desktop-presence-display PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )

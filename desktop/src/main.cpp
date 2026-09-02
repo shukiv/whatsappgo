@@ -149,6 +149,8 @@ int main(int argc, char *argv[])
     parser.addOption(contactInfoTestOption);
     QCommandLineOption statusStoriesTestOption(QStringLiteral("status-stories-test"), QStringLiteral("Verify grouped status rows and sequential story playback"));
     parser.addOption(statusStoriesTestOption);
+    QCommandLineOption presenceDisplayTestOption(QStringLiteral("presence-display-test"), QStringLiteral("Verify offline and last-seen header text"));
+    parser.addOption(presenceDisplayTestOption);
     QCommandLineOption screenshotOption(QStringLiteral("screenshot"), QStringLiteral("Render the interface to a PNG and exit"), QStringLiteral("path"));
     parser.addOption(screenshotOption);
     QCommandLineOption themeOption(QStringLiteral("theme"), QStringLiteral("Override the appearance for this run (system, light, or dark)"), QStringLiteral("mode"));
@@ -170,10 +172,12 @@ int main(int argc, char *argv[])
     const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
     const bool contactInfoTest = parser.isSet(contactInfoTestOption);
     const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
+    const bool presenceDisplayTest = parser.isSet(presenceDisplayTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
+        || presenceDisplayTest
         || !screenshotPath.isEmpty();
 
     if (automatedRun)
@@ -317,6 +321,24 @@ int main(int argc, char *argv[])
 
     if (desktopIntegrationTest) {
         return !applicationIcon.isNull() && !trayAvailable && trayIcon == nullptr && trayMenu == nullptr
+            ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (presenceDisplayTest) {
+        if (engine.rootObjects().isEmpty())
+            return EXIT_FAILURE;
+        auto *root = engine.rootObjects().constFirst();
+        QVariant unknownResult;
+        const QVariantMap offline{{QStringLiteral("state"), QStringLiteral("offline")},
+                                  {QStringLiteral("last_seen"), 0}};
+        if (!QMetaObject::invokeMethod(root, "presenceText", Q_RETURN_ARG(QVariant, unknownResult),
+                                       Q_ARG(QVariant, offline), Q_ARG(QVariant, QVariant::fromValue<qint64>(0))))
+            return EXIT_FAILURE;
+        QVariant cachedResult;
+        const auto oneHourAgo = QDateTime::currentMSecsSinceEpoch() - 60 * 60 * 1000;
+        if (!QMetaObject::invokeMethod(root, "presenceText", Q_RETURN_ARG(QVariant, cachedResult),
+                                       Q_ARG(QVariant, offline), Q_ARG(QVariant, QVariant::fromValue(oneHourAgo))))
+            return EXIT_FAILURE;
+        return unknownResult.toString().isEmpty() && cachedResult.toString().contains(QStringLiteral("Last seen"))
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (contactInfoTest) {

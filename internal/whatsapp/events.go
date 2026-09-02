@@ -102,6 +102,9 @@ func (c *Client) handleEvent(raw any) {
 		if !evt.LastSeen.IsZero() {
 			lastSeen = evt.LastSeen.UnixMilli()
 		}
+		if lastSeen > 0 && c.store != nil {
+			_ = c.store.UpdateChatLastSeen(context.Background(), jid, lastSeen)
+		}
 		c.emit(gateway.Event{Name: "contact.presence", Data: map[string]any{"jid": jid, "unavailable": evt.Unavailable, "last_seen": lastSeen}})
 	case *waEvents.HistorySync:
 		go c.handleHistorySync(evt)

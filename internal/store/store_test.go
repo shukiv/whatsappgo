@@ -780,6 +780,37 @@ func TestLinkPreviewSurvivesRoundTripAndRepeatedDelivery(t *testing.T) {
 	}
 }
 
+func TestChatInfoKeepsNewestLastSeenAcrossAliases(t *testing.T) {
+	s, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	if err := s.UpsertChat(ctx, model.Chat{JID: "alice@lid", Title: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertChat(ctx, model.Chat{JID: "15551234567@s.whatsapp.net", Title: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateChatLastSeen(ctx, "15551234567@s.whatsapp.net", 1700000000000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkChatAliases(ctx, "alice@lid", "15551234567@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateChatLastSeen(ctx, "alice@lid", 1600000000000); err != nil {
+		t.Fatal(err)
+	}
+	info, err := s.ChatInfo(ctx, "alice@lid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LastSeen != 1700000000000 {
+		t.Fatalf("last seen = %d, want newest disclosed timestamp", info.LastSeen)
+	}
+}
+
 func TestChatInfoAndSharedContentUseCanonicalHistory(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

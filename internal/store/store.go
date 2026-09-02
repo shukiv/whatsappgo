@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS chats (
   pinned_at INTEGER NOT NULL DEFAULT 0,
   favorite INTEGER NOT NULL DEFAULT 0,
   archived INTEGER NOT NULL DEFAULT 0,
-  is_group INTEGER NOT NULL DEFAULT 0
+  is_group INTEGER NOT NULL DEFAULT 0,
+  last_seen INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS chat_aliases (
   alias_jid TEXT PRIMARY KEY,
@@ -142,6 +143,9 @@ CREATE TABLE IF NOT EXISTS metadata (
 		return err
 	}
 	if err := s.ensureColumn(ctx, "chats", "local_title", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "chats", "last_seen", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail"} {
@@ -300,8 +304,8 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO chats
-	 (jid,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group)
-	 SELECT ?,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group
+	 (jid,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group,last_seen)
+	 SELECT ?,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group,last_seen
 	 FROM chats WHERE jid=? ON CONFLICT(jid) DO NOTHING`, canonicalJID, aliasJID); err != nil {
 		return err
 	}
@@ -319,9 +323,10 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	 pinned_at=MAX(pinned_at,COALESCE((SELECT pinned_at FROM chats WHERE jid=?),0)),
 	 favorite=MAX(favorite,COALESCE((SELECT favorite FROM chats WHERE jid=?),0)),
 	 archived=MIN(archived,COALESCE((SELECT archived FROM chats WHERE jid=?),archived)),
-	 is_group=MAX(is_group,COALESCE((SELECT is_group FROM chats WHERE jid=?),0))
+	 is_group=MAX(is_group,COALESCE((SELECT is_group FROM chats WHERE jid=?),0)),
+	 last_seen=MAX(last_seen,COALESCE((SELECT last_seen FROM chats WHERE jid=?),0))
 	 WHERE jid=?`, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID,
-		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
+		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO messages
@@ -515,6 +520,18 @@ func (s *Store) GetChat(ctx context.Context, jid string) (model.Chat, error) {
 	return c, err
 }
 
+// UpdateChatLastSeen retains the newest timestamp WhatsApp has disclosed for
+// a contact. Presence events are transient and may not be replayed every time
+// a conversation is reopened.
+func (s *Store) UpdateChatLastSeen(ctx context.Context, jid string, lastSeen int64) error {
+	if lastSeen <= 0 {
+		return nil
+	}
+	jid = s.canonicalChatJID(ctx, jid)
+	_, err := s.db.ExecContext(ctx, `UPDATE chats SET last_seen=MAX(last_seen,?) WHERE jid=?`, lastSeen, jid)
+	return err
+}
+
 // ChatInfo returns contact metadata and exact shared-content counts from the
 // local database. The phone alias is available for ordinary contacts even
 // when WhatsApp uses a privacy-preserving LID as the canonical chat address.
@@ -525,6 +542,9 @@ func (s *Store) ChatInfo(ctx context.Context, jid string) (model.ChatInfo, error
 		return model.ChatInfo{}, err
 	}
 	info := model.ChatInfo{Chat: chat}
+	if err := s.db.QueryRowContext(ctx, `SELECT last_seen FROM chats WHERE jid=?`, jid).Scan(&info.LastSeen); err != nil {
+		return model.ChatInfo{}, err
+	}
 	if pinned, expiresAt, pinErr := s.PinnedMessage(ctx, jid); pinErr != nil {
 		return model.ChatInfo{}, pinErr
 	} else if pinned.ID != "" {

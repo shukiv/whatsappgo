@@ -186,17 +186,17 @@ Kirigami.ApplicationWindow {
         return Qt.formatDateTime(new Date(timestamp), Qt.DefaultLocaleShortDate)
     }
 
-    function selectedPresenceText() {
-        const presence = backend.selectedPresence || ({})
+    function presenceText(presence, cachedLastSeen) {
         if (String(presence.chat_state || "") === "composing")
             return String(presence.media || "") === "audio" ? qsTr("Recording audio…") : qsTr("Typing…")
-        if (String(presence.state || "") === "online")
+        const state = String(presence.state || "")
+        if (state === "online")
             return qsTr("Online")
-        if (String(presence.state || "") !== "offline")
-            return ""
-        const timestamp = Number(presence.last_seen || 0)
+        const timestamp = Number(presence.last_seen || cachedLastSeen || 0)
         if (timestamp <= 0)
-            return qsTr("Offline")
+            return ""
+        if (state !== "" && state !== "offline")
+            return ""
         const seen = new Date(timestamp)
         const today = new Date()
         const sameDay = seen.getFullYear() === today.getFullYear()
@@ -210,6 +210,11 @@ Kirigami.ApplicationWindow {
             return qsTr("Last seen yesterday at %1").arg(Qt.formatTime(seen, "HH:mm"))
         return qsTr("Last seen %1 at %2").arg(Qt.formatDate(seen, Qt.DefaultLocaleShortDate))
             .arg(Qt.formatTime(seen, "HH:mm"))
+    }
+
+    function selectedPresenceText() {
+        const info = backend.chatInfo || ({})
+        return presenceText(backend.selectedPresence || ({}), Number(info.last_seen || 0))
     }
 
     function openChatImage(message) {

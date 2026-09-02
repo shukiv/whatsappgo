@@ -126,6 +126,34 @@ func TestPresenceEventUsesCanonicalChatAndKeepsUnknownLastSeenEmpty(t *testing.T
 	}
 }
 
+func TestPresenceEventPersistsDisclosedLastSeen(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	if err := st.UpsertChat(ctx, model.Chat{JID: "alice@lid", Title: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkChatAliases(ctx, "alice@lid", "15551234567@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st, subs: make(map[uint64]func(gateway.Event))}
+	c.handleEvent(&waEvents.Presence{
+		From:        types.NewJID("15551234567", types.DefaultUserServer),
+		Unavailable: true,
+		LastSeen:    time.UnixMilli(1700000000000),
+	})
+	info, err := st.ChatInfo(ctx, "alice@lid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.LastSeen != 1700000000000 {
+		t.Fatalf("last seen = %d, want persisted presence timestamp", info.LastSeen)
+	}
+}
+
 func TestPinInChatEventUpdatesPinnedMessageProjection(t *testing.T) {
 	st, err := localstore.OpenMemory()
 	if err != nil {
