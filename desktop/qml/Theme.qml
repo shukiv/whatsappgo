@@ -65,7 +65,9 @@ QtObject {
     readonly property color pressedRow: dark ? "#31414A" : "#EEECE9"
     readonly property color scrollbarHandle: dark ? "#667781" : "#8D8B88"
     readonly property color scrollbarHandleHover: dark ? "#AEBAC1" : "#666461"
-    readonly property real patternOpacity: dark ? 0.10 : 0.16
+    // WhatsApp Web keeps the light-theme doodles faint so the canvas reads as
+    // an airy background rather than a second foreground texture.
+    readonly property real patternOpacity: dark ? 0.10 : 0.12
     readonly property string emojiFontFamily: "Noto Color Emoji"
 
     readonly property int radiusSmall: 6

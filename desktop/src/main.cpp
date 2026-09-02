@@ -1799,11 +1799,18 @@ int main(int argc, char *argv[])
         auto *root = engine.rootObjects().constFirst();
         auto *navigationRail = root->findChild<QObject *>(QStringLiteral("navigationRail"));
         auto *selectedNavigation = root->findChild<QObject *>(QStringLiteral("navigationChatsBackground"));
-        if (!navigationRail || !selectedNavigation)
+        auto *chatBackgroundPattern = root->findChild<QObject *>(QStringLiteral("chatBackgroundPattern"));
+        if (!navigationRail || !selectedNavigation || !chatBackgroundPattern)
             return EXIT_FAILURE;
         const auto railColor = navigationRail->property("color").value<QColor>();
         const auto selectedColor = selectedNavigation->property("color").value<QColor>();
+        const auto patternOpacity = chatBackgroundPattern->property("opacity").toReal();
+        const auto requestedTheme = parser.value(themeOption);
+        const bool patternToneMatches = requestedTheme == QStringLiteral("light")
+            ? qAbs(patternOpacity - 0.12) < 0.001
+            : requestedTheme != QStringLiteral("dark") || qAbs(patternOpacity - 0.10) < 0.001;
         return qAbs(railColor.lightness() - selectedColor.lightness()) >= 10
+                && patternToneMatches
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (!screenshotPath.isEmpty()) {

@@ -945,6 +945,7 @@ Kirigami.ApplicationWindow {
             visible: window.activeSection === "chats"
 
             Image {
+                objectName: "chatBackgroundPattern"
                 anchors.fill: parent
                 source: Qt.resolvedUrl("assets/chat-background.png")
                 fillMode: Image.Tile
