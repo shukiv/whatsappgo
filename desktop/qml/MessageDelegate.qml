@@ -60,6 +60,8 @@ Item {
     readonly property real horizontalPadding: 11
     readonly property real maxBubbleWidth: Math.max(180, Math.min(root.width * 0.68, 620))
     readonly property real contentMaxWidth: maxBubbleWidth - 2 * horizontalPadding
+    readonly property real linkCardWidth: Math.min(contentMaxWidth,
+        Math.max(320, Math.min(root.width * 0.46, 420)))
     readonly property real mediaWidth: Math.min(contentMaxWidth, modelData.kind === "sticker" ? 160 : 300)
     readonly property real mediaDisplayHeight: {
         const previewWidth = Number(modelData.preview_width || 0)
@@ -102,10 +104,11 @@ Item {
         mediaFrame.visible ? mediaWidth : 0,
         voiceRow.visible ? 284 : 0,
         fileRow.visible ? Math.min(fileRow.implicitWidth, contentMaxWidth) : 0,
-        linkPreview.visible ? Math.min(Math.max(linkPreview.naturalWidth, 240), contentMaxWidth) : 0,
+        linkPreview.visible ? linkCardWidth : 0,
         contactCard.visible ? Math.min(Math.max(contactCard.naturalWidth, 220), contentMaxWidth) : 0,
         locationCard.visible ? Math.min(260, contentMaxWidth) : 0,
-        bodyText.visible ? (metaBeside ? bodyText.implicitWidth + metaRow.implicitWidth + 12 : bodyText.implicitWidth) : 0,
+        bodyText.visible ? (linkPreview.visible ? Math.min(bodyText.implicitWidth, linkCardWidth)
+            : (metaBeside ? bodyText.implicitWidth + metaRow.implicitWidth + 12 : bodyText.implicitWidth)) : 0,
         unsupportedLabel.visible ? unsupportedLabel.implicitWidth : 0,
         metaRow.implicitWidth)
     readonly property real contentWidth: Math.min(Math.max(naturalContentWidth, 54), contentMaxWidth)

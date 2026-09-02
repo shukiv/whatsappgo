@@ -1156,8 +1156,8 @@ int main(int argc, char *argv[])
         const QVariantMap linkMessage{
             {QStringLiteral("id"), QStringLiteral("link-1")},
             {QStringLiteral("kind"), QStringLiteral("text")},
-            {QStringLiteral("body"), QStringLiteral("https://www.youtube.com/watch?v=5DdABvSTA0I")},
-            {QStringLiteral("link_url"), QStringLiteral("https://www.youtube.com/watch?v=5DdABvSTA0I")},
+            {QStringLiteral("body"), QStringLiteral("https://claude.ai/code/artifact/fcd8ee2f-d34e-47c0-a99c-d1487b78202d")},
+            {QStringLiteral("link_url"), QStringLiteral("https://claude.ai/code/artifact/fcd8ee2f-d34e-47c0-a99c-d1487b78202d")},
             {QStringLiteral("link_title"), QStringLiteral("A video title")},
             {QStringLiteral("link_description"), QStringLiteral("The description the sender's client resolved.")},
             {QStringLiteral("link_thumbnail"), linkThumbPath},
@@ -1186,6 +1186,7 @@ int main(int argc, char *argv[])
                                      .arg(card->width()).arg(card->height()).arg(linkBubble->width());
             require(card->height() > 60.0, QStringLiteral("link preview card has no height"));
             require(linkBubble->width() <= paneWidth * 0.70, QStringLiteral("link bubble is too wide"));
+            require(linkBubble->width() <= 450.0, QStringLiteral("long URL expanded the link bubble"));
         }
         QFile::remove(linkThumbPath);
 
