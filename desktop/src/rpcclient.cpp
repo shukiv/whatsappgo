@@ -17,6 +17,7 @@
 #include <QMimeData>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QUrl>
@@ -57,6 +58,12 @@ QString bareJid(QString jid)
 {
     jid.replace(QRegularExpression(QStringLiteral(":\\d+@")), QStringLiteral("@"));
     return jid;
+}
+
+QString localFilePath(const QString &pathOrUrl)
+{
+    const QUrl url(pathOrUrl);
+    return url.isLocalFile() ? url.toLocalFile() : pathOrUrl;
 }
 }
 
@@ -1293,9 +1300,10 @@ void RpcClient::discardClipboardImage(const QString &localUrl)
 
 bool RpcClient::copyImageFile(const QString &path)
 {
-	if (path.isEmpty())
+	const auto localPath = localFilePath(path);
+	if (localPath.isEmpty())
 		return false;
-	QImage image(path);
+	QImage image(localPath);
 	if (image.isNull()) {
 		emit errorOccurred(tr("Could not read this image."));
 		return false;
@@ -1303,6 +1311,44 @@ bool RpcClient::copyImageFile(const QString &path)
 	QGuiApplication::clipboard()->setImage(image);
 	emit noticeOccurred(tr("Image copied"));
 	return true;
+}
+
+void RpcClient::saveImage(const QString &path, const QString &destination)
+{
+	const auto sourcePath = localFilePath(path);
+	const auto destinationPath = localFilePath(destination);
+	if (sourcePath.isEmpty() || destinationPath.isEmpty()) {
+		emit errorOccurred(tr("Could not save this image."));
+		return;
+	}
+	if (QFileInfo(sourcePath).absoluteFilePath() == QFileInfo(destinationPath).absoluteFilePath()) {
+		emit noticeOccurred(tr("Image saved"));
+		return;
+	}
+	QFile source(sourcePath);
+	QSaveFile output(destinationPath);
+	if (!source.open(QIODevice::ReadOnly) || !output.open(QIODevice::WriteOnly)) {
+		emit errorOccurred(tr("Could not save this image."));
+		return;
+	}
+	while (!source.atEnd()) {
+		const auto block = source.read(256 * 1024);
+		if (block.isEmpty() && source.error() != QFile::NoError) {
+			output.cancelWriting();
+			emit errorOccurred(tr("Could not save this image."));
+			return;
+		}
+		if (output.write(block) != block.size()) {
+			output.cancelWriting();
+			emit errorOccurred(tr("Could not save this image."));
+			return;
+		}
+	}
+	if (!output.commit()) {
+		emit errorOccurred(tr("Could not save this image."));
+		return;
+	}
+	emit noticeOccurred(tr("Image saved"));
 }
 
 void RpcClient::copyImage(const QString &messageId, const QString &path)

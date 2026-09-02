@@ -1634,6 +1634,32 @@ int main(int argc, char *argv[])
         imageDecodeLoop.exec();
         const bool upgradedToFullImage = nativeImage
             && nativeImage->property("source").toUrl().toLocalFile() == receivedImagePath;
+        auto *imageActionMenu = nativeViewer
+            ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerActionMenu")) : nullptr;
+        auto *imageClickHandler = nativeViewer
+            ? nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerClickHandler")) : nullptr;
+        auto *copyImageAction = nativeViewer
+            ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerCopyAction"))) : nullptr;
+        auto *saveImageAction = nativeViewer
+            ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerSaveAction"))) : nullptr;
+        const bool actionMenuOpened = nativeViewer && QMetaObject::invokeMethod(
+            nativeViewer, "openActionMenu", Q_ARG(QVariant, 220.0), Q_ARG(QVariant, 180.0));
+        QCoreApplication::processEvents();
+        const bool imageActionsReady = actionMenuOpened && imageActionMenu && imageActionMenu->property("visible").toBool()
+            && imageClickHandler && copyImageAction && saveImageAction
+            && copyImageAction->isVisible() && saveImageAction->isVisible()
+            && copyImageAction->height() >= 44 && saveImageAction->height() >= 44;
+        if (imageActionMenu)
+            QMetaObject::invokeMethod(imageActionMenu, "close");
+        QGuiApplication::clipboard()->clear();
+        backend.copyImage(QString(), QUrl::fromLocalFile(receivedImagePath).toString());
+        const bool viewerCopyWorked = QGuiApplication::clipboard()->image().size() == source.size();
+        const auto savedImagePath = QDir(QDir::tempPath()).filePath(
+            QStringLiteral("whatsappgo-native-viewer-saved.jpg"));
+        QFile::remove(savedImagePath);
+        backend.saveImage(QUrl::fromLocalFile(receivedImagePath).toString(),
+                          QUrl::fromLocalFile(savedImagePath).toString());
+        const bool viewerSaveWorked = QImage(savedImagePath).size() == source.size();
         auto *zoomIn = nativeViewer
             ? qobject_cast<QQuickItem *>(nativeViewer->findChild<QObject *>(QStringLiteral("chatMediaViewerZoomIn"))) : nullptr;
         auto *zoomOut = nativeViewer
@@ -1689,7 +1715,9 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         QFile::remove(receivedImagePath);
         QFile::remove(thumbnailPath);
+        QFile::remove(savedImagePath);
         if (!nativeViewerReady || !startedWithThumbnail || !completedDownload || !upgradedToFullImage
+                || !imageActionsReady || !viewerCopyWorked || !viewerSaveWorked
                 || !nativeZoomReady || !nativeViewerClosed
                 || nativeViewer->property("previewActive").toBool())
             return EXIT_FAILURE;

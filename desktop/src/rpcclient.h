@@ -130,6 +130,7 @@ public:
     Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {});
     Q_INVOKABLE void discardClipboardImage(const QString &localUrl);
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
+    Q_INVOKABLE void saveImage(const QString &path, const QString &destination);
     Q_INVOKABLE void copyText(const QString &text);
     Q_INVOKABLE void refreshStatuses();
     Q_INVOKABLE void refreshChatAvatar(const QString &jid);

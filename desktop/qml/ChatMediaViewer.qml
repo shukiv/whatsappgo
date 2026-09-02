@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
+import QtCore
 import org.whatsappgo
 
 FocusScope {
@@ -100,6 +102,28 @@ FocusScope {
         setZoomAt(zoomFactor * factor,
                   pointerX === undefined ? stage.width / 2 : pointerX,
                   pointerY === undefined ? stage.height / 2 : pointerY)
+    }
+
+    function imageFileName() {
+        const source = String(imageUrl || "").split("?")[0]
+        const candidate = decodeURIComponent(source.substring(source.lastIndexOf("/") + 1))
+        return candidate || "WhatsApp image.jpg"
+    }
+
+    function openActionMenu(pointerX, pointerY) {
+        if (!previewActive)
+            return
+        const overlay = Overlay.overlay
+        const mapped = stage.mapToItem(overlay, pointerX, pointerY)
+        imageActionMenu.x = Math.max(8, Math.min(overlay.width - imageActionMenu.width - 8, mapped.x))
+        imageActionMenu.y = Math.max(8, Math.min(overlay.height - imageActionMenu.implicitHeight - 8, mapped.y))
+        imageActionMenu.open()
+    }
+
+    function chooseSaveDestination() {
+        const pictures = StandardPaths.writableLocation(StandardPaths.PicturesLocation)
+        saveImageDialog.currentFile = String(pictures) + "/" + imageFileName()
+        saveImageDialog.open()
     }
 
     Shortcut {
@@ -310,6 +334,13 @@ FocusScope {
             }
         }
 
+        TapHandler {
+            objectName: "chatMediaViewerClickHandler"
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: eventPoint => root.openActionMenu(eventPoint.position.x, eventPoint.position.y)
+        }
+
         BusyIndicator {
             anchors.centerIn: parent
             width: 44
@@ -374,5 +405,44 @@ FocusScope {
             height: 1
             color: Theme.border
         }
+    }
+
+    WhatsAppMenuPopup {
+        id: imageActionMenu
+        objectName: "chatMediaViewerActionMenu"
+        parent: Overlay.overlay
+        width: 230
+
+        WhatsAppMenuItem {
+            objectName: "chatMediaViewerCopyAction"
+            text: qsTr("Copy image")
+            iconSource: Qt.resolvedUrl("icons/copy.svg")
+            onClicked: {
+                imageActionMenu.close()
+                backend.copyImage(root.messageId, String(root.imageUrl))
+            }
+        }
+
+        WhatsAppMenuItem {
+            objectName: "chatMediaViewerSaveAction"
+            text: qsTr("Save image as…")
+            iconSource: Qt.resolvedUrl("icons/document.svg")
+            onClicked: {
+                imageActionMenu.close()
+                root.chooseSaveDestination()
+            }
+        }
+    }
+
+    FileDialog {
+        id: saveImageDialog
+        objectName: "chatMediaViewerSaveDialog"
+        title: qsTr("Save image as")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [
+            qsTr("Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp)"),
+            qsTr("All files (*)")
+        ]
+        onAccepted: backend.saveImage(String(root.imageUrl), String(selectedFile))
     }
 }
