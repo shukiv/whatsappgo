@@ -143,6 +143,7 @@ public:
 signals:
     void daemonConnectedChanged();
     void statusChanged();
+    void chatsAboutToChange();
     void chatsChanged();
     void archivedChatsChanged();
     void selectedChatChanged();

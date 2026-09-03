@@ -462,6 +462,7 @@ void RpcClient::refreshChats(const QString &query)
                 [this](const QJsonValue &result, const QJsonObject &error) {
                     if (!error.isEmpty())
                         return;
+                    emit chatsAboutToChange();
                     m_chats = result.toArray().toVariantList();
                     const auto selectedJid = m_selectedChat.value(QStringLiteral("jid")).toString();
                     if (!selectedJid.isEmpty()) {
