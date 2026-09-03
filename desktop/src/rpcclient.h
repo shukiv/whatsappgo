@@ -115,6 +115,8 @@ public:
     Q_INVOKABLE void pinMessage(const QString &messageId, const QString &senderJid, int durationSeconds);
     Q_INVOKABLE void unpinMessage(const QString &messageId, const QString &senderJid = {});
     Q_INVOKABLE int messageIndex(const QString &messageId) const;
+    Q_INVOKABLE QVariantMap messageById(const QString &messageId) const;
+	Q_INVOKABLE void markMediaPlayed(const QString &messageId);
     Q_INVOKABLE void startChat(const QString &phone);
     Q_INVOKABLE void setTyping(bool typing);
     Q_INVOKABLE void startPairing();
@@ -248,6 +250,7 @@ private:
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
     QSet<QString> m_requestedMedia;
+	QSet<QString> m_playedMedia;
     QSet<QString> m_requestedLinkPreviews;
     QSet<QString> m_requestedStatusAvatars;
     QSet<QString> m_pendingChatAvatars;

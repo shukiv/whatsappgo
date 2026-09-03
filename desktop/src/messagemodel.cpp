@@ -252,7 +252,7 @@ int receiptRank(const QString &status)
 }
 }
 
-void MessageListModel::applyReceipt(const QStringList &messageIds, const QString &status)
+void MessageListModel::applyReceipt(const QStringList &messageIds, const QString &status, qint64 timestamp)
 {
     const int rank = receiptRank(status);
     if (rank == 0)
@@ -265,9 +265,27 @@ void MessageListModel::applyReceipt(const QStringList &messageIds, const QString
         if (row < 0 || row >= count())
             continue;
         auto message = m_messages.at(row).toMap();
-        if (receiptRank(message.value(QStringLiteral("status")).toString()) >= rank)
+		const auto original = message;
+        const auto currentRank = receiptRank(message.value(QStringLiteral("status")).toString());
+        if (currentRank < rank)
+            message.insert(QStringLiteral("status"), status);
+        if (timestamp > 0) {
+            if (status == QStringLiteral("delivered")) {
+                message.insert(QStringLiteral("delivered_at"), timestamp);
+            } else if (status == QStringLiteral("read")) {
+                if (message.value(QStringLiteral("delivered_at")).toLongLong() <= 0)
+                    message.insert(QStringLiteral("delivered_at"), timestamp);
+                message.insert(QStringLiteral("read_at"), timestamp);
+            } else if (status == QStringLiteral("played")) {
+                if (message.value(QStringLiteral("delivered_at")).toLongLong() <= 0)
+                    message.insert(QStringLiteral("delivered_at"), timestamp);
+                if (message.value(QStringLiteral("read_at")).toLongLong() <= 0)
+                    message.insert(QStringLiteral("read_at"), timestamp);
+                message.insert(QStringLiteral("played_at"), timestamp);
+            }
+        }
+        if (message == original)
             continue;
-        message.insert(QStringLiteral("status"), status);
         m_messages[row] = message;
         const auto changed = index(count() - 1 - row, 0);
         emit dataChanged(changed, changed, {MessageRole});

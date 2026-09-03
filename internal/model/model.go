@@ -38,6 +38,9 @@ type Message struct {
 	Body           string     `json:"body,omitempty"`
 	FromMe         bool       `json:"from_me"`
 	Status         string     `json:"status"`
+	DeliveredAt    int64      `json:"delivered_at,omitempty"`
+	ReadAt         int64      `json:"read_at,omitempty"`
+	PlayedAt       int64      `json:"played_at,omitempty"`
 	ReplyTo        string     `json:"reply_to,omitempty"`
 	ReplyPreview   string     `json:"reply_preview,omitempty"`
 	ReplySender    string     `json:"reply_sender,omitempty"`

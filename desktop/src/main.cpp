@@ -541,12 +541,26 @@ int main(int argc, char *argv[])
                 property string previewedMessageId: ""
                 property string previewedMediaPath: ""
                 property string quotedMessageId: ""
+                property string infoMessageId: ""
+				property var infoMessage: ({})
                 MessageDelegate {
                     objectName: "messageInteractionDelegate"
                     width: 800
                     modelData: harness.testMessage
                     onQuotedMessageRequested: messageId => harness.quotedMessageId = messageId
+				onInfoRequested: message => {
+					harness.infoMessageId = String(message.id || "")
+					harness.infoMessage = message
+				}
                 }
+				MessageInfoDrawer {
+					objectName: "messageInfoDrawerHarness"
+					anchors.top: parent.top
+					anchors.right: parent.right
+					anchors.bottom: parent.bottom
+					opened: Boolean(harness.infoMessage.id)
+					message: harness.infoMessage
+				}
                 MessageDelegate {
                     objectName: "imageInteractionDelegate"
                     width: 800
@@ -562,7 +576,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("id"), QStringLiteral("message-test")},
             {QStringLiteral("body"), QStringLiteral("Copy this https://example.com/path?q=1")},
             {QStringLiteral("kind"), QStringLiteral("text")},
-            {QStringLiteral("from_me"), false},
+            {QStringLiteral("from_me"), true},
             {QStringLiteral("timestamp"), 0},
             {QStringLiteral("status"), QStringLiteral("received")},
             {QStringLiteral("reply_to"), QStringLiteral("quoted-message-test")},
@@ -604,6 +618,8 @@ int main(int argc, char *argv[])
         auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
         auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
+		auto *infoAction = delegate->findChild<QObject *>(QStringLiteral("messageInfoAction"));
+		auto *infoDrawer = qobject_cast<QQuickItem *>(harness->findChild<QObject *>(QStringLiteral("messageInfoDrawerHarness")));
         auto *quotedMessagePreview = qobject_cast<QQuickItem *>(
             delegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview")));
         auto *imageDelegate = harness->findChild<QObject *>(QStringLiteral("imageInteractionDelegate"));
@@ -615,6 +631,9 @@ int main(int argc, char *argv[])
             && !body->property("selectedText").toString().isEmpty();
         const bool menuOpened = menuButton && QMetaObject::invokeMethod(menuButton, "click");
         QCoreApplication::processEvents();
+		const bool infoClicked = infoAction && QMetaObject::invokeMethod(infoAction, "click");
+		QCoreApplication::processEvents();
+		auto *infoPreview = infoDrawer ? infoDrawer->findChild<QObject *>(QStringLiteral("messageInfoPreview")) : nullptr;
         const bool quoteClicked = quotedMessagePreview
             && QMetaObject::invokeMethod(quotedMessagePreview, "click");
         QCoreApplication::processEvents();
@@ -644,6 +663,8 @@ int main(int argc, char *argv[])
                 && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏  👍 2")
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
                 && menuOpened && menu && menu->property("visible").toBool()
+				&& infoClicked && harness->property("infoMessageId").toString() == QStringLiteral("message-test")
+				&& infoDrawer && infoDrawer->isVisible() && infoDrawer->width() <= 440 && infoPreview
                 && quickReactions && quickReactions->property("visible").toBool()
                 && quotedMessagePreview && quotedMessagePreview->isVisible()
                 && quotedMessagePreview->height() >= 44 && quoteClicked

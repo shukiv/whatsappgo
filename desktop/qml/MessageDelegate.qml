@@ -10,12 +10,14 @@ Item {
     property url chatAvatarSource
     property string ownTitle: ""
     property bool navigationHighlighted: false
+	property bool actionsEnabled: true
     signal editRequested(string messageId, string body)
     signal deleteRequested(string messageId, string senderJid)
     signal replyRequested(string messageId, string body)
     signal pinRequested(string messageId, string senderJid, string body)
     signal imagePreviewRequested(var message)
     signal quotedMessageRequested(string messageId)
+	signal infoRequested(var message)
 
     readonly property bool hasReply: Boolean(modelData.reply_to)
     readonly property bool hasMedia: Boolean(modelData.media_path)
@@ -642,7 +644,7 @@ Item {
                     diameter: 44
                     title: root.modelData.from_me ? root.ownTitle : root.chatTitle
                     source: root.modelData.from_me ? "" : root.chatAvatarSource
-                    fallbackIdentity: root.modelData.from_me
+					fallbackIdentity: Boolean(root.modelData.from_me)
                 }
             }
 
@@ -950,7 +952,8 @@ Item {
             z: 12
             focusPolicy: Qt.TabFocus
             opacity: bubbleHover.hovered || hovered || activeFocus || contextMenu.opened ? 1 : 0
-            enabled: root.modelData.kind !== "system"
+			visible: root.actionsEnabled
+			enabled: visible && root.modelData.kind !== "system"
             Accessible.name: qsTr("Message actions")
             Accessible.description: contextMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
             ToolTip.visible: hovered
@@ -983,7 +986,8 @@ Item {
         focusPolicy: Qt.TabFocus
         opacity: bubbleHover.hovered || hovered || activeFocus
             || (quickReactionPopup.opened && !quickReactionPopup.pairedWithMenu) ? 1 : 0
-        enabled: root.modelData.kind !== "system" && !root.modelData.revoked
+		visible: root.actionsEnabled
+		enabled: visible && root.modelData.kind !== "system" && !root.modelData.revoked
         Accessible.name: qsTr("React to message")
         ToolTip.visible: hovered
         ToolTip.text: Accessible.name
@@ -1046,6 +1050,7 @@ Item {
     }
 
     TapHandler {
+		enabled: root.actionsEnabled
         acceptedButtons: Qt.RightButton
         onTapped: (eventPoint, button) => {
             const mapped = root.mapToItem(contextMenu.parent, eventPoint.position.x, eventPoint.position.y)
@@ -1153,6 +1158,19 @@ Item {
         closePolicy: Popup.CloseOnEscape
 
         WhatsAppMenuItem {
+			id: messageInfoAction
+			objectName: "messageInfoAction"
+			visible: Boolean(root.modelData.from_me)
+			height: visible ? 46 : 0
+			text: qsTr("Message info")
+			iconSource: Qt.resolvedUrl("icons/info.svg")
+			onClicked: {
+				root.closeActionPopups()
+				root.infoRequested(root.modelData)
+			}
+		}
+
+		WhatsAppMenuItem {
             visible: Boolean(contextMenu.capturedSelection)
             height: visible ? 46 : 0
             text: qsTr("Copy selected text")

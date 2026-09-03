@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS messages (
   body TEXT NOT NULL DEFAULT '',
   from_me INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'received',
+  delivered_at INTEGER NOT NULL DEFAULT 0,
+  read_at INTEGER NOT NULL DEFAULT 0,
+  played_at INTEGER NOT NULL DEFAULT 0,
   reply_to TEXT NOT NULL DEFAULT '',
   edited INTEGER NOT NULL DEFAULT 0,
   revoked INTEGER NOT NULL DEFAULT 0,
@@ -158,6 +161,11 @@ CREATE TABLE IF NOT EXISTS metadata (
 	}
 	if err := s.ensureColumn(ctx, "messages", "audio_waveform", "BLOB"); err != nil {
 		return err
+	}
+	for _, column := range []string{"delivered_at", "read_at", "played_at"} {
+		if err := s.ensureColumn(ctx, "messages", column, "INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
 	}
 	for _, column := range []string{"contact_name", "contact_phone"} {
 		if err := s.ensureColumn(ctx, "messages", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -330,8 +338,8 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO messages
-	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size)
-	 SELECT id,?,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size
+	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at)
+	 SELECT id,?,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at
 	 FROM messages WHERE chat_jid=?`, canonicalJID, aliasJID); err != nil {
 		return err
 	}
@@ -400,8 +408,8 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messages
- (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at)
+	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(chat_jid,id) DO UPDATE SET
   sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,timestamp=excluded.timestamp,
 	  kind=excluded.kind,body=excluded.body,from_me=excluded.from_me,
@@ -428,11 +436,12 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
   contact_phone=CASE WHEN excluded.contact_phone<>'' THEN excluded.contact_phone ELSE messages.contact_phone END,
   contact_count=MAX(messages.contact_count,excluded.contact_count),
   latitude=CASE WHEN excluded.latitude<>0 THEN excluded.latitude ELSE messages.latitude END,
-  longitude=CASE WHEN excluded.longitude<>0 THEN excluded.longitude ELSE messages.longitude END`,
+	  longitude=CASE WHEN excluded.longitude<>0 THEN excluded.longitude ELSE messages.longitude END`,
 		msg.ID, msg.ChatJID, msg.SenderJID, msg.SenderName, msg.Timestamp, msg.Kind, msg.Body, msg.FromMe, msg.Status,
 		msg.ReplyTo, msg.Edited, msg.Revoked, msg.MediaMIME, msg.MediaName, msg.MediaPath, msg.MediaThumbnail, msg.MediaSize,
 		msg.LinkURL, msg.LinkTitle, msg.LinkDescription, msg.LinkThumbnail, msg.MediaDuration, packWaveform(msg.AudioWaveform),
-		msg.ContactName, msg.ContactPhone, msg.ContactCount, msg.Latitude, msg.Longitude)
+		msg.ContactName, msg.ContactPhone, msg.ContactCount, msg.Latitude, msg.Longitude,
+		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt)
 	if err != nil {
 		return err
 	}
@@ -651,7 +660,7 @@ func (s *Store) ListSharedMessages(ctx context.Context, chatJID, category string
 	rows, err := s.db.QueryContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
 	 reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
 	 link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
-	 contact_name,contact_phone,contact_count,latitude,longitude
+	 contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at
 	 FROM messages WHERE chat_jid=? AND revoked=0 AND `+condition+`
 	 ORDER BY timestamp DESC,id DESC LIMIT ? OFFSET ?`, chatJID, limit+1, offset)
 	if err != nil {
@@ -665,7 +674,8 @@ func (s *Store) ListSharedMessages(ctx context.Context, chatJID, category string
 		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe,
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail,
 			&m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
-			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude); err != nil {
+			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
+			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt); err != nil {
 			return model.SharedMessagePage{}, err
 		}
 		m.AudioWaveform = unpackWaveform(waveform)
@@ -695,7 +705,7 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
  m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
  m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
- m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,
+ m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,
  COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0)
  FROM messages m LEFT JOIN messages q ON q.chat_jid=m.chat_jid AND q.id=m.reply_to
  WHERE m.chat_jid=? AND m.timestamp<? AND m.kind NOT IN ('unknown','') ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, limit+1)
@@ -712,6 +722,7 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize,
 			&m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
+			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt,
 			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe); err != nil {
 			return model.MessagePage{}, err
 		}
@@ -801,9 +812,10 @@ func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (mode
 	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
  reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
- contact_name,contact_phone,contact_count,latitude,longitude
+ contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at
  FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
-		&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude)
+		&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
+		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt)
 	m.AudioWaveform = unpackWaveform(waveform)
 	return m, err
 }
@@ -1122,7 +1134,7 @@ func (s *Store) UpdateChatFavorites(ctx context.Context, jids []string) error {
 	return tx.Commit()
 }
 
-func (s *Store) UpdateReceipt(ctx context.Context, chatJID string, ids []string, status string) error {
+func (s *Store) UpdateReceipt(ctx context.Context, chatJID string, ids []string, status string, timestamp int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -1131,12 +1143,34 @@ func (s *Store) UpdateReceipt(ctx context.Context, chatJID string, ids []string,
 		return fmt.Errorf("invalid receipt status %q", status)
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids)+2)
-	args = append(args, status, chatJID)
+	if timestamp <= 0 {
+		timestamp = time.Now().UnixMilli()
+	}
+	assignment := `status=CASE
+	 WHEN status='played' THEN status
+	 WHEN status='read' AND ? IN ('sent','delivered') THEN status
+	 WHEN status='delivered' AND ?='sent' THEN status
+	 ELSE ? END`
+	args := make([]any, 0, len(ids)+8)
+	args = append(args, status, status, status)
+	switch status {
+	case "delivered":
+		assignment += `,delivered_at=CASE WHEN delivered_at=0 OR ?<delivered_at THEN ? ELSE delivered_at END`
+		args = append(args, timestamp, timestamp)
+	case "read":
+		assignment += `,read_at=CASE WHEN read_at=0 OR ?<read_at THEN ? ELSE read_at END,delivered_at=CASE WHEN delivered_at=0 THEN ? ELSE delivered_at END`
+		args = append(args, timestamp, timestamp, timestamp)
+	case "played":
+		assignment += `,played_at=CASE WHEN played_at=0 OR ?<played_at THEN ? ELSE played_at END,read_at=CASE WHEN read_at=0 THEN ? ELSE read_at END,delivered_at=CASE WHEN delivered_at=0 THEN ? ELSE delivered_at END`
+		args = append(args, timestamp, timestamp, timestamp, timestamp)
+	}
+	args = append(args, chatJID)
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET status=? WHERE chat_jid=? AND id IN (`+placeholders+`)`, args...)
+	// A later milestone implies the earlier ones. When WhatsApp omitted an
+	// intermediate receipt, use the known upper-bound rather than hiding it.
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET `+assignment+` WHERE chat_jid=? AND id IN (`+placeholders+`)`, args...)
 	return err
 }
 

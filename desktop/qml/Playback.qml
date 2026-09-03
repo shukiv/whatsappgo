@@ -27,6 +27,7 @@ Item {
     // operations. Keep the requested start until both objects exist so the
     // first frames cannot be sent to a null VideoOutput.
     property bool startPending: false
+	property string announcedId: ""
 
     readonly property bool active: currentId !== ""
     readonly property bool playing: loader.item ? loader.item.playbackState === MediaPlayer.PlayingState : false
@@ -40,6 +41,9 @@ Item {
     // Emitted when a recording reaches its end, so the conversation can move
     // on to the next one the way WhatsApp plays a run of voice notes.
     signal finished(string messageId)
+	// Fired only after the media player has actually been asked to play. This
+	// keeps deferred downloads from being acknowledged on the initial click.
+	signal started(string messageId)
 
     function isCurrent(messageId) {
         return messageId !== "" && messageId === currentId
@@ -126,6 +130,12 @@ Item {
             MediaPlayer {
                 audioOutput: AudioOutput {}
                 videoOutput: root.videoSurface
+				onPlaybackStateChanged: {
+					if (playbackState === MediaPlayer.PlayingState && root.announcedId !== root.currentId) {
+						root.announcedId = root.currentId
+						root.started(root.currentId)
+					}
+				}
                 onErrorOccurred: (error, errorString) => {
                     root.failed(errorString)
                     root.stop()

@@ -524,7 +524,7 @@ func (c *Client) handleReceipt(evt *waEvents.Receipt) {
 	for i, id := range evt.MessageIDs {
 		ids[i] = string(id)
 	}
-	_ = c.store.UpdateReceipt(context.Background(), evt.Chat.String(), ids, status)
+	_ = c.store.UpdateReceipt(context.Background(), evt.Chat.String(), ids, status, evt.Timestamp.UnixMilli())
 	_ = c.store.RecalculateChatUnread(context.Background(), evt.Chat.String())
 	// A read-self receipt is generated when this account reads incoming
 	// messages on another linked device while read receipts are disabled. It

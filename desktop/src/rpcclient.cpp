@@ -401,7 +401,8 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
             const auto reported = payload.value(QStringLiteral("message_ids")).toArray();
             for (const auto &id : reported)
                 ids.append(id.toString());
-            m_messages.applyReceipt(ids, payload.value(QStringLiteral("status")).toString());
+            m_messages.applyReceipt(ids, payload.value(QStringLiteral("status")).toString(),
+							payload.value(QStringLiteral("timestamp")).toVariant().toLongLong());
         }
         refreshChats();
     } else if (name == QStringLiteral("message.revoked") || name == QStringLiteral("message.reaction") || name == QStringLiteral("message.edited")) {
@@ -1053,6 +1054,39 @@ void RpcClient::unpinMessage(const QString &messageId, const QString &senderJid)
 int RpcClient::messageIndex(const QString &messageId) const
 {
     return m_messages.viewRowForId(messageId);
+}
+
+QVariantMap RpcClient::messageById(const QString &messageId) const
+{
+	for (const auto &entry : m_messages.items()) {
+		const auto message = entry.toMap();
+		if (message.value(QStringLiteral("id")).toString() == messageId)
+			return message;
+	}
+	return {};
+}
+
+void RpcClient::markMediaPlayed(const QString &messageId)
+{
+	const auto message = messageById(messageId);
+	const auto kind = message.value(QStringLiteral("kind")).toString();
+	const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+	const auto key = chatJid + QLatin1Char(':') + messageId;
+	if (message.isEmpty() || message.value(QStringLiteral("from_me")).toBool()
+		|| (kind != QStringLiteral("audio") && kind != QStringLiteral("video"))
+		|| chatJid.isEmpty() || m_playedMedia.contains(key)
+		|| message.value(QStringLiteral("status")).toString() == QStringLiteral("played"))
+		return;
+	m_playedMedia.insert(key);
+	sendRequest(QStringLiteral("message.played"), {
+		{QStringLiteral("chat_jid"), chatJid},
+		{QStringLiteral("sender_jid"), message.value(QStringLiteral("sender_jid")).toString()},
+		{QStringLiteral("message_id"), messageId},
+		{QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch()},
+	}, [this, key](const QJsonValue &, const QJsonObject &error) {
+		if (!error.isEmpty())
+			m_playedMedia.remove(key);
+	});
 }
 
 void RpcClient::startChat(const QString &phone)

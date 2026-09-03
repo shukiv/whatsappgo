@@ -892,6 +892,14 @@ func avatarDerivedPaths(basePath string) []string {
 }
 
 func (c *Client) MarkRead(ctx context.Context, chatJID, senderJID string, ids []string, timestamp int64) error {
+	return c.markReceipt(ctx, chatJID, senderJID, ids, timestamp)
+}
+
+func (c *Client) MarkPlayed(ctx context.Context, chatJID, senderJID, messageID string, timestamp int64) error {
+	return c.markReceipt(ctx, chatJID, senderJID, []string{messageID}, timestamp, types.ReceiptTypePlayed)
+}
+
+func (c *Client) markReceipt(ctx context.Context, chatJID, senderJID string, ids []string, timestamp int64, receiptType ...types.ReceiptType) error {
 	chat, err := types.ParseJID(chatJID)
 	if err != nil {
 		return err
@@ -911,7 +919,7 @@ func (c *Client) MarkRead(ctx context.Context, chatJID, senderJID string, ids []
 			return err
 		}
 	}
-	return c.wa.MarkRead(ctx, messageIDs, at, chat, sender)
+	return c.wa.MarkRead(ctx, messageIDs, at, chat, sender, receiptType...)
 }
 
 func (c *Client) SubscribePresence(ctx context.Context, chatJID string) error {

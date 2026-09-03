@@ -42,6 +42,9 @@ Kirigami.ApplicationWindow {
     property bool showArchived: false
     property bool infoDrawerOpen: false
     property string infoDrawerChatJid: ""
+	property bool messageInfoOpen: false
+	property var messageInfoMessage: ({})
+	property string messageInfoChatJid: ""
     property bool statusViewerRequested: false
     property string activeSection: {
         const allowed = ["chats", "status", "calls", "channels", "communities", "profile"]
@@ -135,6 +138,9 @@ Kirigami.ApplicationWindow {
             return
         infoDrawerChatJid = backend.selectedChat.jid
         infoDrawerOpen = true
+		messageInfoOpen = false
+		messageInfoMessage = ({})
+		messageInfoChatJid = ""
         backend.refreshChatInfo()
         contactInfoDrawer.forceActiveFocus()
     }
@@ -1251,6 +1257,12 @@ Kirigami.ApplicationWindow {
                                 pinDialog.open()
                             }
                             onImagePreviewRequested: message => window.openChatImage(message)
+							onInfoRequested: message => {
+								window.infoDrawerOpen = false
+								window.messageInfoMessage = message
+								window.messageInfoChatJid = String(backend.selectedChat.jid || "")
+								window.messageInfoOpen = true
+							}
                         }
                         property bool followTail: true
                         property bool positioningTail: false
@@ -1360,6 +1372,13 @@ Kirigami.ApplicationWindow {
                                         backend.refreshSharedContent(contactInfoDrawer.activeCategory)
                                 }
                             }
+							function onDataChanged() {
+								if (!window.messageInfoOpen || !window.messageInfoMessage.id)
+									return
+								const refreshed = backend.messageById(String(window.messageInfoMessage.id))
+								if (refreshed && refreshed.id)
+									window.messageInfoMessage = refreshed
+							}
                         }
                     }
 
@@ -1376,6 +1395,12 @@ Kirigami.ApplicationWindow {
                                 window.infoDrawerOpen = false
                                 backend.clearChatInfo()
                             }
+							if (window.messageInfoOpen
+									&& backend.selectedChat.jid !== window.messageInfoChatJid) {
+								window.messageInfoOpen = false
+								window.messageInfoMessage = ({})
+								window.messageInfoChatJid = ""
+							}
                         }
                     }
 
@@ -1650,6 +1675,20 @@ Kirigami.ApplicationWindow {
                         Qt.openUrlExternally(url)
                 }
             }
+
+			MessageInfoDrawer {
+				id: messageInfoDrawer
+				anchors.top: parent.top
+				anchors.right: parent.right
+				anchors.bottom: parent.bottom
+				opened: window.messageInfoOpen
+				message: window.messageInfoMessage
+				onCloseRequested: {
+					window.messageInfoOpen = false
+					window.messageInfoMessage = ({})
+					window.messageInfoChatJid = ""
+				}
+			}
         }
 
         FeatureSection {
@@ -1825,6 +1864,9 @@ Kirigami.ApplicationWindow {
             if (next && next.id)
                 Playback.start(next.id, next.media_path || "", false)
         }
+		function onStarted(messageId) {
+			backend.markMediaPlayed(messageId)
+		}
     }
 
     Rectangle {

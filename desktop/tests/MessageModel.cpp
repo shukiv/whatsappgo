@@ -154,12 +154,18 @@ int main(int argc, char **argv)
     require(changedRows.size() == 1 && changedRows.at(0) == 1,
             QStringLiteral("only the message that changed should be reported"));
 
-    model.applyReceipt({QStringLiteral("r1")}, QStringLiteral("read"));
+    model.applyReceipt({QStringLiteral("r1")}, QStringLiteral("read"), 4000);
     require(model.at(0).value(QStringLiteral("status")).toString() == QStringLiteral("read"),
             QStringLiteral("a delivered message was not marked read"));
+	require(model.at(0).value(QStringLiteral("delivered_at")).toLongLong() == 4000
+				&& model.at(0).value(QStringLiteral("read_at")).toLongLong() == 4000,
+			QStringLiteral("a read receipt did not retain its milestone timestamps"));
+	model.applyReceipt({QStringLiteral("r1")}, QStringLiteral("played"), 5000);
+	require(model.at(0).value(QStringLiteral("played_at")).toLongLong() == 5000,
+			QStringLiteral("a played receipt did not retain its timestamp"));
     changedRows.clear();
     model.applyReceipt({QStringLiteral("r1")}, QStringLiteral("nonsense"));
-    require(changedRows.isEmpty() && model.at(0).value(QStringLiteral("status")).toString() == QStringLiteral("read"),
+    require(changedRows.isEmpty() && model.at(0).value(QStringLiteral("status")).toString() == QStringLiteral("played"),
             QStringLiteral("an unknown receipt should change nothing"));
 
     // A run of voice notes plays through; anything else ends it.

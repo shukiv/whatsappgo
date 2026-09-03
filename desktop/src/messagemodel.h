@@ -75,7 +75,7 @@ public:
     // Applies a delivery receipt to messages already on screen. A receipt
     // never moves a message backwards: a read message that is reported as
     // merely delivered stays read.
-    void applyReceipt(const QStringList &messageIds, const QString &status);
+    void applyReceipt(const QStringList &messageIds, const QString &status, qint64 timestamp = 0);
     void clear();
 
     bool isEmpty() const { return m_messages.isEmpty(); }

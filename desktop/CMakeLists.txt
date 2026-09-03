@@ -67,6 +67,7 @@ qt_add_qml_module(whatsappgo
         qml/MediaPreview.qml
         qml/ChatMediaViewer.qml
         qml/ContactInfoDrawer.qml
+		qml/MessageInfoDrawer.qml
     RESOURCES
         qml/icons/new-chat.svg
         qml/icons/menu.svg
@@ -105,6 +106,7 @@ qt_add_qml_module(whatsappgo
         qml/icons/calendar.svg
         qml/icons/sticker.svg
         qml/icons/link.svg
+		qml/icons/info.svg
         qml/icons/lock.svg
         qml/icons/chevron-right.svg
         qml/icons/plus.svg

@@ -119,6 +119,12 @@ type readParams struct {
 	MessageIDs []string `json:"message_ids"`
 	Timestamp  int64    `json:"timestamp"`
 }
+type playedParams struct {
+	ChatJID   string `json:"chat_jid"`
+	SenderJID string `json:"sender_jid"`
+	MessageID string `json:"message_id"`
+	Timestamp int64  `json:"timestamp"`
+}
 type chatFlagParams struct {
 	ChatJID string `json:"chat_jid"`
 	Value   bool   `json:"value"`
@@ -318,6 +324,27 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, errors.New("chat_jid and message_id are required")
 		}
 		return s.gateway.DownloadMedia(ctx, p.ChatJID, p.MessageID)
+	case "message.played":
+		var p playedParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		if p.Timestamp <= 0 {
+			p.Timestamp = time.Now().UnixMilli()
+		}
+		if err := s.gateway.MarkPlayed(ctx, p.ChatJID, p.SenderJID, p.MessageID, p.Timestamp); err != nil {
+			return nil, err
+		}
+		if err := s.store.UpdateReceipt(ctx, p.ChatJID, []string{p.MessageID}, "played", p.Timestamp); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "message.receipt", Data: map[string]any{
+			"chat_jid": p.ChatJID, "message_ids": []string{p.MessageID}, "status": "played", "timestamp": p.Timestamp,
+		}})
+		return okResult(), nil
 	case "message.send":
 		var p sendTextParams
 		if err := decode(raw, &p); err != nil {

@@ -111,6 +111,45 @@ type fakeGateway struct {
 	fetchedAvatar   string
 	refreshedAvatar string
 	presenceChat    string
+	playedChat      string
+	playedSender    string
+	playedMessage   string
+}
+
+func (f *fakeGateway) MarkPlayed(_ context.Context, chatJID, senderJID, messageID string, _ int64) error {
+	f.playedChat = chatJID
+	f.playedSender = senderJID
+	f.playedMessage = messageID
+	return nil
+}
+
+func TestPlayingMediaSendsPlayedReceiptAndUpdatesLocalMessage(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	msg := model.Message{ID: "voice-1", ChatJID: "alice@lid", SenderJID: "alice@lid", Timestamp: 1000, Kind: "audio", Status: "read"}
+	if err := st.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	gw := &fakeGateway{}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+	if _, err := svc.Handle(ctx, "message.played", json.RawMessage(`{"chat_jid":"alice@lid","sender_jid":"alice@lid","message_id":"voice-1","timestamp":4000}`)); err != nil {
+		t.Fatal(err)
+	}
+	if gw.playedChat != "alice@lid" || gw.playedSender != "alice@lid" || gw.playedMessage != "voice-1" {
+		t.Fatalf("played receipt was misrouted: %#v", gw)
+	}
+	got, err := st.GetMessage(ctx, msg.ChatJID, msg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "played" || got.PlayedAt != 4000 {
+		t.Fatalf("local played state was not updated: %#v", got)
+	}
 }
 
 func (f *fakeGateway) SubscribePresence(_ context.Context, jid string) error {

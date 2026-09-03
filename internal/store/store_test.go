@@ -631,6 +631,32 @@ func TestPinnedMessageAppearsInChatInfoAndCanBeCleared(t *testing.T) {
 	}
 }
 
+func TestReceiptMilestonesKeepTheirTimestamps(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	msg := model.Message{ID: "voice-1", ChatJID: "alice@lid", SenderJID: "me@lid", Timestamp: 1000, Kind: "audio", FromMe: true, Status: "sent"}
+	if err := s.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateReceipt(ctx, msg.ChatJID, []string{msg.ID}, "delivered", 2000); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateReceipt(ctx, msg.ChatJID, []string{msg.ID}, "played", 4000); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetMessage(ctx, msg.ChatJID, msg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DeliveredAt != 2000 || got.ReadAt != 4000 || got.PlayedAt != 4000 {
+		t.Fatalf("receipt milestones were not retained: %#v", got)
+	}
+}
+
 func TestListMessagesAttachesReactionsToCorrectMessages(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
