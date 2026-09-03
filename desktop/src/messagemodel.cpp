@@ -60,6 +60,92 @@ QVariantMap nextAudioAfter(const QVariantList &messages, const QString &messageI
     return {};
 }
 
+ChatListModel::ChatListModel(QObject *parent)
+    : QAbstractListModel(parent)
+{
+}
+
+int ChatListModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : count();
+}
+
+QVariant ChatListModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= count() || role != ChatRole)
+        return QVariant();
+    return m_chats.at(index.row());
+}
+
+QHash<int, QByteArray> ChatListModel::roleNames() const
+{
+    return {{ChatRole, QByteArrayLiteral("modelData")}};
+}
+
+void ChatListModel::sync(const QVariantList &chats)
+{
+    const int previousCount = count();
+    const auto jidFor = [](const QVariant &entry) {
+        return entry.toMap().value(QStringLiteral("jid")).toString();
+    };
+
+    for (int targetRow = 0; targetRow < chats.size(); ++targetRow) {
+        const auto target = chats.at(targetRow).toMap();
+        const auto targetJid = target.value(QStringLiteral("jid")).toString();
+        int existingRow = -1;
+        for (int candidate = targetRow; candidate < m_chats.size(); ++candidate) {
+            if (!targetJid.isEmpty() && jidFor(m_chats.at(candidate)) == targetJid) {
+                existingRow = candidate;
+                break;
+            }
+        }
+
+        if (existingRow < 0) {
+            beginInsertRows(QModelIndex(), targetRow, targetRow);
+            m_chats.insert(targetRow, target);
+            endInsertRows();
+        } else if (existingRow != targetRow) {
+            beginMoveRows(QModelIndex(), existingRow, existingRow, QModelIndex(), targetRow);
+            m_chats.move(existingRow, targetRow);
+            endMoveRows();
+        }
+
+        if (m_chats.at(targetRow).toMap() != target) {
+            m_chats[targetRow] = target;
+            const auto changed = index(targetRow, 0);
+            emit dataChanged(changed, changed, {ChatRole});
+        }
+    }
+
+    if (m_chats.size() > chats.size()) {
+        const int firstRemoved = static_cast<int>(chats.size());
+        const int lastRemoved = count() - 1;
+        beginRemoveRows(QModelIndex(), firstRemoved, lastRemoved);
+        while (m_chats.size() > chats.size())
+            m_chats.removeLast();
+        endRemoveRows();
+    }
+    if (count() != previousCount)
+        emit countChanged();
+}
+
+void ChatListModel::clear()
+{
+    if (m_chats.isEmpty())
+        return;
+    beginRemoveRows(QModelIndex(), 0, count() - 1);
+    m_chats.clear();
+    endRemoveRows();
+    emit countChanged();
+}
+
+QVariantMap ChatListModel::at(int row) const
+{
+    if (row < 0 || row >= count())
+        return {};
+    return m_chats.at(row).toMap();
+}
+
 MessageListModel::MessageListModel(QObject *parent)
     : QAbstractListModel(parent)
 {

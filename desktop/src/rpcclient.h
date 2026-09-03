@@ -25,7 +25,9 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool loggedIn READ loggedIn NOTIFY statusChanged)
     Q_PROPERTY(QVariantMap status READ status NOTIFY statusChanged)
     Q_PROPERTY(QVariantList chats READ chats NOTIFY chatsChanged)
+    Q_PROPERTY(QAbstractItemModel *chatListModel READ chatListModel CONSTANT)
     Q_PROPERTY(QVariantList archivedChats READ archivedChats NOTIFY archivedChatsChanged)
+    Q_PROPERTY(QAbstractItemModel *archivedChatListModel READ archivedChatListModel CONSTANT)
     Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChatsChanged)
     Q_PROPERTY(QAbstractItemModel *messages READ messages CONSTANT)
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
@@ -58,7 +60,9 @@ public:
     bool loggedIn() const;
     QVariantMap status() const { return m_status; }
     QVariantList chats() const { return m_chats; }
+    QAbstractItemModel *chatListModel() { return &m_chatList; }
     QVariantList archivedChats() const { return m_archivedChats; }
+    QAbstractItemModel *archivedChatListModel() { return &m_archivedChatList; }
     int archivedCount() const { return m_archivedCount; }
     QAbstractItemModel *messages() { return &m_messages; }
     QVariantMap selectedChat() const { return m_selectedChat; }
@@ -86,6 +90,7 @@ public:
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void refreshStatus();
     Q_INVOKABLE void refreshChats(const QString &query = {});
+    Q_INVOKABLE void setChatListFilter(const QString &filter);
     Q_INVOKABLE void refreshArchived();
     Q_INVOKABLE void setChatPinned(const QString &jid, bool pinned);
     Q_INVOKABLE void setChatMuted(const QString &jid, bool muted);
@@ -143,7 +148,6 @@ public:
 signals:
     void daemonConnectedChanged();
     void statusChanged();
-    void chatsAboutToChange();
     void chatsChanged();
     void archivedChatsChanged();
     void selectedChatChanged();
@@ -187,6 +191,8 @@ private:
     void loadRemoteHistoryPage();
     void refreshOpenMessages();
     void pumpMediaQueue();
+    void syncChatListModel();
+    void applyChatAvatar(const QString &jid, const QString &path);
     bool copyImageFile(const QString &path);
     QString clipboardDirectory() const;
     bool isClipboardFile(const QString &path) const;
@@ -202,7 +208,10 @@ private:
     QHash<QString, Callback> m_pending;
     QVariantMap m_status;
     QVariantList m_chats;
+    ChatListModel m_chatList;
     QVariantList m_archivedChats;
+    ChatListModel m_archivedChatList;
+    QString m_chatListFilter = QStringLiteral("all");
     int m_archivedCount = 0;
     MessageListModel m_messages;
     QHash<QString, QVariantList> m_messageCache;

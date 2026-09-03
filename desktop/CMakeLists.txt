@@ -168,6 +168,18 @@ if(BUILD_TESTING)
     target_include_directories(presence-updates-test PRIVATE src)
     target_link_libraries(presence-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
+    qt_add_executable(chat-list-updates-test
+        tests/ChatListUpdates.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+    )
+    target_include_directories(chat-list-updates-test PRIVATE src)
+    target_link_libraries(chat-list-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
     qt_add_executable(link-preview-upgrade-test
         tests/LinkPreviewUpgrade.cpp
         src/messagemodel.cpp
@@ -239,6 +251,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-message-scroll COMMAND whatsappgo --message-scroll-test)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
     add_test(NAME desktop-presence-updates COMMAND presence-updates-test)
+    add_test(NAME desktop-chat-list-updates COMMAND chat-list-updates-test)
     add_test(NAME desktop-link-preview-upgrade COMMAND link-preview-upgrade-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)

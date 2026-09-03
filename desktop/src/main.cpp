@@ -761,44 +761,8 @@ int main(int argc, char *argv[])
         auto *actualAccountButton = mainRoot ? mainRoot->findChild<QObject *>(QStringLiteral("accountSwitcherButton")) : nullptr;
         const bool actualAccountClicked = actualAccountButton && QMetaObject::invokeMethod(actualAccountButton, "click");
         QCoreApplication::processEvents();
-
-        QVariantList sidebarChats;
-        for (int index = 0; index < 40; ++index) {
-            sidebarChats.append(QVariantMap{
-                {QStringLiteral("jid"), QStringLiteral("sidebar-%1@s.whatsapp.net").arg(index)},
-                {QStringLiteral("title"), QStringLiteral("Sidebar chat %1").arg(index)},
-                {QStringLiteral("last_message_preview"), QStringLiteral("Preview %1").arg(index)},
-                {QStringLiteral("last_message_at"), index * 1000},
-                {QStringLiteral("unread_count"), 0},
-            });
-        }
-        chatListItem->setProperty("model", sidebarChats);
-        QCoreApplication::processEvents();
-        // Start from the same state a physical wheel reaches. The regression
-        // under test begins when the replacement model arrives, not in Qt's
-        // already-covered wheel delivery path.
-        chatListItem->setProperty("contentY", 720.0);
-        const qreal sidebarReadingY = chatListItem->property("contentY").toReal();
-        QMetaObject::invokeMethod(&backend, "chatsAboutToChange");
-        auto updatedSidebarChats = sidebarChats;
-        auto updatedFirstChat = updatedSidebarChats.constFirst().toMap();
-        updatedFirstChat.insert(QStringLiteral("last_message_preview"), QStringLiteral("Updated preview"));
-        updatedSidebarChats[0] = updatedFirstChat;
-        chatListItem->setProperty("model", updatedSidebarChats);
-        QMetaObject::invokeMethod(&backend, "chatsChanged");
-        // Avatar completions often arrive as a burst. A second replacement
-        // before the queued restoration must not recapture the reset origin.
-        QMetaObject::invokeMethod(&backend, "chatsAboutToChange");
-        auto secondUpdatedSidebarChats = updatedSidebarChats;
-        auto secondUpdatedChat = secondUpdatedSidebarChats.at(1).toMap();
-        secondUpdatedChat.insert(QStringLiteral("last_message_preview"), QStringLiteral("Another update"));
-        secondUpdatedSidebarChats[1] = secondUpdatedChat;
-        chatListItem->setProperty("model", secondUpdatedSidebarChats);
-        QMetaObject::invokeMethod(&backend, "chatsChanged");
-        QEventLoop sidebarRefreshLoop;
-        QTimer::singleShot(50, &sidebarRefreshLoop, &QEventLoop::quit);
-        sidebarRefreshLoop.exec();
-        const bool sidebarScrollPreserved = qAbs(chatListItem->property("contentY").toReal() - sidebarReadingY) < 2.0;
+        const bool sidebarUsesStableModel = chatListItem
+            && qvariant_cast<QObject *>(chatListItem->property("model")) == backend.chatListModel();
         return accountUnreadBadge && accountUnreadBadge->isVisible() && accountChipItem
                 && accountClicked && standaloneAccountMenuOpened
                 && customAccountNameShown
@@ -817,7 +781,7 @@ int main(int argc, char *argv[])
                 && chatViewport && chatListItem && chatScrollBar
                 && chatListItem->width() + chatScrollBar->width() <= chatViewport->width()
                 && chatScrollBar->width() <= 8.0
-                && sidebarScrollPreserved
+                && sidebarUsesStableModel
                 && (previewTop - titleBottom) <= 8.0
                 && preview->implicitHeight() <= 22.0
                 && !preview->property("text").toString().contains(QStringLiteral("<br>"))

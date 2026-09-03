@@ -17,6 +17,7 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     MessageListModel model;
+    ChatListModel chats;
 
     bool passed = true;
     const auto require = [&passed](bool condition, const QString &description) {
@@ -25,6 +26,30 @@ int main(int argc, char **argv)
             qInfo().noquote() << QStringLiteral("FAIL: ") + description;
         }
     };
+
+    int chatResets = 0;
+    int chatMoves = 0;
+    int chatChanges = 0;
+    QObject::connect(&chats, &QAbstractItemModel::modelReset, &app, [&chatResets] { ++chatResets; });
+    QObject::connect(&chats, &QAbstractItemModel::rowsMoved, &app,
+                     [&chatMoves](const QModelIndex &, int, int, const QModelIndex &, int) { ++chatMoves; });
+    QObject::connect(&chats, &QAbstractItemModel::dataChanged, &app,
+                     [&chatChanges](const QModelIndex &, const QModelIndex &, const QList<int> &) { ++chatChanges; });
+    const auto chat = [](const QString &jid, const QString &preview) {
+        return QVariantMap{{QStringLiteral("jid"), jid},
+                           {QStringLiteral("last_message_preview"), preview}};
+    };
+    chats.sync({chat(QStringLiteral("a@lid"), QStringLiteral("A")),
+                chat(QStringLiteral("b@lid"), QStringLiteral("B")),
+                chat(QStringLiteral("c@lid"), QStringLiteral("C"))});
+    chats.sync({chat(QStringLiteral("c@lid"), QStringLiteral("C updated")),
+                chat(QStringLiteral("a@lid"), QStringLiteral("A")),
+                chat(QStringLiteral("b@lid"), QStringLiteral("B"))});
+    require(chatResets == 0, QStringLiteral("refreshing sidebar chats must not reset the model"));
+    require(chatMoves == 1, QStringLiteral("a reordered chat is moved instead of rebuilding every row"));
+    require(chatChanges == 1, QStringLiteral("changed chat metadata updates only its row"));
+    require(chats.at(0).value(QStringLiteral("jid")).toString() == QStringLiteral("c@lid"),
+            QStringLiteral("chat synchronization preserves server ordering"));
 
     int appended = 0;
     int resets = 0;

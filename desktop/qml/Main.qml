@@ -37,6 +37,7 @@ Kirigami.ApplicationWindow {
     property int pendingMessageJumpAttempts: 0
     property string highlightedMessageId: ""
     property string chatFilter: "all"
+    onChatFilterChanged: backend.setChatListFilter(chatFilter)
     property bool newChatOpen: false
     property bool showArchived: false
     property bool infoDrawerOpen: false
@@ -57,16 +58,6 @@ Kirigami.ApplicationWindow {
             total += Number(backend.chats[i].unread_count || 0)
         return total
     }
-    readonly property var visibleChats: {
-        const result = []
-        const chats = backend.chats
-        for (let i = 0; i < chats.length; ++i) {
-            if (chatFilterBar.accepts(chats[i]))
-                result.push(chats[i])
-        }
-        return result
-    }
-
     Settings {
         id: appearanceSettings
         category: "appearance"
@@ -333,14 +324,6 @@ Kirigami.ApplicationWindow {
             backend.refreshStatuses()
             if (window.activeSection !== "chats")
                 window.showSection(window.activeSection)
-        }
-        function onChatsAboutToChange() {
-            chatList.captureRefreshAnchor()
-        }
-        function onChatsChanged() {
-            // Let the visibleChats binding and ListView finish accepting the
-            // replacement array before restoring the reader's anchor.
-            Qt.callLater(chatList.restoreRefreshAnchor)
         }
         function onMediaReady(messageId, path) {
             window.completeChatImageDownload(messageId, path)
@@ -864,80 +847,11 @@ Kirigami.ApplicationWindow {
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
                         anchors.rightMargin: 8
-                        model: window.showArchived ? backend.archivedChats : window.visibleChats
+                        model: window.showArchived ? backend.archivedChatListModel : backend.chatListModel
                         spacing: 2
                         clip: true
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
-                        property bool refreshAnchorPending: false
-                        property string refreshAnchorJid: ""
-                        property real refreshAnchorOffset: 0
-                        property real refreshFallbackY: 0
-
-                        function captureRefreshAnchor() {
-                            // A burst of avatar completions can queue several
-                            // replacements before the first callLater runs.
-                            // Keep the original reader position throughout
-                            // the burst instead of recapturing the reset top.
-                            if (refreshAnchorPending)
-                                return
-                            refreshAnchorJid = ""
-                            refreshFallbackY = contentY
-                            if (!visible || count <= 0)
-                                return
-
-                            // indexAt can land in the two-pixel row spacing;
-                            // probe a few pixels until it reaches the first
-                            // visible delegate.
-                            let index = -1
-                            const probeX = Math.max(1, width / 2)
-                            for (let offset = 1; offset <= 6 && index < 0; ++offset)
-                                index = indexAt(probeX, contentY + offset)
-                            if (index < 0)
-                                return
-                            const item = itemAtIndex(index)
-                            const entry = model[index]
-                            if (!item || !entry || !entry.jid)
-                                return
-                            refreshAnchorJid = String(entry.jid)
-                            refreshAnchorOffset = item.y - contentY
-                            refreshAnchorPending = true
-                        }
-
-                        function restoreRefreshAnchor() {
-                            if (!refreshAnchorPending)
-                                return
-                            const anchorJid = refreshAnchorJid
-                            const anchorOffset = refreshAnchorOffset
-                            const fallbackY = refreshFallbackY
-                            refreshAnchorPending = false
-
-                            let index = -1
-                            for (let candidate = 0; candidate < count; ++candidate) {
-                                const entry = model[candidate]
-                                if (entry && String(entry.jid || "") === anchorJid) {
-                                    index = candidate
-                                    break
-                                }
-                            }
-                            if (index < 0) {
-                                const maximum = Math.max(originY, originY + contentHeight - height)
-                                contentY = Math.max(originY, Math.min(maximum, fallbackY))
-                                return
-                            }
-
-                            positionViewAtIndex(index, ListView.Beginning)
-                            Qt.callLater(function() {
-                                const item = chatList.itemAtIndex(index)
-                                if (!item)
-                                    return
-                                const maximum = Math.max(chatList.originY,
-                                    chatList.originY + chatList.contentHeight - chatList.height)
-                                chatList.contentY = Math.max(chatList.originY,
-                                    Math.min(maximum, item.y - anchorOffset))
-                            })
-                        }
-
                         delegate: ChatListDelegate {
                             current: backend.selectedChat.jid === modelData.jid
                             statusGroupIndex: window.statusGroupIndexForJid(modelData.jid)

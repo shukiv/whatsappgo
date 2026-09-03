@@ -22,6 +22,35 @@
 // the talking stops.
 QVariantMap nextAudioAfter(const QVariantList &messages, const QString &messageId);
 
+// ChatListModel keeps the sidebar's model object stable while chat metadata
+// changes. A reset is visible in ListView as a jump to its origin, so sync()
+// reports inserts, moves, removals, and data changes individually.
+class ChatListModel final : public QAbstractListModel
+{
+    Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
+
+public:
+    explicit ChatListModel(QObject *parent = nullptr);
+
+    enum Role { ChatRole = Qt::UserRole + 1 };
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    void sync(const QVariantList &chats);
+    void clear();
+    int count() const { return static_cast<int>(m_chats.size()); }
+    QVariantMap at(int row) const;
+
+signals:
+    void countChanged();
+
+private:
+    QVariantList m_chats;
+};
+
 class MessageListModel final : public QAbstractListModel
 {
     Q_OBJECT

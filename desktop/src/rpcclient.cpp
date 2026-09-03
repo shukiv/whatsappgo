@@ -410,7 +410,18 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
     } else if (name == QStringLiteral("message.pinned")) {
         if (data.toObject().value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
             refreshChatInfo();
-    } else if (name == QStringLiteral("chat.updated") || name == QStringLiteral("directory.synced")) {
+    } else if (name == QStringLiteral("chat.updated")) {
+        const auto payload = data.toObject();
+        const auto avatarPath = payload.value(QStringLiteral("avatar_path")).toString();
+        if (!avatarPath.isEmpty()) {
+            applyChatAvatar(payload.value(QStringLiteral("jid")).toString(), avatarPath);
+            return;
+        }
+        refreshChats();
+        refreshArchived();
+        if (!m_chatInfo.isEmpty())
+            refreshChatInfo();
+    } else if (name == QStringLiteral("directory.synced")) {
         refreshChats();
         refreshArchived();
         if (!m_chatInfo.isEmpty())
@@ -462,8 +473,8 @@ void RpcClient::refreshChats(const QString &query)
                 [this](const QJsonValue &result, const QJsonObject &error) {
                     if (!error.isEmpty())
                         return;
-                    emit chatsAboutToChange();
                     m_chats = result.toArray().toVariantList();
+                    syncChatListModel();
                     const auto selectedJid = m_selectedChat.value(QStringLiteral("jid")).toString();
                     if (!selectedJid.isEmpty()) {
                         for (const auto &entry : std::as_const(m_chats)) {
@@ -483,6 +494,38 @@ void RpcClient::refreshChats(const QString &query)
                 });
 }
 
+void RpcClient::setChatListFilter(const QString &filter)
+{
+    static const QSet<QString> allowed{
+        QStringLiteral("all"), QStringLiteral("unread"),
+        QStringLiteral("favorites"), QStringLiteral("groups"),
+    };
+    const auto normalized = allowed.contains(filter) ? filter : QStringLiteral("all");
+    if (m_chatListFilter == normalized)
+        return;
+    m_chatListFilter = normalized;
+    syncChatListModel();
+}
+
+void RpcClient::syncChatListModel()
+{
+    QVariantList visible;
+    visible.reserve(m_chats.size());
+    for (const auto &entry : std::as_const(m_chats)) {
+        const auto chat = entry.toMap();
+        const bool accepted = m_chatListFilter == QStringLiteral("all")
+            || (m_chatListFilter == QStringLiteral("unread")
+                && chat.value(QStringLiteral("unread_count")).toInt() > 0)
+            || (m_chatListFilter == QStringLiteral("favorites")
+                && chat.value(QStringLiteral("favorite")).toBool())
+            || (m_chatListFilter == QStringLiteral("groups")
+                && chat.value(QStringLiteral("is_group")).toBool());
+        if (accepted)
+            visible.append(chat);
+    }
+    m_chatList.sync(visible);
+}
+
 void RpcClient::refreshArchived()
 {
     sendRequest(QStringLiteral("chats.list"),
@@ -492,6 +535,7 @@ void RpcClient::refreshArchived()
                     if (!error.isEmpty())
                         return;
                     m_archivedChats = result.toArray().toVariantList();
+                    m_archivedChatList.sync(m_archivedChats);
                     m_archivedCount = static_cast<int>(m_archivedChats.size());
                     emit archivedChatsChanged();
                 });
@@ -1073,6 +1117,10 @@ void RpcClient::switchProfile(const QString &profile)
     m_profile = profile;
     m_status.clear();
     m_chats.clear();
+    m_chatList.clear();
+    m_archivedChats.clear();
+    m_archivedChatList.clear();
+    m_archivedCount = 0;
     m_messages.clear();
     m_messageCache.clear();
     m_messageCacheOrder.clear();
@@ -1092,6 +1140,7 @@ void RpcClient::switchProfile(const QString &profile)
     emit profileChanged();
     emit statusChanged();
     emit chatsChanged();
+    emit archivedChatsChanged();
     emit selectedChatChanged();
     emit searchResultsChanged();
     emit statusUpdatesChanged();
@@ -1406,10 +1455,45 @@ void RpcClient::refreshChatAvatar(const QString &jid)
     m_pendingChatAvatars.insert(jid);
     sendRequest(QStringLiteral("chat.avatar"),
                 {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("refresh"), true}},
-                [this, jid](const QJsonValue &, const QJsonObject &) {
+                [this, jid](const QJsonValue &result, const QJsonObject &error) {
                     m_pendingChatAvatars.remove(jid);
-                    refreshChats();
+                    if (!error.isEmpty())
+                        return;
+                    applyChatAvatar(jid, result.toObject().value(QStringLiteral("path")).toString());
                 });
+}
+
+void RpcClient::applyChatAvatar(const QString &jid, const QString &path)
+{
+    if (jid.isEmpty() || path.isEmpty())
+        return;
+    const auto update = [&jid, &path](QVariantList &chats) {
+        bool changed = false;
+        for (auto &entry : chats) {
+            auto chat = entry.toMap();
+            if (chat.value(QStringLiteral("jid")).toString() != jid
+                || chat.value(QStringLiteral("avatar_path")).toString() == path)
+                continue;
+            chat.insert(QStringLiteral("avatar_path"), path);
+            entry = chat;
+            changed = true;
+        }
+        return changed;
+    };
+
+    if (update(m_chats)) {
+        syncChatListModel();
+        emit chatsChanged();
+    }
+    if (update(m_archivedChats)) {
+        m_archivedChatList.sync(m_archivedChats);
+        emit archivedChatsChanged();
+    }
+    if (m_selectedChat.value(QStringLiteral("jid")).toString() == jid
+        && m_selectedChat.value(QStringLiteral("avatar_path")).toString() != path) {
+        m_selectedChat.insert(QStringLiteral("avatar_path"), path);
+        emit selectedChatChanged();
+    }
 }
 
 void RpcClient::fetchStatusAvatar(const QString &jid)
