@@ -960,15 +960,21 @@ Item {
             ToolTip.text: Accessible.name
             onClicked: root.openMessageMenuFromButton()
             Behavior on opacity { NumberAnimation { duration: 90 } }
-            contentItem: TintedIcon {
-                source: Qt.resolvedUrl("icons/chevron-right.svg")
-                tint: Theme.icon
-                rotation: 90
+            contentItem: Item {
+                TintedIcon {
+                    objectName: "messageMenuIcon"
+                    anchors.centerIn: parent
+                    width: 16
+                    height: 16
+                    source: Qt.resolvedUrl("icons/chevron-right.svg")
+                    tint: Theme.icon
+                    rotation: 90
+                }
             }
             background: Rectangle {
+                objectName: "messageMenuBackground"
                 radius: 8
-                color: parent.down ? Theme.pressedRow
-                    : parent.hovered || parent.activeFocus ? Theme.surfaceRaised : bubble.color
+                color: parent.down ? Theme.pressedRow : "transparent"
                 border.width: parent.activeFocus ? 2 : 0
                 border.color: Theme.primary
             }
@@ -993,10 +999,15 @@ Item {
         ToolTip.text: Accessible.name
         onClicked: root.openReactionTray(messageReactionButton)
         Behavior on opacity { NumberAnimation { duration: 90 } }
-        contentItem: TintedIcon {
-            source: Qt.resolvedUrl("icons/smile.svg")
-            tint: Theme.icon
-            anchors.margins: 8
+        contentItem: Item {
+            TintedIcon {
+                objectName: "messageReactionIcon"
+                anchors.centerIn: parent
+                width: 20
+                height: 20
+                source: Qt.resolvedUrl("icons/smile.svg")
+                tint: Theme.icon
+            }
         }
         background: Item {
             Rectangle {

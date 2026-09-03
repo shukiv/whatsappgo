@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QClipboard>
+#include <QColor>
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QDir>
@@ -613,6 +614,9 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         auto *menuButton = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageMenuButton")));
         auto *reactionButton = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionButton")));
+        auto *menuIcon = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageMenuIcon")));
+        auto *reactionIcon = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionIcon")));
+        auto *menuBackground = delegate->findChild<QObject *>(QStringLiteral("messageMenuBackground"));
         auto *reactionBadge = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionBadge")));
         auto *reactionSummary = delegate->findChild<QObject *>(QStringLiteral("messageReactionSummary"));
         auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
@@ -659,6 +663,9 @@ int main(int argc, char *argv[])
                 && rendered.contains(QStringLiteral("href=\"https://example.com/path?q=1\""))
                 && menuButton && menuButton->width() >= 32 && menuButton->height() >= 32
                 && reactionButton && reactionButton->width() >= 36 && reactionButton->height() >= 36
+                && menuIcon && menuIcon->width() <= 18 && menuIcon->height() <= 18
+                && reactionIcon && reactionIcon->width() <= 22 && reactionIcon->height() <= 22
+                && menuBackground && menuBackground->property("color").value<QColor>().alpha() == 0
                 && reactionBadge && reactionBadge->isVisible() && bubble
                 && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏  👍 2")
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
