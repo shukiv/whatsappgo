@@ -49,8 +49,11 @@ a local display name; this label may contain spaces and non-Latin characters.
 ## Chats and history
 
 The chat list supports **All**, **Unread**, **Favorites**, and **Groups**
-filters. Search above the list filters conversations; the search icon in the
-navigation rail opens and focuses chat search.
+filters. At narrower sidebar widths, **Groups** moves into the chevron overflow
+instead of squeezing the direct filters. The **Unread** label stays stable; the
+unread total is shown on chat and navigation badges. Search above the list
+filters conversations; the search icon in the navigation rail opens and focuses
+chat search. The **Archived** row follows the filter strip.
 
 Opening a conversation shows its newest messages. Scroll upward to load older
 history in pages. All messages delivered to the linked device are persisted in
@@ -70,9 +73,10 @@ info**. It shows the locally known avatar, phone number, shared-content count,
 mute state, encryption information, and archive action. Select **Media, links
 and documents** to open the three category tabs. Those views query the selected
 chat's SQLite history and page through it without loading the full conversation
-into memory. Cached media opens in its normal Linux application; uncached media
-is downloaded first, and links open in the system browser. Press **Escape** or
-use the close/back button to leave the drawer.
+into memory. Pictures open in the native viewer, documents open in their normal
+Linux application, uncached media is downloaded first, and links open in the
+system browser. Press **Escape** or use the close/back button to leave the
+drawer.
 
 Mute and archive changes are synchronized with WhatsApp. Calling, blocking,
 reporting, disappearing-message settings, and editing Favorites are not exposed
@@ -82,7 +86,10 @@ actions instead of displaying controls that would fail silently.
 ## Sending messages
 
 - **Enter** sends a message; **Shift+Enter** inserts a line break.
-- The paperclip attaches files and images.
+- The paperclip opens the compact attachment menu. **Document**, **Photos and
+  videos**, and **Audio** are functional. Camera, Contact, Poll, Event, and New
+  sticker are listed but report that the linked-device workflow is not supported
+  yet.
 - The smile button opens the native emoji picker.
 - The microphone records and sends a voice note.
 - Right-click a message to copy, reply, react, edit eligible sent text, or
@@ -95,8 +102,10 @@ actions instead of displaying controls that would fail silently.
 Photos, videos, and stickers appear as pictures as soon as the conversation
 loads. WhatsApp sends a small preview inside the message itself, so the image
 is visible before the full file is fetched. **Download** on the preview gets the
-full-size file; afterwards, clicking the picture opens it in the default Linux
-application.
+full-size file; afterwards, clicking the picture opens the native aspect-fit
+viewer. At 100% the whole source remains visible, including tall and wide
+screenshots. Use the viewer controls or the mouse wheel to zoom. Clicking an
+open image exposes **Copy image** and **Save image** actions.
 
 A message containing a link shows a preview card with the page title,
 description, and picture. Normally WhatsApp resolves that preview on the
@@ -117,10 +126,12 @@ larger keeps its **Download** action. Voice notes are fetched when you play them
 Pinned conversations stay at the top of the list with a pin beside their time.
 Right-click a conversation to archive it, mute it, pin it, or mark it read or
 unread; each change is sent to WhatsApp, so it applies to your phone too.
-Archived conversations live behind the **Archived** row above the filters.
+Archived conversations live behind the **Archived** row below the filters.
 
 Hover a message to reveal its reaction button and action arrow. Reactions are
 grouped below the bubble with a count when several people choose the same emoji.
+Menus are repositioned when opened near an edge so their final actions remain
+inside the application window.
 The message menu can pin a message for 24 hours, 7 days, or 30 days. A pinned
 message appears above the conversation; click it to go to the message or unpin
 it. These actions are synchronized with WhatsApp rather than kept only locally.
@@ -142,7 +153,8 @@ next one in the conversation plays automatically, and the run stops as soon as
 the conversation returns to text. Videos play in the
 window: click the preview to open the player, then use the controls at the
 bottom or press **Escape** to close it. One recording plays at a time, and
-starting another stops the previous one. Nothing is handed to a web browser.
+starting another stops the previous one. Starting supported audio or video
+playback marks the message as played/read. Nothing is handed to a web browser.
 
 Paste a copied image into the composer to open the media preview. The preview
 supports a caption and basic rotation before sending. Downloaded documents and
@@ -187,6 +199,7 @@ system tray, WhatsAppGo also places its icon there with connection status,
 **Open/Hide**, and **Quit WhatsAppGo** actions. Minimizing hides the window
 behind that icon. Opening a chat sends read receipts for its incoming messages.
 Typing and presence updates depend on what the other account and WhatsApp expose.
+Status-broadcast updates do not create desktop notifications.
 
 With a tray available, minimizing or closing the window hides it and keeps notifications and
 the linked-device connection active. Use **Quit WhatsAppGo** in the tray menu to

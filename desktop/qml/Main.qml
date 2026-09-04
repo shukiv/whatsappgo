@@ -4,10 +4,9 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtMultimedia
 import QtCore
-import org.kde.kirigami as Kirigami
 import org.whatsappgo
 
-Kirigami.ApplicationWindow {
+ApplicationWindow {
     id: window
     width: 1280
     height: 800
@@ -41,19 +40,51 @@ Kirigami.ApplicationWindow {
     property bool newChatOpen: false
     property bool showArchived: false
     property bool infoDrawerOpen: false
+    // WhatsApp Web searches inside the open conversation from a panel beside
+    // it, not from a dialog over the whole window.
+    property bool chatSearchOpen: false
+    function openConversationSearch() {
+        if (!backend.selectedChat.jid)
+            return
+        chatSearchOpen = true
+        backend.searchMessages("")
+        chatSearchPanel.focusField()
+    }
+    function closeConversationSearch() {
+        chatSearchOpen = false
+        backend.searchMessages("")
+    }
     property string infoDrawerChatJid: ""
 	property bool messageInfoOpen: false
 	property var messageInfoMessage: ({})
 	property string messageInfoChatJid: ""
     property bool statusViewerRequested: false
+    // Remembered so an account that lands on the linking screen can go back to
+    // the one that was open before it.
+    property string previousProfile: ""
+
+    function switchProfile(profile) {
+        if (String(profile) === backend.profile)
+            return
+        window.previousProfile = backend.profile
+        backend.switchProfile(profile)
+    }
     property string activeSection: {
-        const allowed = ["chats", "status", "calls", "channels", "communities", "profile"]
+        const allowed = ["chats", "status", "calls", "channels", "communities", "media", "profile"]
         const args = Qt.application.arguments
         for (let i = 0; i < args.length - 1; ++i) {
             if (args[i] === "--section" && allowed.indexOf(args[i + 1]) >= 0)
                 return args[i + 1]
         }
         return "chats"
+    }
+    // The sidebar swaps the chat list for grouped results while a query is
+    // live, which several rows below need to know about.
+    readonly property bool searching: String(backend.chatQuery || "").trim().length > 0
+    function clearChatSearch() {
+        searchField.clear()
+        searchTimer.stop()
+        backend.searchChats("")
     }
     readonly property int totalUnreadCount: {
         let total = 0
@@ -101,6 +132,11 @@ Kirigami.ApplicationWindow {
         else if (section === "calls") backend.refreshCalls()
         else if (section === "channels") backend.refreshChannels()
         else if (section === "communities") backend.refreshCommunities()
+        else if (section === "media") backend.refreshMediaLibrary("media", false)
+        else if (section === "chats") {
+            backend.refreshBlockedContacts()
+            backend.refreshChatLabels()
+        }
     }
 
     function statusGroupIndexForJid(jid) {
@@ -123,10 +159,113 @@ Kirigami.ApplicationWindow {
         })
     }
 
+    // The rail no longer offers search — WhatsApp Web has no rail entry for it
+    // either — but focusing the sidebar field is still the app's one way in,
+    // and the desktop suite drives it through here.
     function openChatSearch() {
-		showSection("chats")
-		searchField.forceActiveFocus()
-	}
+        showSection("chats")
+        searchField.forceActiveFocus()
+    }
+
+    // WhatsApp Web's "Select messages" turns the conversation into a picker and
+    // replaces the header with a bar of bulk actions. Whole message records are
+    // kept rather than ids, because starring and deleting both need the sender
+    // and direction, which are not derivable from an id alone.
+    property bool messageSelectionActive: false
+    property var selectedMessages: []
+
+    function beginMessageSelection() {
+        selectedMessages = []
+        messageSelectionActive = true
+    }
+
+    function endMessageSelection() {
+        messageSelectionActive = false
+        selectedMessages = []
+    }
+
+    function isMessageSelected(messageId) {
+        const id = String(messageId || "")
+        for (let i = 0; i < selectedMessages.length; ++i) {
+            if (String(selectedMessages[i].id) === id)
+                return true
+        }
+        return false
+    }
+
+    function toggleMessageSelection(message) {
+        const id = String(message.id || "")
+        if (id === "")
+            return
+        const next = []
+        let found = false
+        for (let i = 0; i < selectedMessages.length; ++i) {
+            if (String(selectedMessages[i].id) === id)
+                found = true
+            else
+                next.push(selectedMessages[i])
+        }
+        if (!found)
+            next.push({ id: id, sender_jid: String(message.sender_jid || ""),
+                        from_me: Boolean(message.from_me), starred: Boolean(message.starred) })
+        selectedMessages = next
+    }
+
+    function starSelectedMessages(starred) {
+        const chosen = selectedMessages
+        for (let i = 0; i < chosen.length; ++i)
+            backend.starMessage(chosen[i].id, chosen[i].sender_jid, chosen[i].from_me, starred)
+        endMessageSelection()
+    }
+
+    function deleteSelectedMessages() {
+        const chosen = selectedMessages
+        for (let i = 0; i < chosen.length; ++i)
+            backend.deleteMessage(chosen[i].id, chosen[i].sender_jid)
+        endMessageSelection()
+    }
+
+    // The PWA's "Select chats" turns the sidebar into a picker with the row
+    // menu's own actions applied in bulk.
+    property bool chatSelectionActive: false
+    property var selectedChatJids: []
+
+    function beginChatSelection() {
+        selectedChatJids = []
+        chatSelectionActive = true
+    }
+
+    function endChatSelection() {
+        chatSelectionActive = false
+        selectedChatJids = []
+    }
+
+    function toggleChatSelection(jid) {
+        const value = String(jid || "")
+        if (value === "")
+            return
+        const next = selectedChatJids.slice()
+        const at = next.indexOf(value)
+        if (at >= 0)
+            next.splice(at, 1)
+        else
+            next.push(value)
+        selectedChatJids = next
+    }
+
+    function archiveSelectedChats() {
+        const chosen = selectedChatJids
+        for (let i = 0; i < chosen.length; ++i)
+            backend.setChatArchived(chosen[i], !window.showArchived)
+        endChatSelection()
+    }
+
+    function readSelectedChats() {
+        const chosen = selectedChatJids
+        for (let i = 0; i < chosen.length; ++i)
+            backend.setChatRead(chosen[i], true)
+        endChatSelection()
+    }
 
     function openNewChat() {
         activeSection = "chats"
@@ -293,6 +432,24 @@ Kirigami.ApplicationWindow {
             messageJumpRetry.start()
     }
 
+    // A search result names a message in a chat that is not open yet. The
+    // existing jump pages history back until it finds the message, which would
+    // page the conversation being left if it started before the new one had
+    // loaded, so this waits for the first page to arrive.
+    property string pendingMessageJumpChat: ""
+    function jumpToMessageInChat(chatJid, chatTitle, messageId) {
+        const jid = String(chatJid || "")
+        const target = String(messageId || "")
+        if (!jid || !target)
+            return
+        pendingMessageJumpChat = jid
+        pendingMessageJumpId = target
+        pendingMessageJumpAttempts = 0
+        backend.openChat(jid, chatTitle)
+        messageJumpArrival.ticks = 0
+        messageJumpArrival.restart()
+    }
+
     function jumpToMessage(messageId) {
         const target = String(messageId || "")
         if (!target)
@@ -328,8 +485,14 @@ Kirigami.ApplicationWindow {
             if (!backend.daemonConnected)
                 return
             backend.refreshStatuses()
-            if (window.activeSection !== "chats")
+            // showSection() is what normally loads a section's side data, and it
+            // never runs for the section the window already starts on.
+            if (window.activeSection === "chats") {
+                backend.refreshBlockedContacts()
+                backend.refreshChatLabels()
+            } else {
                 window.showSection(window.activeSection)
+            }
         }
         function onMediaReady(messageId, path) {
             window.completeChatImageDownload(messageId, path)
@@ -344,14 +507,82 @@ Kirigami.ApplicationWindow {
         onTriggered: window.resolvePendingMessageJump()
     }
     Timer {
+        id: messageJumpArrival
+        interval: 120
+        repeat: true
+        property int ticks: 0
+        onTriggered: {
+            if (window.pendingMessageJumpChat === "") {
+                stop()
+                return
+            }
+            ticks += 1
+            if (backend.selectedChat.jid === window.pendingMessageJumpChat && messageList.count > 0) {
+                stop()
+                window.pendingMessageJumpChat = ""
+                window.resolvePendingMessageJump()
+                return
+            }
+            // The chat opened but never produced a page; give up rather than
+            // leaving a jump armed for whatever the reader opens next.
+            if (ticks > 60) {
+                stop()
+                window.pendingMessageJumpChat = ""
+                window.pendingMessageJumpId = ""
+                window.pendingMessageJumpAttempts = 0
+            }
+        }
+    }
+    Timer {
         id: messageJumpHighlight
         interval: 1600
         onTriggered: window.highlightedMessageId = ""
     }
 
+    // Not being connected to the daemon is not the same as not being linked.
+    // WhatsApp Web never answers a dropped connection with its QR page, and a
+    // paired account that briefly loses the daemon must not be sent back to
+    // linking, so the QR page waits until the daemon has actually reported the
+    // account's state.
+    readonly property bool accountStateKnown: backend.daemonConnected
+        && String(backend.status.state || "") !== ""
+
     PairingPage {
         anchors.fill: parent
-        visible: !backend.loggedIn
+        visible: window.accountStateKnown && !backend.loggedIn
+        previousProfile: window.previousProfile
+        onSwitchRequested: profile => window.switchProfile(profile)
+        onRenameRequested: profile => {
+            renameAccountDialog.profile = profile
+            renameAccountDialog.initialName = String(backend.profileDisplayNames[profile] || profile)
+            renameAccountDialog.open()
+        }
+        // The switcher offers removal wherever it appears, so the pairing page
+        // needs the same confirmation the main window uses; without it the
+        // delete control on this page did nothing at all.
+        onRemoveRequested: profile => {
+            removeAccountDialog.profile = profile
+            removeAccountDialog.open()
+        }
+    }
+
+    // The connecting state keeps the account's own screen rather than showing
+    // either the QR page or a blank window.
+    ColumnLayout {
+        anchors.centerIn: parent
+        spacing: 12
+        visible: !backend.loggedIn && !window.accountStateKnown
+        BusyIndicator {
+            Layout.alignment: Qt.AlignHCenter
+            running: parent.visible
+        }
+        Label {
+            objectName: "connectingLabel"
+            Layout.alignment: Qt.AlignHCenter
+            text: qsTr("Connecting to the WhatsAppGo service\u2026")
+            color: Theme.textMuted
+            font.pixelSize: 14
+        }
     }
 
     RowLayout {
@@ -362,47 +593,21 @@ Kirigami.ApplicationWindow {
         Rectangle {
             id: navigationRail
             objectName: "navigationRail"
-            Layout.preferredWidth: 80
+            Layout.preferredWidth: 64
             Layout.fillHeight: true
             color: Theme.navigation
 
             ColumnLayout {
+                objectName: "navigationRailColumn"
                 anchors.fill: parent
-                anchors.topMargin: 12
-                anchors.bottomMargin: 12
-                spacing: 6
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    radius: 24
-                    color: Theme.primary
-                    Label {
-                        anchors.centerIn: parent
-                        text: "W"
-                        color: Theme.primaryText
-                        font.pixelSize: 17
-                        font.weight: Font.Bold
-                    }
-                    Rectangle {
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        width: 11
-                        height: 11
-                        radius: 5.5
-                        color: backend.status.state === "connected" ? Theme.brand : Theme.textMuted
-                        border.color: Theme.navigation
-                        border.width: 2
-                    }
-                }
-
-                Item { Layout.preferredHeight: 4 }
+                anchors.topMargin: 10
+                anchors.bottomMargin: 10
+                spacing: 4
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
                     iconSource: Qt.resolvedUrl("icons/chats.svg")
                     iconTint: window.activeSection === "chats" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Chats")
@@ -410,7 +615,7 @@ Kirigami.ApplicationWindow {
                     onClicked: window.showSection("chats")
                     background: Rectangle {
                         objectName: "navigationChatsBackground"
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
                             : window.activeSection === "chats" ? Theme.navigationSelected
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
@@ -440,14 +645,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
                     iconSource: "calls.svg"
                     iconTint: window.activeSection === "calls" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Calls")
                     onClicked: window.showSection("calls")
                     background: Rectangle {
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
                             : window.activeSection === "calls" ? Theme.navigationSelected
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
@@ -458,14 +663,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
                     iconSource: "status.svg"
                     iconTint: window.activeSection === "status" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Status")
                     onClicked: window.showSection("status")
                     background: Rectangle {
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
                             : window.activeSection === "status" ? Theme.navigationSelected
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
@@ -476,14 +681,14 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
                     iconSource: "channels.svg"
                     iconTint: window.activeSection === "channels" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Channels")
                     onClicked: window.showSection("channels")
                     background: Rectangle {
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
                             : window.activeSection === "channels" ? Theme.navigationSelected
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
@@ -494,48 +699,16 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
                     iconSource: "communities.svg"
                     iconTint: window.activeSection === "communities" ? Theme.text : Theme.icon
                     Accessible.name: qsTr("Communities")
                     onClicked: window.showSection("communities")
                     background: Rectangle {
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
                             : window.activeSection === "communities" ? Theme.navigationSelected
-                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
-                    }
-                    ToolTip.visible: hovered
-                    ToolTip.text: Accessible.name
-                }
-
-                ThemedToolButton {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    iconSource: Qt.resolvedUrl("icons/search.svg")
-                    Accessible.name: qsTr("Search chats")
-					onClicked: window.openChatSearch()
-                    background: Rectangle {
-                        radius: 24
-                        color: parent.down ? Theme.navigationPressed
-                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
-                    }
-                    ToolTip.visible: hovered
-                    ToolTip.text: Accessible.name
-                }
-
-                ThemedToolButton {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    iconSource: Qt.resolvedUrl("icons/new-chat.svg")
-                    Accessible.name: qsTr("Start a new chat")
-                    onClicked: window.openNewChat()
-                    background: Rectangle {
-                        radius: 24
-                        color: parent.down ? Theme.navigationPressed
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -545,17 +718,18 @@ Kirigami.ApplicationWindow {
                 Item { Layout.fillHeight: true }
 
                 ThemedToolButton {
+                    objectName: "navigationMediaButton"
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    iconSource: "profile.svg"
-                    iconTint: window.activeSection === "profile" ? Theme.text : Theme.icon
-                    Accessible.name: qsTr("Profile")
-                    onClicked: window.showSection("profile")
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    iconSource: Qt.resolvedUrl("icons/gallery.svg")
+                    iconTint: window.activeSection === "media" ? Theme.text : Theme.icon
+                    Accessible.name: qsTr("Media from all chats")
+                    onClicked: window.showSection("media")
                     background: Rectangle {
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
-                            : window.activeSection === "profile" ? Theme.navigationSelected
+                            : window.activeSection === "media" ? Theme.navigationSelected
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
                     }
                     ToolTip.visible: hovered
@@ -564,16 +738,29 @@ Kirigami.ApplicationWindow {
 
                 ThemedToolButton {
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    iconSource: Theme.dark ? Qt.resolvedUrl("icons/sun.svg") : Qt.resolvedUrl("icons/moon.svg")
-                    iconSize: 21
-                    Accessible.name: Theme.dark ? qsTr("Switch to light mode") : qsTr("Switch to dark mode")
-                    onClicked: Theme.preferredMode = Theme.dark ? "light" : "dark"
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    objectName: "navigationProfileButton"
+                    iconSource: "profile.svg"
+                    iconTint: window.activeSection === "profile" ? Theme.text : Theme.icon
+                    Accessible.name: qsTr("Profile")
+                    onClicked: window.showSection("profile")
                     background: Rectangle {
-                        radius: 24
+                        radius: 12
                         color: parent.down ? Theme.navigationPressed
+                            : window.activeSection === "profile" ? Theme.navigationSelected
                             : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
+                    }
+                    Rectangle {
+                        objectName: "navigationConnectionDot"
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        width: 11
+                        height: 11
+                        radius: 5.5
+                        color: backend.status.state === "connected" ? Theme.brand : Theme.textMuted
+                        border.color: Theme.navigation
+                        border.width: 2
                     }
                     ToolTip.visible: hovered
                     ToolTip.text: Accessible.name
@@ -591,7 +778,7 @@ Kirigami.ApplicationWindow {
 
         Rectangle {
             id: sidebar
-            Layout.preferredWidth: Math.max(360, Math.min(520, window.width * 0.30))
+            Layout.preferredWidth: Math.max(360, Math.min(560, window.width * 0.40))
             Layout.fillHeight: true
             color: Theme.surface
             border.color: Theme.border
@@ -602,14 +789,77 @@ Kirigami.ApplicationWindow {
                 spacing: 0
 
                 Rectangle {
+                    objectName: "chatSelectionBar"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 72
+                    Layout.preferredHeight: visible ? 64 : 0
+                    visible: window.chatSelectionActive
                     color: Theme.surface
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 10
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        spacing: 8
+
+                        ThemedToolButton {
+                            objectName: "chatSelectionCancelButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/close.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Cancel selection")
+                            onClicked: window.endChatSelection()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                        Label {
+                            objectName: "chatSelectionCountLabel"
+                            Layout.fillWidth: true
+                            text: qsTr("%1 selected").arg(window.selectedChatJids.length)
+                            color: Theme.text
+                            font.pixelSize: 16
+                            font.weight: Font.Medium
+                        }
+                        ThemedToolButton {
+                            objectName: "chatSelectionReadButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            enabled: window.selectedChatJids.length > 0
+                            iconSource: Qt.resolvedUrl("icons/chats.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Mark selected chats as read")
+                            onClicked: window.readSelectedChats()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                        ThemedToolButton {
+                            objectName: "chatSelectionArchiveButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            enabled: window.selectedChatJids.length > 0
+                            iconSource: Qt.resolvedUrl("icons/archive.svg")
+                            iconSize: 20
+                            Accessible.name: window.showArchived ? qsTr("Restore selected chats") : qsTr("Archive selected chats")
+                            onClicked: window.archiveSelectedChats()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 64 : 0
+                    visible: !window.chatSelectionActive
+                    color: Theme.surface
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 20
+                        anchors.rightMargin: 12
                         spacing: 8
 
                         Label {
@@ -627,17 +877,21 @@ Kirigami.ApplicationWindow {
                         AccountSwitcherButton {
                             id: accountSwitcherButton
                             objectName: "accountSwitcherButton"
-                            Layout.preferredWidth: 44
-                            Layout.preferredHeight: 44
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
                             profiles: backend.profiles
                             currentProfile: backend.profile
                             displayNames: backend.profileDisplayNames
                             unreadCounts: backend.profileUnreadCounts
-                            onSwitchRequested: profile => backend.switchProfile(profile)
+                            onSwitchRequested: profile => window.switchProfile(profile)
                             onRenameRequested: profile => {
                                 renameAccountDialog.profile = profile
                                 renameAccountDialog.initialName = String(backend.profileDisplayNames[profile] || profile)
                                 renameAccountDialog.open()
+                            }
+                            onRemoveRequested: profile => {
+                                removeAccountDialog.profile = profile
+                                removeAccountDialog.open()
                             }
                             ToolTip.visible: hovered
                             ToolTip.text: Accessible.name
@@ -666,9 +920,37 @@ Kirigami.ApplicationWindow {
                                 y: sidebarMenuButton.mapToItem(window.contentItem, 0, 0).y + sidebarMenuButton.height + 2
 
                                 WhatsAppMenuItem {
-                                    text: qsTr("Search messages")
-                                    iconSource: Qt.resolvedUrl("icons/search.svg")
-                                    onClicked: { sidebarMenu.close(); messageSearchDialog.open() }
+                                    objectName: "newGroupMenuItem"
+                                    text: qsTr("New group")
+                                    iconSource: Qt.resolvedUrl("icons/communities.svg")
+                                    onClicked: { sidebarMenu.close(); newGroupDialog.open() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "joinGroupMenuItem"
+                                    text: qsTr("Join group with link")
+                                    iconSource: Qt.resolvedUrl("icons/link.svg")
+                                    onClicked: {
+                                        sidebarMenu.close()
+                                        joinGroupDialog.open()
+                                    }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "selectChatsMenuItem"
+                                    text: qsTr("Select chats")
+                                    iconSource: Qt.resolvedUrl("icons/copy.svg")
+                                    onClicked: { sidebarMenu.close(); window.beginChatSelection() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "markAllReadMenuItem"
+                                    text: qsTr("Mark all as read")
+                                    iconSource: Qt.resolvedUrl("icons/chats.svg")
+                                    onClicked: { sidebarMenu.close(); backend.markAllChatsRead() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "starredMessagesMenuItem"
+                                    text: qsTr("Starred messages")
+                                    iconSource: Qt.resolvedUrl("icons/star.svg")
+                                    onClicked: { sidebarMenu.close(); starredMessagesDialog.open() }
                                 }
                                 WhatsAppMenuItem {
                                     text: qsTr("Add another account")
@@ -704,7 +986,7 @@ Kirigami.ApplicationWindow {
                                 parent: Overlay.overlay
                                 width: 226
                                 x: Math.max(8, sidebarMenu.x - width - 8)
-                                y: Math.min(window.height - height - 8, sidebarMenu.y + 3 * 46)
+                                y: Math.min(window.height - height - 8, sidebarMenu.y + 3 * 36)
 
                                 WhatsAppMenuItem {
                                     text: qsTr("System default")
@@ -755,12 +1037,16 @@ Kirigami.ApplicationWindow {
 
                     Rectangle {
                         anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 12
-                        anchors.topMargin: 8
-                        anchors.bottomMargin: 8
+                        anchors.leftMargin: 22
+                        anchors.rightMargin: 22
+                        anchors.topMargin: 12
+                        anchors.bottomMargin: 12
                         radius: height / 2
                         color: Theme.surfaceMuted
+                        // WhatsApp Web rings the pill in green while it has the
+                        // caret, which is the only cue that typing searches.
+                        border.width: searchField.activeFocus ? 2 : 0
+                        border.color: Theme.primary
 
                         TintedIcon {
                             anchors.left: parent.left
@@ -773,49 +1059,86 @@ Kirigami.ApplicationWindow {
                         }
                         TextField {
                             id: searchField
-							objectName: "chatSearchField"
+                            objectName: "chatSearchField"
                             anchors.fill: parent
                             leftPadding: 42
-                            rightPadding: 12
+                            rightPadding: 40
                             placeholderText: qsTr("Search or start a new chat")
                             color: Theme.text
                             font.pixelSize: 14
                             Accessible.name: qsTr("Search chats")
-                            onTextEdited: searchTimer.restart()
-                            Keys.onEscapePressed: clear()
+                            // Programmatic clears do not raise onTextEdited, so
+                            // the query follows the text itself.
+                            onTextChanged: searchTimer.restart()
+                            Keys.onEscapePressed: window.clearChatSearch()
+                            background: Item {}
+                        }
+                        ThemedToolButton {
+                            objectName: "chatSearchClear"
+                            anchors.right: parent.right
+                            anchors.rightMargin: 6
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: searchField.text.length > 0
+                            width: 28
+                            height: 28
+                            iconSource: Qt.resolvedUrl("icons/close.svg")
+                            iconTint: Theme.icon
+                            iconSize: 16
+                            Accessible.name: qsTr("Clear search")
+                            onClicked: window.clearChatSearch()
                             background: Item {}
                         }
                     }
                 }
 
-                // Conversations that were put away live behind this row, the
-                // way they do on WhatsApp Web.
+                ChatFilterBar {
+                    id: chatFilterBar
+                    objectName: "chatFilterBar"
+                    visible: !window.showArchived
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? implicitHeight : 0
+                    selectedFilter: window.chatFilter
+                    unreadCount: window.totalUnreadCount
+                    onFilterSelected: filter => window.chatFilter = filter
+                    onNewListRequested: newListDialog.open()
+                }
+
+                // WhatsApp places filters first, then the archived-chat
+                // destination before the conversation rows.
                 ItemDelegate {
                     id: archivedRow
                     objectName: "archivedRow"
                     Layout.fillWidth: true
-                    visible: backend.archivedCount > 0 || window.showArchived
-                    height: visible ? 54 : 0
-                    leftPadding: 12
-                    rightPadding: 12
+                    visible: !window.searching && (backend.archivedCount > 0 || window.showArchived)
+                    height: visible ? 49 : 0
+                    leftPadding: 7
+                    rightPadding: 15
                     Accessible.name: window.showArchived ? qsTr("Back to chats") : qsTr("Archived chats")
                     onClicked: window.showArchived = !window.showArchived
                     background: Rectangle {
                         color: archivedRow.hovered ? Theme.hoverRow : Theme.surface
                     }
                     contentItem: RowLayout {
-                        spacing: 14
-                        TintedIcon {
-                            Layout.preferredWidth: 22
-                            Layout.preferredHeight: 22
-                            Layout.leftMargin: 14
-                            source: Qt.resolvedUrl(window.showArchived ? "icons/back.svg" : "icons/archive.svg")
-                            tint: Theme.icon
+                        spacing: 13
+                        // The glyph sits in the same column the chat avatars
+                        // use, so the row's label starts on the chat titles
+                        // rather than 20 px to their left.
+                        Item {
+                            Layout.preferredWidth: 56
+                            Layout.preferredHeight: 40
+                            Layout.leftMargin: 11
+                            TintedIcon {
+                                anchors.centerIn: parent
+                                width: 20
+                                height: 20
+                                source: Qt.resolvedUrl(window.showArchived ? "icons/back.svg" : "icons/archive.svg")
+                                tint: Theme.icon
+                            }
                         }
                         Label {
                             Layout.fillWidth: true
                             text: window.showArchived ? qsTr("Back to chats") : qsTr("Archived")
-                            color: Theme.text
+                            color: Theme.textMuted
                             font.pixelSize: 15
                         }
                         Label {
@@ -827,17 +1150,7 @@ Kirigami.ApplicationWindow {
                     }
                 }
 
-                ChatFilterBar {
-                    id: chatFilterBar
-                    visible: !window.showArchived
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? implicitHeight : 0
-                    selectedFilter: window.chatFilter
-                    unreadCount: window.totalUnreadCount
-                    onFilterSelected: filter => window.chatFilter = filter
-                }
-
-                Timer { id: searchTimer; interval: 250; onTriggered: backend.refreshChats(searchField.text) }
+                Timer { id: searchTimer; interval: 120; onTriggered: backend.searchChats(searchField.text) }
 
                 Item {
                     id: chatListViewport
@@ -852,7 +1165,9 @@ Kirigami.ApplicationWindow {
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
+                        anchors.leftMargin: 7
                         anchors.rightMargin: 8
+                        visible: !window.searching
                         model: window.showArchived ? backend.archivedChatListModel : backend.chatListModel
                         spacing: 2
                         clip: true
@@ -860,6 +1175,10 @@ Kirigami.ApplicationWindow {
                         boundsBehavior: Flickable.StopAtBounds
                         delegate: ChatListDelegate {
                             current: backend.selectedChat.jid === modelData.jid
+                            selectionActive: window.chatSelectionActive
+                            selected: window.chatSelectionActive
+                                && window.selectedChatJids.indexOf(String(modelData.jid || "")) >= 0
+                            onSelectionToggled: jid => window.toggleChatSelection(jid)
                             statusGroupIndex: window.statusGroupIndexForJid(modelData.jid)
                             statusItemCount: statusGroupIndex >= 0
                                 ? (backend.statusUpdates[statusGroupIndex].items || []).length : 0
@@ -871,7 +1190,7 @@ Kirigami.ApplicationWindow {
                         Column {
                             anchors.centerIn: parent
                             spacing: 10
-                            visible: chatList.count === 0
+                            visible: chatList.count === 0 && !window.searching
                             Label {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: {
@@ -891,7 +1210,7 @@ Kirigami.ApplicationWindow {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: qsTr("Refresh")
                                 flat: true
-                                onClicked: backend.refreshChats(searchField.text)
+                                onClicked: backend.refreshChats()
                             }
                         }
                     }
@@ -899,6 +1218,7 @@ Kirigami.ApplicationWindow {
                     OverlayScrollBar {
                         id: chatListScrollBar
                         objectName: "chatListScrollBar"
+                        visible: !window.searching
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
@@ -908,6 +1228,27 @@ Kirigami.ApplicationWindow {
                         onPositionChanged: {
                             if (pressed)
                                 chatList.contentY = position * chatList.contentHeight
+                        }
+                    }
+
+                    SearchResultsPane {
+                        id: searchResultsPane
+                        objectName: "searchResultsPane"
+                        anchors.fill: parent
+                        visible: window.searching
+                        query: backend.chatQuery
+                        chatHits: backend.chatSearchHits
+                        contactHits: backend.contactSearchHits
+                        messageHits: backend.messageSearchHits
+                        onChatChosen: (jid, title) => {
+                            backend.openChat(jid, title)
+                            window.clearChatSearch()
+                        }
+                        // The conversation has to be open before the row can be
+                        // found, and jumpToMessage pages back until it is.
+                        onMessageChosen: (chatJid, chatTitle, messageId) => {
+                            window.clearChatSearch()
+                            window.jumpToMessageInChat(chatJid, chatTitle, messageId)
                         }
                     }
                 }
@@ -981,7 +1322,7 @@ Kirigami.ApplicationWindow {
                     }
                     Label {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: qsTr("WhatsAppGo for Linux")
+                        text: qsTr("WhatsAppGo for %1").arg(Theme.platformName)
                         color: Theme.text
                         font.pixelSize: 28
                         font.weight: Font.Normal
@@ -1016,8 +1357,90 @@ Kirigami.ApplicationWindow {
                 spacing: 0
 
                 Rectangle {
+                    objectName: "messageSelectionBar"
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 72
+                    Layout.preferredHeight: visible ? 64 : 0
+                    visible: window.messageSelectionActive
+                    color: Theme.surface
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14
+                        anchors.rightMargin: 14
+                        spacing: 10
+
+                        ThemedToolButton {
+                            objectName: "messageSelectionCancelButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/close.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Cancel selection")
+                            onClicked: window.endMessageSelection()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                        Label {
+                            objectName: "messageSelectionCountLabel"
+                            Layout.fillWidth: true
+                            text: qsTr("%1 selected").arg(window.selectedMessages.length)
+                            color: Theme.text
+                            font.pixelSize: 16
+                            font.weight: Font.Medium
+                        }
+                        ThemedToolButton {
+                            objectName: "messageSelectionStarButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            enabled: window.selectedMessages.length > 0
+                            iconSource: Qt.resolvedUrl("icons/star.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Star selected messages")
+                            onClicked: window.starSelectedMessages(true)
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                        ThemedToolButton {
+                            objectName: "messageSelectionForwardButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            enabled: window.selectedMessages.length > 0
+                            iconSource: Qt.resolvedUrl("icons/forward.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Forward selected messages")
+                            onClicked: {
+                                forwardDialog.messageIds = window.selectedMessages.map(m => m.id)
+                                forwardDialog.messageId = ""
+                                window.endMessageSelection()
+                                forwardDialog.open()
+                            }
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                        ThemedToolButton {
+                            objectName: "messageSelectionDeleteButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            enabled: window.selectedMessages.length > 0
+                            iconSource: Qt.resolvedUrl("icons/delete.svg")
+                            iconSize: 20
+                            iconTint: Theme.danger
+                            Accessible.name: qsTr("Delete selected messages")
+                            onClicked: window.deleteSelectedMessages()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 64 : 0
+                    visible: !window.messageSelectionActive
                     color: Theme.surface
 
                     RowLayout {
@@ -1030,7 +1453,7 @@ Kirigami.ApplicationWindow {
                             id: contactHeaderButton
                             objectName: "contactHeaderButton"
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 60
+                            Layout.preferredHeight: 56
                             flat: true
                             leftPadding: 0
                             rightPadding: 8
@@ -1081,10 +1504,130 @@ Kirigami.ApplicationWindow {
                             iconSource: Qt.resolvedUrl("icons/search.svg")
                             iconSize: 20
                             Accessible.name: qsTr("Search message history")
-                            onClicked: messageSearchDialog.open()
+                            onClicked: window.openConversationSearch()
                             background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
                             ToolTip.visible: hovered
                             ToolTip.text: Accessible.name
+                        }
+
+                        ThemedToolButton {
+                            id: conversationMenuButton
+                            objectName: "conversationMenuButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/menu.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Conversation menu")
+                            Accessible.description: conversationMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
+                            onClicked: conversationMenu.opened ? conversationMenu.close() : conversationMenu.open()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+
+                            WhatsAppMenuPopup {
+                                id: conversationMenu
+                                objectName: "conversationMenu"
+                                parent: Overlay.overlay
+                                width: 238
+                                x: Math.max(8, Math.min(window.width - width - 8,
+                                                       conversationMenuButton.mapToItem(window.contentItem, 0, 0).x
+                                                       + conversationMenuButton.width - width))
+                                y: conversationMenuButton.mapToItem(window.contentItem, 0, 0).y + conversationMenuButton.height + 2
+
+                                WhatsAppMenuItem {
+                                    objectName: "conversationContactInfoItem"
+                                    text: backend.selectedChat.is_group ? qsTr("Group info") : qsTr("Contact info")
+                                    iconSource: Qt.resolvedUrl("icons/profile.svg")
+                                    onClicked: { conversationMenu.close(); window.openContactInfo() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationSearchItem"
+                                    text: qsTr("Search")
+                                    iconSource: Qt.resolvedUrl("icons/search.svg")
+                                    onClicked: { conversationMenu.close(); window.openConversationSearch() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationSelectItem"
+                                    text: qsTr("Select messages")
+                                    iconSource: Qt.resolvedUrl("icons/copy.svg")
+                                    onClicked: { conversationMenu.close(); window.beginMessageSelection() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationMuteItem"
+                                    readonly property bool muted: Number(backend.selectedChat.muted_until || 0) > Date.now()
+                                    text: muted ? qsTr("Unmute notifications") : qsTr("Mute notifications")
+                                    iconSource: Qt.resolvedUrl("icons/mute.svg")
+                                    onClicked: {
+                                        conversationMenu.close()
+                                        backend.setChatMuted(backend.selectedChat.jid, !muted)
+                                    }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationCloseItem"
+                                    text: qsTr("Close chat")
+                                    iconSource: Qt.resolvedUrl("icons/close.svg")
+                                    onClicked: { conversationMenu.close(); backend.closeChat() }
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    Layout.topMargin: 4
+                                    Layout.bottomMargin: 4
+                                    color: Theme.border
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationBlockItem"
+                                    readonly property bool blocked:
+                                        backend.blockedContacts.indexOf(String(backend.selectedChat.jid || "")) >= 0
+                                    // Groups have no block, so the entry stays
+                                    // out of a group's menu rather than failing
+                                    // when pressed.
+                                    visible: !backend.selectedChat.is_group
+                                    text: blocked ? qsTr("Unblock") : qsTr("Block")
+                                    destructive: !blocked
+                                    iconSource: Qt.resolvedUrl("icons/block.svg")
+                                    onClicked: {
+                                        conversationMenu.close()
+                                        backend.setContactBlocked(backend.selectedChat.jid, !blocked)
+                                    }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationFavoriteItem"
+                                    readonly property bool favorite: Boolean(backend.selectedChat.favorite)
+                                    text: favorite ? qsTr("Remove from Favorites") : qsTr("Add to Favorites")
+                                    iconSource: Qt.resolvedUrl("icons/heart.svg")
+                                    onClicked: {
+                                        conversationMenu.close()
+                                        backend.setChatFavorite(backend.selectedChat.jid, !favorite)
+                                    }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationExportItem"
+                                    text: qsTr("Export chat")
+                                    iconSource: Qt.resolvedUrl("icons/document.svg")
+                                    onClicked: { conversationMenu.close(); exportChatDialog.open() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationDisappearingItem"
+                                    text: qsTr("Disappearing messages")
+                                    iconSource: Qt.resolvedUrl("icons/mute.svg")
+                                    onClicked: { conversationMenu.close(); disappearingDialog.open() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationClearItem"
+                                    text: qsTr("Clear chat")
+                                    destructive: true
+                                    iconSource: Qt.resolvedUrl("icons/block.svg")
+                                    onClicked: { conversationMenu.close(); conversationClearDialog.open() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "conversationDeleteItem"
+                                    text: qsTr("Delete chat")
+                                    destructive: true
+                                    iconSource: Qt.resolvedUrl("icons/delete.svg")
+                                    onClicked: { conversationMenu.close(); conversationDeleteDialog.open() }
+                                }
+                            }
                         }
                     }
 
@@ -1230,6 +1773,9 @@ Kirigami.ApplicationWindow {
                         }
                         delegate: MessageDelegate {
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
+                            selectionActive: window.messageSelectionActive
+                            selected: window.messageSelectionActive && window.isMessageSelected(modelData.id)
+                            onSelectionToggled: message => window.toggleMessageSelection(message)
                             chatTitle: backend.selectedChat.title || ""
                             chatAvatarSource: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
                             ownTitle: backend.status.user_name || ""
@@ -1255,6 +1801,12 @@ Kirigami.ApplicationWindow {
                                 pinDialog.messagePreview = body
                                 pinSevenDays.checked = true
                                 pinDialog.open()
+                            }
+                            onStarRequested: (messageId, senderJid, fromMe, starred) =>
+                                backend.starMessage(messageId, senderJid, fromMe, starred)
+                            onForwardRequested: messageId => {
+                                forwardDialog.messageId = messageId
+                                forwardDialog.open()
                             }
                             onImagePreviewRequested: message => window.openChatImage(message)
 							onInfoRequested: message => {
@@ -1580,7 +2132,16 @@ Kirigami.ApplicationWindow {
                                             event.accepted = true
                                             return
                                         }
-                                        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) {
+                                        // With "Enter is send" off, the roles swap:
+                                        // Enter opens a line and Ctrl+Enter sends,
+                                        // which is what the PWA does.
+                                        const enterSends = settingsPane.enterIsSend
+                                        const plainReturn = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                            && !(event.modifiers & Qt.ShiftModifier)
+                                            && !(event.modifiers & Qt.ControlModifier)
+                                        const controlReturn = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                            && (event.modifiers & Qt.ControlModifier)
+                                        if ((enterSends && plainReturn) || (!enterSends && controlReturn)) {
                                             sendButton.clicked()
                                             event.accepted = true
                                         }
@@ -1630,11 +2191,26 @@ Kirigami.ApplicationWindow {
             MediaPreview {
                 id: mediaPreview
                 anchors.fill: parent
-                anchors.topMargin: 72
+                anchors.topMargin: 64
                 z: 20
                 onSendRequested: (imageUrl, caption) => backend.sendClipboardImage(imageUrl, caption)
                 onCanceled: imageUrl => backend.discardClipboardImage(imageUrl)
                 onAddRequested: window.prepareClipboardPaste()
+            }
+
+            ChatSearchPanel {
+                id: chatSearchPanel
+                objectName: "chatSearchPanel"
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                width: Math.min(460, parent ? parent.width : 460)
+                visible: window.chatSearchOpen
+                query: backend.conversationQuery
+                results: backend.searchResults
+                onCloseRequested: window.closeConversationSearch()
+                onQueryEdited: text => backend.searchMessages(text)
+                onMessageChosen: messageId => window.jumpToMessage(messageId)
             }
 
             ContactInfoDrawer {
@@ -1654,7 +2230,7 @@ Kirigami.ApplicationWindow {
                 }
                 onSharedRequested: category => backend.refreshSharedContent(category)
                 onLoadMoreRequested: category => backend.refreshSharedContent(category, true)
-                onSearchRequested: messageSearchDialog.open()
+                onSearchRequested: window.openConversationSearch()
                 onMuteChanged: muted => {
                     backend.setChatMuted(backend.selectedChat.jid, muted)
                 }
@@ -1663,6 +2239,13 @@ Kirigami.ApplicationWindow {
                     window.infoDrawerOpen = false
                     backend.clearChatInfo()
                 }
+                onFavoriteChanged: favorite => backend.setChatFavorite(backend.selectedChat.jid, favorite)
+                onBlockChanged: blocked => backend.setContactBlocked(backend.selectedChat.jid, blocked)
+                onDisappearingRequested: disappearingDialog.open()
+                onStarredRequested: starredMessagesDialog.open()
+                onExportRequested: exportChatDialog.open()
+                onClearRequested: conversationClearDialog.open()
+                onDeleteRequested: conversationDeleteDialog.open()
                 onOpenFileRequested: path => backend.openFile(path)
                 onImagePreviewRequested: message => window.openChatImage(message)
                 onAvatarPreviewRequested: (path, title) => {
@@ -1695,7 +2278,44 @@ Kirigami.ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: window.activeSection !== "chats" && window.activeSection !== "status"
+                && window.activeSection !== "media" && window.activeSection !== "profile"
             section: window.activeSection
+            onCreateChannelRequested: newChannelDialog.open()
+            onFollowChannelRequested: followChannelDialog.open()
+            onCreateCommunityRequested: newCommunityDialog.open()
+        }
+
+        SettingsPane {
+            id: settingsPane
+            objectName: "settingsPane"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: window.activeSection === "profile"
+            onLogoutRequested: logoutDialog.open()
+            onShortcutsRequested: shortcutsDialog.open()
+            onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
+        }
+
+        MediaLibraryPane {
+            objectName: "mediaLibraryPane"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: window.activeSection === "media"
+            onMessageRequested: (chatJid, messageId) => {
+                if (chatJid === "")
+                    return
+                window.showSection("chats")
+                backend.openChat(chatJid, "")
+            }
+            onCloseRequested: window.showSection("chats")
+            onForwardRequested: items => {
+                // Items from the media browser carry their own chat, so they are
+                // forwarded from where they were found rather than from whatever
+                // conversation happens to be open.
+                forwardDialog.messagePairs = items
+                forwardDialog.messageIds = []
+                forwardDialog.open()
+            }
         }
 
         StatusPage {
@@ -1708,6 +2328,12 @@ Kirigami.ApplicationWindow {
                 window.openStatusAt(index)
             }
             onAvatarRequested: jid => backend.fetchStatusAvatar(jid)
+            onTextStatusRequested: textStatusDialog.open()
+            onPhotoStatusRequested: statusMediaDialog.open()
+            onStatusPrivacyRequested: {
+                window.showSection("profile")
+                settingsPane.openSection = "privacy"
+            }
         }
     }
 
@@ -1920,6 +2546,18 @@ Kirigami.ApplicationWindow {
     }
 
     FileDialog {
+        id: exportChatDialog
+        objectName: "exportChatDialog"
+        title: qsTr("Export chat")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("Text files (*.txt)"), qsTr("All files (*)")]
+        // Named after the conversation, the way WhatsApp names its own exports.
+        currentFile: "file://" + StandardPaths.writableLocation(StandardPaths.DocumentsLocation).toString().replace("file://", "")
+            + "/WhatsApp Chat - " + String(backend.selectedChat.title || backend.selectedChat.jid || "chat").replace(/[\/]/g, " ") + ".txt"
+        onAccepted: backend.exportChat(backend.selectedChat.jid, selectedFile)
+    }
+
+    FileDialog {
         id: documentFileDialog
         title: qsTr("Choose a document")
         nameFilters: [qsTr("All files (*)")]
@@ -1943,32 +2581,350 @@ Kirigami.ApplicationWindow {
         ]
         onAccepted: backend.sendFile(selectedFile)
     }
-    Kirigami.PromptDialog {
+    // The keyboard shortcuts the settings dialog lists. They are declared here so
+    // that list describes something real rather than copying the PWA's.
+    Shortcut {
+        sequences: [StandardKey.Find]
+        onActivated: {
+            if (!backend.selectedChat.jid)
+                return
+            window.showSection("chats")
+            window.openChatSearch()
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+F"
+        onActivated: window.openConversationSearch()
+    }
+    Shortcut {
+        sequence: "Ctrl+N"
+        onActivated: { window.showSection("chats"); window.newChatOpen = true }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+N"
+        onActivated: newGroupDialog.open()
+    }
+    Shortcut {
+        sequence: "Ctrl+E"
+        onActivated: {
+            if (backend.selectedChat.jid)
+                backend.setChatArchived(backend.selectedChat.jid, !backend.selectedChat.archived)
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+M"
+        onActivated: {
+            if (!backend.selectedChat.jid)
+                return
+            const muted = Number(backend.selectedChat.muted_until || 0) > Date.now()
+            backend.setChatMuted(backend.selectedChat.jid, !muted, 0)
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+U"
+        onActivated: {
+            if (backend.selectedChat.jid)
+                backend.setChatRead(backend.selectedChat.jid, false)
+        }
+    }
+
+    WhatsAppDialog {
+        id: newChannelDialog
+        objectName: "newChannelDialog"
+        title: qsTr("New channel")
+        subtitle: qsTr("A channel is public: anyone with its link can follow it and see what you post.")
+        acceptText: qsTr("Create")
+        preferredWidth: 440
+        acceptEnabled: newChannelName.text.trim() !== ""
+        onOpened: {
+            newChannelName.text = ""
+            newChannelDescription.text = ""
+            newChannelName.forceActiveFocus()
+        }
+        onAccepted: backend.createChannel(newChannelName.text, newChannelDescription.text)
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            DialogTextField {
+                id: newChannelName
+                objectName: "newChannelNameField"
+                Layout.fillWidth: true
+                maximumLength: 75
+                placeholderText: qsTr("Channel name")
+            }
+            DialogTextField {
+                id: newChannelDescription
+                objectName: "newChannelDescriptionField"
+                Layout.fillWidth: true
+                maximumLength: 500
+                placeholderText: qsTr("Description (optional)")
+            }
+        }
+    }
+
+    WhatsAppDialog {
+        id: followChannelDialog
+        objectName: "followChannelDialog"
+        title: qsTr("Follow a channel")
+        subtitle: qsTr("Paste a channel link. There is no channel directory to browse from here, so a link is how a channel is found.")
+        acceptText: qsTr("Follow")
+        preferredWidth: 440
+        acceptEnabled: followChannelLink.text.trim() !== ""
+        onOpened: {
+            followChannelLink.text = ""
+            followChannelLink.forceActiveFocus()
+        }
+        onAccepted: backend.followChannelLink(followChannelLink.text)
+        DialogTextField {
+            id: followChannelLink
+            objectName: "followChannelLinkField"
+            Layout.fillWidth: true
+            placeholderText: qsTr("https://whatsapp.com/channel/…")
+            onAccepted: if (followChannelDialog.acceptEnabled) followChannelDialog.accept()
+        }
+    }
+
+    WhatsAppDialog {
+        id: newCommunityDialog
+        objectName: "newCommunityDialog"
+        title: qsTr("New community")
+        subtitle: qsTr("A community groups related chats together. WhatsApp adds its announcement group for you.")
+        acceptText: qsTr("Create")
+        preferredWidth: 440
+        acceptEnabled: newCommunityName.text.trim() !== ""
+        onOpened: {
+            newCommunityName.text = ""
+            newCommunityName.forceActiveFocus()
+        }
+        onAccepted: backend.createCommunity(newCommunityName.text)
+        DialogTextField {
+            id: newCommunityName
+            objectName: "newCommunityNameField"
+            Layout.fillWidth: true
+            maximumLength: 100
+            placeholderText: qsTr("Community name")
+            onAccepted: if (newCommunityDialog.acceptEnabled) newCommunityDialog.accept()
+        }
+    }
+
+    WhatsAppDialog {
+        id: joinGroupDialog
+        objectName: "joinGroupDialog"
+        title: qsTr("Join a group with a link")
+        subtitle: qsTr("Paste an invite link. You will join the group and it opens here.")
+        acceptText: qsTr("Join")
+        preferredWidth: 440
+        acceptEnabled: joinGroupLink.text.trim() !== ""
+        onOpened: {
+            joinGroupLink.text = ""
+            joinGroupLink.forceActiveFocus()
+        }
+        onAccepted: backend.joinGroupLink(joinGroupLink.text)
+        DialogTextField {
+            id: joinGroupLink
+            objectName: "joinGroupLinkField"
+            Layout.fillWidth: true
+            placeholderText: qsTr("https://chat.whatsapp.com/…")
+            onAccepted: if (joinGroupDialog.acceptEnabled) joinGroupDialog.accept()
+        }
+    }
+
+    WhatsAppDialog {
+        id: textStatusDialog
+        objectName: "textStatusDialog"
+        title: qsTr("Text status")
+        subtitle: qsTr("Everyone who can see your status will see this for 24 hours.")
+        acceptText: qsTr("Post")
+        preferredWidth: 460
+        acceptEnabled: statusTextField.text.trim() !== ""
+        property int backgroundChoice: 0
+        onOpened: {
+            statusTextField.text = ""
+            backgroundChoice = 0
+            statusTextField.forceActiveFocus()
+        }
+        onAccepted: backend.postTextStatus(statusTextField.text, backgroundChoice)
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 120
+                radius: 10
+                // The chosen colour is shown behind the text, the way the status
+                // itself will look.
+                color: textStatusDialog.backgroundChoice === 0 ? "#128C7E"
+                    : textStatusDialog.backgroundChoice === 1 ? "#25D366"
+                    : textStatusDialog.backgroundChoice === 2 ? "#E91E63"
+                    : textStatusDialog.backgroundChoice === 3 ? "#0B84CC" : "#C0C0C0"
+                TextArea {
+                    id: statusTextField
+                    objectName: "statusTextField"
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    background: null
+                    color: "#FFFFFF"
+                    font.pixelSize: 18
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    wrapMode: TextEdit.Wrap
+                    selectByMouse: true
+                    Accessible.name: qsTr("Status text")
+                }
+                // The style's own placeholder is drawn in a colour that cannot be
+                // read on these backgrounds, so the hint is drawn here instead.
+                Label {
+                    anchors.centerIn: parent
+                    visible: statusTextField.text === ""
+                    text: qsTr("Type a status update")
+                    color: "#CCFFFFFF"
+                    font.pixelSize: 18
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Repeater {
+                    model: ["#128C7E", "#25D366", "#E91E63", "#0B84CC", "#C0C0C0"]
+                    AbstractButton {
+                        required property string modelData
+                        required property int index
+                        objectName: "statusBackgroundSwatch"
+                        implicitWidth: 32
+                        implicitHeight: 32
+                        Accessible.name: qsTr("Background %1").arg(index + 1)
+                        onClicked: textStatusDialog.backgroundChoice = index
+                        background: Rectangle {
+                            radius: 16
+                            color: modelData
+                            border.width: textStatusDialog.backgroundChoice === index ? 3 : 0
+                            border.color: Theme.text
+                        }
+                    }
+                }
+                Item { Layout.fillWidth: true }
+            }
+        }
+    }
+
+    FileDialog {
+        id: statusMediaDialog
+        objectName: "statusMediaDialog"
+        title: qsTr("Choose a photo or video for your status")
+        nameFilters: [
+            qsTr("Photos and videos (*.jpg *.jpeg *.png *.webp *.mp4 *.mov *.mkv *.webm)"),
+            qsTr("All files (*)")
+        ]
+        onAccepted: backend.postMediaStatus(selectedFile, "")
+    }
+
+    WhatsAppDialog {
+        id: shortcutsDialog
+        objectName: "keyboardShortcutsDialog"
+        title: qsTr("Keyboard shortcuts")
+        preferredWidth: 460
+        preferredHeight: 520
+        showAccept: false
+        cancelText: qsTr("Close")
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+            Repeater {
+                // Only shortcuts this client actually binds. A list copied from
+                // the PWA would promise keys that do nothing here.
+                model: [
+                    { keys: "Ctrl+F", label: qsTr("Search this conversation") },
+                    { keys: "Ctrl+Shift+F", label: qsTr("Search message history") },
+                    { keys: "Ctrl+N", label: qsTr("New chat") },
+                    { keys: "Ctrl+Shift+N", label: qsTr("New group") },
+                    { keys: "Ctrl+E", label: qsTr("Archive chat") },
+                    { keys: "Ctrl+Shift+M", label: qsTr("Mute chat") },
+                    { keys: "Ctrl+Shift+U", label: qsTr("Mark as unread") },
+                    { keys: "Esc", label: qsTr("Close the open panel") },
+                    { keys: settingsPane.enterIsSend ? "Enter" : "Ctrl+Enter", label: qsTr("Send the message") },
+                    { keys: settingsPane.enterIsSend ? "Shift+Enter" : "Enter", label: qsTr("New line in the message") }
+                ]
+                RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 38
+                    spacing: 12
+                    Label {
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        color: Theme.text
+                        font.pixelSize: 14
+                        elide: Text.ElideRight
+                    }
+                    Rectangle {
+                        Layout.preferredWidth: shortcutKeys.implicitWidth + 16
+                        Layout.preferredHeight: 24
+                        radius: 6
+                        color: Theme.surfaceMuted
+                        Label {
+                            id: shortcutKeys
+                            anchors.centerIn: parent
+                            text: modelData.keys
+                            color: Theme.textMuted
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+            }
+            Item { Layout.fillHeight: true }
+        }
+    }
+
+    WhatsAppDialog {
         id: logoutDialog
+        objectName: "logoutDialog"
         title: qsTr("Unlink this computer?")
         subtitle: qsTr("Local message history remains until you remove the application data.")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        acceptText: qsTr("Unlink")
+        destructive: true
         onAccepted: backend.logout()
     }
-    Kirigami.PromptDialog {
-        id: messageSearchDialog
-        title: qsTr("Search message history")
-        preferredWidth: Math.min(window.width - 48, 640)
-        preferredHeight: Math.min(window.height - 48, 560)
-        standardButtons: Kirigami.Dialog.Close
-        contentItem: ColumnLayout {
-            TextField {
-                id: messageSearchField
+    WhatsAppDialog {
+        id: starredMessagesDialog
+        objectName: "starredMessagesDialog"
+        title: qsTr("Starred messages")
+        preferredWidth: 640
+        preferredHeight: 560
+        showAccept: false
+        cancelText: qsTr("Close")
+        // The list is read on open rather than kept in sync: stars change
+        // rarely, and a stale list would be worse than a short wait.
+        property bool loading: false
+        onOpened: {
+            loading = true
+            backend.loadStarredMessages()
+        }
+        Connections {
+            target: backend
+            function onStarredMessagesChanged() { starredMessagesDialog.loading = false }
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Label {
+                objectName: "starredMessagesEmpty"
                 Layout.fillWidth: true
-                placeholderText: qsTr("Search message text")
-                Accessible.name: qsTr("Search message text")
-                onTextEdited: messageSearchTimer.restart()
+                Layout.margins: 12
+                // Only say the list is empty once it has actually been read;
+                // the round trip would otherwise flash the wrong answer.
+                visible: !starredMessagesDialog.loading && backend.starredMessages.length === 0
+                wrapMode: Text.Wrap
+                color: Theme.textMuted
+                text: qsTr("Nothing is starred yet. Star a message to keep it here.")
+                Accessible.name: text
             }
-            Timer { id: messageSearchTimer; interval: 250; onTriggered: backend.searchMessages(messageSearchField.text) }
             ListView {
+                objectName: "starredMessagesList"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                model: backend.searchResults
+                visible: backend.starredMessages.length > 0
+                model: backend.starredMessages
                 clip: true
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds
@@ -1976,9 +2932,33 @@ Kirigami.ApplicationWindow {
                 delegate: ItemDelegate {
                     required property var modelData
                     width: ListView.view.width
-                    text: modelData.body
-                    Accessible.name: modelData.body
-                    onClicked: { backend.openChat(modelData.chat_jid, modelData.chat_jid); messageSearchDialog.close() }
+                    height: 56
+                    // A starred message is only meaningful with the chat it
+                    // came from: the same words appear in many conversations.
+                    contentItem: ColumnLayout {
+                        spacing: 1
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.chat_title || modelData.chat_jid || ""
+                            color: Theme.text
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.body || String(modelData.media_name || modelData.kind || "")
+                            color: Theme.textMuted
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                    }
+                    Accessible.name: qsTr("%1: %2").arg(modelData.chat_title || modelData.chat_jid || "")
+                        .arg(modelData.body || "")
+                    onClicked: {
+                        backend.openChat(modelData.chat_jid, modelData.chat_title || modelData.chat_jid)
+                        starredMessagesDialog.close()
+                    }
                 }
             }
         }
@@ -2090,30 +3070,43 @@ Kirigami.ApplicationWindow {
             }
         }
     }
-    Kirigami.PromptDialog {
+    WhatsAppDialog {
+        id: removeAccountDialog
+        objectName: "removeAccountDialog"
+        property string profile: ""
+        readonly property string profileName: String(backend.profileDisplayNames[profile] || profile)
+        title: qsTr("Remove %1?").arg(profileName)
+        subtitle: qsTr("The account is unlinked from this computer and its messages, media and login are deleted from it. Your WhatsApp account itself is not affected.")
+        acceptText: qsTr("Remove")
+        destructive: true
+        onAccepted: backend.removeProfile(profile)
+    }
+
+    WhatsAppDialog {
         id: renameAccountDialog
         objectName: "renameAccountDialog"
         property string profile: ""
         property string initialName: ""
         title: qsTr("Rename account")
         subtitle: qsTr("This changes only the local label. Your WhatsApp name and account data stay unchanged.")
-        preferredWidth: Math.min(window.width - 48, 430)
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        preferredWidth: 430
+        acceptText: qsTr("Save")
+        acceptEnabled: renameAccountName.text.trim() !== ""
         onOpened: {
             renameAccountName.text = initialName
             renameAccountName.forceActiveFocus()
             renameAccountName.selectAll()
         }
         onAccepted: backend.renameProfile(profile, renameAccountName.text)
-        contentItem: TextField {
+        DialogTextField {
             id: renameAccountName
+            Layout.fillWidth: true
             placeholderText: qsTr("Account display name")
             maximumLength: 64
-            Accessible.name: qsTr("Account display name")
             onAccepted: if (text.trim()) renameAccountDialog.accept()
         }
     }
-    Kirigami.PromptDialog {
+    WhatsAppDialog {
         id: pinDialog
         objectName: "pinMessageDialog"
         property string messageId: ""
@@ -2121,7 +3114,7 @@ Kirigami.ApplicationWindow {
         property string messagePreview: ""
         title: qsTr("Choose how long to pin this message")
         subtitle: qsTr("You can unpin it at any time.")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        acceptText: qsTr("Pin")
         onAccepted: {
             let duration = 7 * 24 * 60 * 60
             if (pinOneDay.checked)
@@ -2130,48 +3123,604 @@ Kirigami.ApplicationWindow {
                 duration = 30 * 24 * 60 * 60
             backend.pinMessage(messageId, senderJid, duration)
         }
-        contentItem: ColumnLayout {
+        ColumnLayout {
+            Layout.fillWidth: true
             spacing: 8
             ButtonGroup { id: pinDurationGroup }
-            RadioButton {
+            DialogRadioButton {
                 id: pinOneDay
+                Layout.fillWidth: true
                 text: qsTr("24 hours")
                 ButtonGroup.group: pinDurationGroup
-                Accessible.name: text
             }
-            RadioButton {
+            DialogRadioButton {
                 id: pinSevenDays
+                Layout.fillWidth: true
                 text: qsTr("7 days")
                 checked: true
                 ButtonGroup.group: pinDurationGroup
-                Accessible.name: text
             }
-            RadioButton {
+            DialogRadioButton {
                 id: pinThirtyDays
+                Layout.fillWidth: true
                 text: qsTr("30 days")
                 ButtonGroup.group: pinDurationGroup
+            }
+        }
+    }
+    WhatsAppDialog {
+        id: newListDialog
+        objectName: "newListDialog"
+        acceptName: "newListCreateAction"
+        title: qsTr("New list")
+        subtitle: qsTr("Lists group chats together and sync to your other devices.")
+        acceptText: qsTr("Create")
+        acceptEnabled: newListName.text.trim() !== ""
+        onOpened: {
+            newListName.text = ""
+            newListName.forceActiveFocus()
+        }
+        onAccepted: backend.createChatLabel(newListName.text.trim())
+        DialogTextField {
+            id: newListName
+            objectName: "newListNameField"
+            Layout.fillWidth: true
+            placeholderText: qsTr("List name")
+            onAccepted: if (newListDialog.acceptEnabled) newListDialog.accept()
+        }
+    }
+    WhatsAppDialog {
+        id: disappearingDialog
+        objectName: "disappearingMessagesDialog"
+        title: qsTr("Disappearing messages")
+        subtitle: qsTr("New messages in this chat disappear after the chosen time. Messages already sent are not affected.")
+        acceptText: qsTr("Save")
+        // Whatever WhatsApp currently keeps for the chat is what the dialog
+        // opens on, so saving without touching anything changes nothing.
+        onOpened: {
+            const current = Number(backend.selectedChat.disappearing_seconds || 0)
+            disappearingOff.checked = current === 0
+            disappearingDay.checked = current === 86400
+            disappearingWeek.checked = current === 604800
+            disappearingQuarter.checked = current === 7776000
+            if (!disappearingOff.checked && !disappearingDay.checked
+                    && !disappearingWeek.checked && !disappearingQuarter.checked)
+                disappearingOff.checked = true
+        }
+        onAccepted: {
+            let seconds = 0
+            if (disappearingDay.checked)
+                seconds = 86400
+            else if (disappearingWeek.checked)
+                seconds = 604800
+            else if (disappearingQuarter.checked)
+                seconds = 7776000
+            backend.setChatDisappearing(backend.selectedChat.jid, seconds)
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            ButtonGroup { id: disappearingGroup }
+            DialogRadioButton {
+                id: disappearingQuarter
+                Layout.fillWidth: true
+                text: qsTr("90 days")
+                ButtonGroup.group: disappearingGroup
+            }
+            DialogRadioButton {
+                id: disappearingWeek
+                Layout.fillWidth: true
+                text: qsTr("7 days")
+                ButtonGroup.group: disappearingGroup
+            }
+            DialogRadioButton {
+                id: disappearingDay
+                Layout.fillWidth: true
+                text: qsTr("24 hours")
+                ButtonGroup.group: disappearingGroup
+            }
+            DialogRadioButton {
+                id: disappearingOff
+                Layout.fillWidth: true
+                checked: true
+                text: qsTr("Off")
+                ButtonGroup.group: disappearingGroup
+            }
+        }
+    }
+
+    WhatsAppDialog {
+        id: conversationClearDialog
+        objectName: "conversationClearDialog"
+        title: qsTr("Clear this chat?")
+        subtitle: qsTr("The messages are removed from this computer and from your other devices. The chat itself stays in the list.")
+        acceptText: qsTr("Clear chat")
+        destructive: true
+        onAccepted: backend.clearChat(backend.selectedChat.jid)
+    }
+
+    WhatsAppDialog {
+        id: conversationDeleteDialog
+        objectName: "conversationDeleteDialog"
+        title: qsTr("Delete this chat?")
+        subtitle: qsTr("The conversation is removed from this computer and from your other devices. This cannot be undone.")
+        acceptText: qsTr("Delete")
+        destructive: true
+        onAccepted: backend.deleteChat(backend.selectedChat.jid)
+    }
+    WhatsAppDialog {
+        id: newGroupDialog
+        objectName: "newGroupDialog"
+        acceptName: "newGroupCreateAction"
+        // The members come from the chat list rather than a free-text field:
+        // a group is made from people already known here, and a mistyped JID
+        // would silently invite a stranger.
+        property var selectedJids: []
+        title: qsTr("New group")
+        preferredWidth: 440
+        acceptText: qsTr("Create")
+        acceptEnabled: newGroupName.text.trim() !== "" && newGroupDialog.selectedJids.length > 0
+        onAccepted: backend.createGroup(newGroupName.text.trim(), newGroupDialog.selectedJids)
+        onOpened: {
+            newGroupName.text = ""
+            newGroupFilter.text = ""
+            selectedJids = []
+            newGroupName.forceActiveFocus()
+        }
+        function toggleMember(jid) {
+            const next = newGroupDialog.selectedJids.slice()
+            const at = next.indexOf(jid)
+            if (at >= 0)
+                next.splice(at, 1)
+            else
+                next.push(jid)
+            newGroupDialog.selectedJids = next
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            DialogTextField {
+                id: newGroupName
+                objectName: "newGroupNameField"
+                Layout.fillWidth: true
+                // WhatsApp rejects longer names with a 406, so the field stops
+                // before the request does.
+                maximumLength: 25
+                placeholderText: qsTr("Group name")
+            }
+            DialogTextField {
+                id: newGroupFilter
+                objectName: "newGroupFilter"
+                Layout.fillWidth: true
+                search: true
+                placeholderText: qsTr("Search chats")
+            }
+            ListView {
+                objectName: "newGroupMemberList"
+                Layout.fillWidth: true
+                Layout.preferredWidth: 360
+                Layout.preferredHeight: 300
+                clip: true
+                model: backend.chatListModel
+                delegate: ItemDelegate {
+                    required property var modelData
+                    width: ListView.view ? ListView.view.width : 0
+                    readonly property string jid: String(modelData.jid || "")
+                    readonly property bool matches: newGroupFilter.text.trim() === ""
+                        || String(modelData.title || "").toLowerCase()
+                            .indexOf(newGroupFilter.text.trim().toLowerCase()) >= 0
+                    // Only people can join a group; another group cannot.
+                    visible: matches && !modelData.is_group
+                    height: visible ? 48 : 0
+                    text: modelData.title || jid
+                    Accessible.name: text
+                    Accessible.checked: newGroupDialog.selectedJids.indexOf(jid) >= 0
+                    highlighted: newGroupDialog.selectedJids.indexOf(jid) >= 0
+                    onClicked: newGroupDialog.toggleMember(jid)
+                }
+            }
+            Label {
+                objectName: "newGroupSummaryLabel"
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                color: Theme.textMuted
+                text: newGroupDialog.selectedJids.length === 0
+                    ? qsTr("Name the group and pick who is in it.")
+                    : qsTr("%1 selected").arg(newGroupDialog.selectedJids.length)
                 Accessible.name: text
             }
         }
     }
-    Kirigami.PromptDialog {
-        id: editDialog
+    WhatsAppDialog {
+        id: forwardDialog
+        objectName: "forwardMessageDialog"
+        acceptName: "forwardSendAction"
         property string messageId: ""
-        title: qsTr("Edit message")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        onAccepted: backend.editMessage(messageId, editField.text)
-        contentItem: TextArea {
-            id: editField
-            wrapMode: TextEdit.Wrap
-            Accessible.name: qsTr("Edited message")
+        // A batch from the selection bar; the single-message path leaves it
+        // empty and uses messageId.
+        property var messageIds: []
+        // Pairs of {id, chat_jid} from the media browser, where the source chat
+        // is not the open one.
+        property var messagePairs: []
+        property string targetJid: ""
+        property string targetTitle: ""
+        title: qsTr("Forward to")
+        // Forwarding needs a destination, so the dialog offers the chat list
+        // rather than a free-text field: a mistyped JID would send a private
+        // message to the wrong person.
+        //
+        // Picking a chat only selects it. Sending is a second, explicit press,
+        // because a stray click in a filtered list would otherwise put someone
+        // else's message in front of the wrong contact with no way back.
+        preferredWidth: 440
+        acceptText: qsTr("Send")
+        acceptEnabled: forwardDialog.targetJid !== ""
+        onAccepted: {
+            if (forwardDialog.messagePairs.length > 0) {
+                for (let i = 0; i < forwardDialog.messagePairs.length; ++i) {
+                    const pair = forwardDialog.messagePairs[i]
+                    backend.forwardMessageFrom(String(pair.chat_jid), String(pair.id), forwardDialog.targetJid)
+                }
+            } else if (forwardDialog.messageIds.length > 0) {
+                for (let i = 0; i < forwardDialog.messageIds.length; ++i)
+                    backend.forwardMessage(forwardDialog.messageIds[i], forwardDialog.targetJid)
+            } else {
+                backend.forwardMessage(forwardDialog.messageId, forwardDialog.targetJid)
+            }
+        }
+        onClosed: {
+            messageIds = []
+            messagePairs = []
+        }
+        onOpened: {
+            forwardFilter.text = ""
+            targetJid = ""
+            targetTitle = ""
+            forwardFilter.forceActiveFocus()
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            DialogTextField {
+                id: forwardFilter
+                objectName: "forwardChatFilter"
+                Layout.fillWidth: true
+                search: true
+                placeholderText: qsTr("Search chats")
+            }
+            ListView {
+                objectName: "forwardChatList"
+                Layout.fillWidth: true
+                Layout.preferredWidth: 360
+                Layout.preferredHeight: 320
+                clip: true
+                model: backend.chatListModel
+                delegate: ItemDelegate {
+                    required property var modelData
+                    width: ListView.view ? ListView.view.width : 0
+                    // Filtering happens here rather than in a proxy model so the
+                    // shared chat model keeps its identity and ordering.
+                    readonly property bool matches: forwardFilter.text.trim() === ""
+                        || String(modelData.title || "").toLowerCase()
+                            .indexOf(forwardFilter.text.trim().toLowerCase()) >= 0
+                    visible: matches
+                    height: visible ? 48 : 0
+                    text: modelData.title || modelData.jid
+                    Accessible.name: text
+                    highlighted: forwardDialog.targetJid === String(modelData.jid)
+                    onClicked: {
+                        forwardDialog.targetJid = String(modelData.jid)
+                        forwardDialog.targetTitle = text
+                    }
+                }
+            }
+            Label {
+                objectName: "forwardTargetLabel"
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                color: Theme.textMuted
+                text: forwardDialog.targetJid === ""
+                    ? qsTr("Pick a chat, then press Send.")
+                    : qsTr("Send to %1").arg(forwardDialog.targetTitle)
+                Accessible.name: text
+            }
         }
     }
-    Kirigami.PromptDialog {
+    WhatsAppDialog {
+        id: editDialog
+        objectName: "editMessageDialog"
+        property string messageId: ""
+        title: qsTr("Edit message")
+        acceptText: qsTr("Save")
+        acceptEnabled: editField.text.trim() !== ""
+        onOpened: editField.forceActiveFocus()
+        onAccepted: backend.editMessage(messageId, editField.text)
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 96
+            radius: 8
+            color: Theme.surfaceMuted
+            TextArea {
+                id: editField
+                anchors.fill: parent
+                anchors.margins: 10
+                background: null
+                color: Theme.text
+                font.pixelSize: 14
+                wrapMode: TextEdit.Wrap
+                selectByMouse: true
+                Accessible.name: qsTr("Edited message")
+            }
+        }
+    }
+    WhatsAppDialog {
         id: deleteDialog
+        objectName: "deleteMessageDialog"
         property string messageId: ""
         property string senderJid: ""
         title: qsTr("Delete this message for everyone?")
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        acceptText: qsTr("Delete")
+        destructive: true
         onAccepted: backend.deleteMessage(messageId, senderJid)
+    }
+
+    // Dropping a file onto the conversation attaches it, as WhatsApp Web does.
+    // A drop never sends on its own: sending is irreversible and a stray drag
+    // over the window should not put a file in front of a contact, so the drop
+    // opens a confirmation with the file list and a caption.
+    DropArea {
+        id: fileDropArea
+        objectName: "fileDropArea"
+        anchors.fill: parent
+        enabled: Boolean(backend.selectedChat.jid)
+
+        onEntered: drag => {
+            if (!drag.hasUrls) {
+                drag.accepted = false
+                return
+            }
+            drag.accepted = true
+        }
+
+        onDropped: drop => {
+            const accepted = []
+            for (let i = 0; i < drop.urls.length; ++i) {
+                const url = String(drop.urls[i])
+                // Only real files: a dragged link or a directory has nothing to
+                // upload, and the daemon would reject it later and less clearly.
+                if (url.startsWith("file://"))
+                    accepted.push(url)
+            }
+            if (accepted.length === 0) {
+                drop.accepted = false
+                return
+            }
+            drop.acceptProposedAction()
+            dropSendDialog.files = accepted
+            dropSendDialog.open()
+        }
+    }
+
+    Rectangle {
+        objectName: "fileDropOverlay"
+        anchors.fill: parent
+        z: 100
+        visible: fileDropArea.containsDrag
+        color: Theme.surface
+        opacity: 0.92
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 10
+            TintedIcon {
+                Layout.alignment: Qt.AlignHCenter
+                width: 48
+                height: 48
+                source: Qt.resolvedUrl("icons/attach.svg")
+                tint: Theme.primary
+            }
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: qsTr("Drop to attach")
+                color: Theme.text
+                font.pixelSize: 19
+                font.weight: Font.Medium
+            }
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                text: qsTr("Sending to %1").arg(window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid))
+                color: Theme.textMuted
+                font.pixelSize: 13
+            }
+        }
+    }
+
+    // The send preview is built rather than borrowed from Kirigami: a stock
+    // dialog puts a raw path and mnemonic-underlined buttons in front of the
+    // user, which reads nothing like the rest of the app.
+    Popup {
+        id: dropSendDialog
+        objectName: "dropSendDialog"
+        property var files: []
+        readonly property string firstFile: files.length > 0 ? String(files[0]) : ""
+        readonly property string firstPath: decodeURIComponent(firstFile.replace("file://", ""))
+        readonly property bool firstIsImage: /\.(png|jpe?g|gif|webp|bmp)$/i.test(firstPath)
+
+        function fileName(url) {
+            const path = decodeURIComponent(String(url).replace("file://", ""))
+            const at = path.lastIndexOf("/")
+            return at >= 0 ? path.substring(at + 1) : path
+        }
+
+        parent: Overlay.overlay
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        focus: true
+        padding: 0
+        width: Math.min(window.width - 80, 560)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: dropCaption.text = ""
+        onClosed: files = []
+
+        Overlay.modal: Rectangle { color: Theme.dark ? "#B3000000" : "#99000000" }
+
+        background: Rectangle {
+            radius: 12
+            color: Theme.surface
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 0
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.margins: 12
+                spacing: 10
+                ThemedToolButton {
+                    objectName: "dropCancelButton"
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 36
+                    iconSource: Qt.resolvedUrl("icons/close.svg")
+                    iconSize: 18
+                    Accessible.name: qsTr("Cancel")
+                    onClicked: dropSendDialog.close()
+                    background: Rectangle { radius: 18; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: dropSendDialog.files.length === 1
+                        ? qsTr("Send to %1").arg(window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid))
+                        : qsTr("Send %1 files to %2").arg(dropSendDialog.files.length)
+                            .arg(window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid))
+                    color: Theme.text
+                    font.pixelSize: 16
+                    font.weight: Font.Medium
+                    elide: Text.ElideRight
+                }
+            }
+
+            // One file gets a preview the way WhatsApp Web shows it; several are
+            // listed by name, because a wall of thumbnails would not fit.
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                Layout.preferredHeight: dropSendDialog.files.length === 1 ? 240 : Math.min(240, 28 + dropSendDialog.files.length * 26)
+                radius: 10
+                color: Theme.surfaceMuted
+
+                Image {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    visible: dropSendDialog.files.length === 1 && dropSendDialog.firstIsImage
+                    fillMode: Image.PreserveAspectFit
+                    asynchronous: true
+                    source: visible ? dropSendDialog.firstFile : ""
+                }
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: 8
+                    visible: dropSendDialog.files.length === 1 && !dropSendDialog.firstIsImage
+                    TintedIcon {
+                        Layout.alignment: Qt.AlignHCenter
+                        width: 44
+                        height: 44
+                        source: Qt.resolvedUrl("icons/document.svg")
+                        tint: Theme.icon
+                    }
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.maximumWidth: dropSendDialog.width - 80
+                        text: dropSendDialog.fileName(dropSendDialog.firstFile)
+                        color: Theme.text
+                        font.pixelSize: 15
+                        elide: Text.ElideMiddle
+                    }
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 4
+                    visible: dropSendDialog.files.length > 1
+                    Repeater {
+                        model: dropSendDialog.files
+                        RowLayout {
+                            required property var modelData
+                            spacing: 8
+                            TintedIcon {
+                                Layout.preferredWidth: 16
+                                Layout.preferredHeight: 16
+                                source: Qt.resolvedUrl("icons/document.svg")
+                                tint: Theme.icon
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: dropSendDialog.fileName(modelData)
+                                color: Theme.text
+                                font.pixelSize: 13
+                                elide: Text.ElideMiddle
+                            }
+                        }
+                    }
+                    Item { Layout.fillHeight: true }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.margins: 16
+                spacing: 12
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 44
+                    // A caption belongs to one file. WhatsApp asks per item when
+                    // there are several, and this dialog does not, so it offers
+                    // none rather than one that would apply to the wrong thing.
+                    visible: dropSendDialog.files.length === 1
+                    radius: 22
+                    color: Theme.surfaceMuted
+                    TextField {
+                        id: dropCaption
+                        objectName: "dropCaptionField"
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        background: null
+                        color: Theme.text
+                        placeholderText: qsTr("Add a caption")
+                        Accessible.name: placeholderText
+                        onAccepted: dropSendDialog.sendNow()
+                    }
+                }
+                Item { Layout.fillWidth: dropSendDialog.files.length !== 1 }
+
+                ThemedToolButton {
+                    objectName: "dropSendAction"
+                    Layout.preferredWidth: 48
+                    Layout.preferredHeight: 48
+                    enabled: dropSendDialog.files.length > 0
+                    iconSource: Qt.resolvedUrl("icons/send.svg")
+                    iconSize: 20
+                    iconTint: Theme.primaryText
+                    Accessible.name: qsTr("Send")
+                    onClicked: dropSendDialog.sendNow()
+                    background: Rectangle { radius: 24; color: parent.enabled ? Theme.primary : Theme.textMuted }
+                    ToolTip.visible: hovered
+                    ToolTip.text: Accessible.name
+                }
+            }
+        }
+
+        function sendNow() {
+            const caption = dropSendDialog.files.length === 1 ? dropCaption.text : ""
+            for (let i = 0; i < dropSendDialog.files.length; ++i)
+                backend.sendFile(dropSendDialog.files[i], i === 0 ? caption : "")
+            dropSendDialog.close()
+        }
     }
 }

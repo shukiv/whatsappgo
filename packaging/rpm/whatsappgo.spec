@@ -12,12 +12,11 @@ BuildRequires:  ninja-build
 BuildRequires:  qt6-qtbase-devel
 BuildRequires:  qt6-qtdeclarative-devel
 BuildRequires:  qt6-qtmultimedia-devel
-BuildRequires:  kf6-kirigami-devel
 Recommends:     notification-daemon
 Suggests:       gnome-shell-extension-appindicator
 
 %description
-WhatsAppGo combines a native Qt/Kirigami interface with a lightweight Go
+WhatsAppGo combines a native Qt interface with a lightweight Go
 backend and the WhatsApp linked-device protocol. The desktop application
 starts and owns the bundled backend automatically. It does not embed a browser.
 

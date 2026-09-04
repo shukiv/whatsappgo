@@ -51,7 +51,16 @@ func (c *Client) handleEvent(raw any) {
 		// which wait on the network and can take minutes.
 		go c.backfillThumbnails()
 		go c.backfillLinkPreviews()
+		// Reconnecting is routine on a flaky network, and a sweep can run for
+		// hours. Without this guard a second sweep races the first: its page
+		// requests are suppressed as duplicates, it waits for answers that
+		// were never requested on its behalf, and it concludes conversations
+		// are exhausted, marking them finished for good.
+		if !c.beginConnectSweep() {
+			return
+		}
 		go func() {
+			defer c.endConnectSweep()
 			_ = c.wa.SendPresence(context.Background(), types.PresenceAvailable)
 			c.syncDirectory()
 			if err := c.store.RecalculateUnreadCounts(context.Background()); err == nil {
@@ -117,6 +126,16 @@ func (c *Client) handleEvent(raw any) {
 			_ = c.store.UpdateChatPinnedAt(context.Background(), evt.JID.String(), evt.Action.GetPinned(), evt.Timestamp.UnixMilli())
 			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]any{"jid": evt.JID.String(), "pinned": evt.Action.GetPinned()}})
 		}
+	case *waEvents.Star:
+		if evt.Action != nil {
+			// A star set on the phone or another linked device only reaches us
+			// as this app-state event, so without it the flag would be
+			// write-only from this client's side.
+			_ = c.store.SetMessageStarred(context.Background(), evt.ChatJID.String(), evt.MessageID, evt.Action.GetStarred())
+			c.emit(gateway.Event{Name: "message.starred", Data: map[string]any{
+				"chat_jid": evt.ChatJID.String(), "message_id": evt.MessageID, "starred": evt.Action.GetStarred(),
+			}})
+		}
 	case *waEvents.MarkChatAsRead:
 		if evt.Action != nil {
 			// A full app-state snapshot contains the last explicit
@@ -154,6 +173,12 @@ func (c *Client) handleEvent(raw any) {
 		}
 	}
 }
+
+// Live media downloads run a few at a time, each bounded, so a backlog
+// delivered on reconnect cannot start hundreds of transfers at once.
+const liveMediaTimeout = 5 * time.Minute
+
+var liveMediaSlots = make(chan struct{}, 4)
 
 const callLogBackfillMetadataKey = "call_logs_app_state_backfill_v1"
 const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v6"
@@ -235,6 +260,29 @@ func (c *Client) handleAppState(evt *waEvents.AppState) {
 			return
 		}
 		c.emit(gateway.Event{Name: "call.upsert", Data: call})
+	case appstate.IndexLabelEdit:
+		action := evt.GetLabelEditAction()
+		if action == nil || len(evt.Index) < 2 {
+			return
+		}
+		label := model.Label{ID: evt.Index[1], Name: action.GetName(), Color: int(action.GetColor())}
+		if err := c.store.UpsertLabel(context.Background(), label, action.GetDeleted()); err != nil {
+			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "save chat list: " + err.Error()}})
+			return
+		}
+		c.emit(gateway.Event{Name: "labels.updated"})
+	case appstate.IndexLabelAssociationChat:
+		action := evt.GetLabelAssociationAction()
+		// The index carries which list and which chat; the action only says
+		// whether the chat is in it.
+		if action == nil || len(evt.Index) < 3 {
+			return
+		}
+		if err := c.store.SetChatLabeled(context.Background(), evt.Index[2], evt.Index[1], action.GetLabeled()); err != nil {
+			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "save chat list membership: " + err.Error()}})
+			return
+		}
+		c.emit(gateway.Event{Name: "labels.updated"})
 	case appstate.IndexFavorites:
 		action := evt.GetFavoritesAction()
 		if action == nil {
@@ -424,7 +472,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		c.emit(gateway.Event{Name: "message.revoked", Data: map[string]string{"chat_jid": evt.Info.Chat.String(), "message_id": target}})
 		return
 	}
-	msg := messageFromEvent(evt)
+	msg := c.withSenderName(context.Background(), messageFromEvent(evt))
 	if msg.ID == "" || msg.ChatJID == "" {
 		return
 	}
@@ -446,11 +494,20 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		muted := chatInfo.MutedUntil > time.Now().UnixMilli()
 		if !muted {
 			body := notificationBody(msg, evt.Info.IsGroup)
+			// handled tells the desktop client whether this daemon already put
+			// the message on screen. On Linux the freedesktop service does it
+			// and the client must stay quiet; where no such service exists the
+			// client presents the message itself.
+			handled := "0"
+			if c.notifier != nil && c.notifier.Presents() {
+				handled = "1"
+			}
 			c.emit(gateway.Event{Name: "notification.received", Data: map[string]string{
 				"chat_jid":    msg.ChatJID,
 				"title":       notifyTitle,
 				"body":        body,
 				"avatar_path": chatInfo.AvatarPath,
+				"handled":     handled,
 			}})
 			go func(notification notify.Message) {
 				if notification.IconPath == "" {
@@ -513,12 +570,19 @@ func capitalize(s string) string {
 }
 
 func (c *Client) handleReceipt(evt *waEvents.Receipt) {
-	status := "delivered"
+	// Only the receipts that report progress may change a message's mark.
+	// "server-error" and "inactive" also arrive here, and treating them as the
+	// default put a delivered tick on messages that never got there.
+	var status string
 	switch evt.Type {
+	case types.ReceiptTypeDelivered, types.ReceiptTypeSender:
+		status = "delivered"
 	case types.ReceiptTypeRead, types.ReceiptTypeReadSelf:
 		status = "read"
 	case types.ReceiptTypePlayed, types.ReceiptTypePlayedSelf:
 		status = "played"
+	default:
+		return
 	}
 	ids := make([]string, len(evt.MessageIDs))
 	for i, id := range evt.MessageIDs {
@@ -575,7 +639,7 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			if err != nil {
 				continue
 			}
-			msg := messageFromEvent(parsed)
+			msg := c.withSenderName(context.Background(), messageFromEvent(parsed))
 			if msg.ID == "" {
 				continue
 			}
@@ -591,6 +655,14 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			}
 			if err := c.store.UpsertMessage(context.Background(), msg, title, false); err == nil {
 				c.rememberMediaPayload(msg, parsed.Message)
+				// The upsert deliberately leaves the star alone so a
+				// redelivered message keeps it. Only a set star is applied
+				// here: an absent field and a cleared one look identical on
+				// the wire, so honouring false would drop stars this device
+				// already knows about. Unstarring arrives as a Star event.
+				if historyMessage.GetMessage().GetStarred() {
+					_ = c.store.SetMessageStarred(context.Background(), msg.ChatJID, msg.ID, true)
+				}
 				total++
 			}
 		}
@@ -665,8 +737,27 @@ func (c *Client) rememberMediaPayload(msg model.Message, raw *waE2E.Message) {
 	}
 }
 
+// cacheMedia downloads the file belonging to a message that just arrived.
+//
+// A reconnection can deliver a whole backlog at once, so these downloads are
+// limited to a few at a time: without that they would all start together and
+// undo the deliberate pacing the background collector keeps. They also follow
+// the daemon's lifetime rather than running detached, and each one is bounded
+// so a stalled transfer cannot hold a slot forever.
 func (c *Client) cacheMedia(msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message) {
-	_, _ = c.downloadMedia(context.Background(), msg, media, raw)
+	base := c.baseCtx
+	if base == nil {
+		base = context.Background()
+	}
+	select {
+	case liveMediaSlots <- struct{}{}:
+		defer func() { <-liveMediaSlots }()
+	case <-base.Done():
+		return
+	}
+	ctx, cancel := context.WithTimeout(base, liveMediaTimeout)
+	defer cancel()
+	_, _ = c.downloadMedia(ctx, msg, media, raw)
 }
 
 // cachePath is where a message's file is materialised for the desktop to read.
@@ -767,6 +858,41 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 	}
 	c.emit(gateway.Event{Name: "message.upsert", Data: msg})
 	return msg, nil
+}
+
+// withSenderName fills in the name shown above an incoming group message.
+// WhatsApp Web always labels those bubbles; history sync frequently omits the
+// push name, which left every synced group message unlabelled. The address
+// book is consulted next, and the bare number is used last so the label never
+// comes out empty.
+func (c *Client) withSenderName(ctx context.Context, msg model.Message) model.Message {
+	if msg.FromMe || strings.TrimSpace(msg.SenderName) != "" {
+		return msg
+	}
+	sender, err := types.ParseJID(msg.SenderJID)
+	if err != nil || sender.User == "" {
+		return msg
+	}
+	chat, chatErr := types.ParseJID(msg.ChatJID)
+	if chatErr != nil || chat.Server != types.GroupServer {
+		return msg
+	}
+	if info, err := c.wa.Store.Contacts.GetContact(ctx, sender); err == nil {
+		for _, candidate := range []string{info.FullName, info.PushName, info.BusinessName} {
+			if name := strings.TrimSpace(candidate); name != "" {
+				msg.SenderName = name
+				return msg
+			}
+		}
+	}
+	if known, err := c.store.GetChat(ctx, sender.ToNonAD().String()); err == nil {
+		if title := strings.TrimSpace(known.Title); title != "" && title != displayJID(known.JID) {
+			msg.SenderName = title
+			return msg
+		}
+	}
+	msg.SenderName = "+" + displayJID(sender.ToNonAD().String())
+	return msg
 }
 
 func messageFromEvent(evt *waEvents.Message) model.Message {
@@ -953,6 +1079,13 @@ func applyLinkPreview(m *model.Message, v *waE2E.ExtendedTextMessage) {
 func applyContext(m *model.Message, ctx *waE2E.ContextInfo) {
 	if ctx != nil {
 		m.ReplyTo = ctx.GetStanzaID()
+		// A forward chain carries its length in the context. WhatsApp marks
+		// the message as forwarded without a score for the first hop, so the
+		// flag alone still has to count as one.
+		m.ForwardingScore = int(ctx.GetForwardingScore())
+		if ctx.GetIsForwarded() && m.ForwardingScore < 1 {
+			m.ForwardingScore = 1
+		}
 	}
 }
 func downloadableFromMessage(msg *waE2E.Message) whatsmeow.DownloadableMessage {

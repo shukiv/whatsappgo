@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Client is a small JSON-lines client for whatsappd's owner-only Unix socket.
+// Client is a small JSON-lines client for whatsappd's owner-only socket.
 // It is shared by command-line automation and tests; the desktop keeps its Qt
 // implementation so it can integrate with the Qt event loop.
 type Client struct {
@@ -22,9 +22,11 @@ type Client struct {
 	next atomic.Uint64
 }
 
-func Dial(ctx context.Context, path string) (*Client, error) {
-	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "unix", path)
+// Dial connects to a running daemon. The address is a Unix socket path
+// everywhere except Windows, where it is a named pipe; internal/config decides
+// which, and the transport files here know how to reach each one.
+func Dial(ctx context.Context, address string) (*Client, error) {
+	conn, err := dialContext(ctx, address)
 	if err != nil {
 		return nil, err
 	}

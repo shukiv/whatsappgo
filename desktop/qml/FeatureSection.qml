@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 import org.whatsappgo
 
 RowLayout {
@@ -35,7 +34,7 @@ RowLayout {
         case "calls": return qsTr("Your call history")
         case "channels": return qsTr("Stay updated with channels")
         case "communities": return qsTr("Keep communities organized")
-        case "profile": return qsTr("WhatsAppGo for Linux")
+        case "profile": return qsTr("WhatsAppGo for %1").arg(Theme.platformName)
         default: return ""
         }
     }
@@ -49,6 +48,17 @@ RowLayout {
         default: return ""
         }
     }
+
+    // A channel or community description carries its own line breaks, and rich
+    // text honours them however the label is elided, so the row collapses them
+    // before showing one line of it.
+    function oneLine(text) {
+        return String(text || "").replace(/\s+/g, " ").trim()
+    }
+
+    signal createChannelRequested()
+    signal followChannelRequested()
+    signal createCommunityRequested()
 
     function jidLabel(jid) {
         const value = String(jid || "")
@@ -68,7 +78,7 @@ RowLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 72
+                Layout.preferredHeight: 64
                 Layout.leftMargin: 18
                 Layout.rightMargin: 12
                 Label {
@@ -77,6 +87,27 @@ RowLayout {
                     color: Theme.text
                     font.pixelSize: 22
                     font.weight: Font.Bold
+                }
+                ThemedToolButton {
+                    id: sectionAddButton
+                    objectName: "featureSectionAddButton"
+                    visible: root.section === "channels" || root.section === "communities"
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    iconSource: Qt.resolvedUrl("icons/plus.svg")
+                    iconSize: 18
+                    Accessible.name: root.section === "channels"
+                        ? qsTr("New channel or follow one") : qsTr("New community")
+                    onClicked: {
+                        if (root.section === "communities") {
+                            root.createCommunityRequested()
+                            return
+                        }
+                        sectionAddMenu.opened ? sectionAddMenu.close() : sectionAddMenu.open()
+                    }
+                    background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                    ToolTip.visible: hovered
+                    ToolTip.text: Accessible.name
                 }
             }
 
@@ -167,11 +198,16 @@ RowLayout {
                                         : root.section === "calls"
                                             ? (modelData.video ? qsTr("Video") : qsTr("Voice")) + " · " + modelData.result
                                             : root.section === "channels"
-                                                ? modelData.description || qsTr("%1 followers").arg(modelData.subscriber_count || 0)
-                                                : modelData.description || qsTr("%1 participants").arg(modelData.participant_count || 0))
+                                                ? root.oneLine(modelData.description) || qsTr("%1 followers").arg(modelData.subscriber_count || 0)
+                                                : root.oneLine(modelData.description) || qsTr("%1 participants").arg(modelData.participant_count || 0))
                                 color: Theme.textMuted
                                 font.pixelSize: 14
                                 elide: Text.ElideRight
+                                // A channel description carries its own line
+                                // breaks; without a cap the row grows past its
+                                // height and runs under the actions beside it.
+                                maximumLineCount: 1
+                                wrapMode: Text.NoWrap
                                 textFormat: Text.RichText
                             }
                         }
@@ -180,6 +216,45 @@ RowLayout {
                             text: Qt.formatTime(new Date(modelData.timestamp || 0), "HH:mm")
                             color: Theme.textMuted
                             font.pixelSize: 11
+                        }
+                        // A followed channel can be muted or left from its row,
+                        // which is what the PWA offers on the channel itself.
+                        ThemedToolButton {
+                            objectName: "channelMuteButton"
+                            visible: root.section === "channels"
+                            Layout.preferredWidth: 36
+                            Layout.preferredHeight: 36
+                            iconSource: Qt.resolvedUrl("icons/mute.svg")
+                            iconSize: 17
+                            iconTint: modelData.muted ? Theme.primary : Theme.icon
+                            Accessible.name: modelData.muted ? qsTr("Unmute channel") : qsTr("Mute channel")
+                            onClicked: backend.setChannelMuted(modelData.jid, !modelData.muted)
+                            background: Rectangle { radius: 18; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
+                        }
+                        AbstractButton {
+                            id: leaveChannel
+                            objectName: "channelLeaveButton"
+                            visible: root.section === "channels"
+                            implicitWidth: leaveLabel.implicitWidth + 28
+                            implicitHeight: 32
+                            Accessible.name: qsTr("Leave %1").arg(modelData.name || "")
+                            onClicked: backend.setChannelFollowed(modelData.jid, false)
+                            background: Rectangle {
+                                radius: 16
+                                color: leaveChannel.hovered ? Theme.hoverRow : "transparent"
+                                border.width: 1
+                                border.color: Theme.border
+                            }
+                            contentItem: Label {
+                                id: leaveLabel
+                                text: qsTr("Leave")
+                                color: Theme.danger
+                                font.pixelSize: 13
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
                         }
                     }
                     onClicked: {
@@ -297,4 +372,33 @@ RowLayout {
         }
     }
 
+
+    WhatsAppMenuPopup {
+        id: sectionAddMenu
+        objectName: "featureSectionAddMenu"
+        parent: Overlay.overlay
+        width: 240
+        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
+            sectionAddButton.mapToItem(Overlay.overlay, 0, 0).x - width + 40))
+        y: sectionAddButton.mapToItem(Overlay.overlay, 0, sectionAddButton.height).y + 4
+
+        WhatsAppMenuItem {
+            objectName: "newChannelItem"
+            text: qsTr("New channel")
+            iconSource: Qt.resolvedUrl("icons/channels.svg")
+            onClicked: {
+                sectionAddMenu.close()
+                root.createChannelRequested()
+            }
+        }
+        WhatsAppMenuItem {
+            objectName: "followChannelItem"
+            text: qsTr("Follow with a link")
+            iconSource: Qt.resolvedUrl("icons/link.svg")
+            onClicked: {
+                sectionAddMenu.close()
+                root.followChannelRequested()
+            }
+        }
+    }
 }

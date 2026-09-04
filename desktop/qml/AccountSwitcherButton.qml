@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 
 ThemedToolButton {
     id: root
@@ -9,7 +10,13 @@ ThemedToolButton {
     property var displayNames: ({})
     property var unreadCounts: ({})
     property Item popupParent
+    // The menu is clamped inside whatever it is parented to. A caller that does
+    // not name a surface still gets the window's own, so the menu cannot open
+    // past the edge of the window as it did on the pairing page.
+    readonly property Item menuSurface: popupParent
+        || (Window.window ? Window.window.contentItem : null)
     signal switchRequested(string profile)
+    signal removeRequested(string profile)
     signal renameRequested(string profile)
 
     function displayName(profile) {
@@ -77,14 +84,15 @@ ThemedToolButton {
     WhatsAppMenuPopup {
         id: accountMenu
         objectName: "accountSwitcherMenu"
-        parent: root.popupParent || root
+        parent: root.menuSurface || root
         width: 244
-        x: root.popupParent
-            ? Math.max(8, Math.min(root.popupParent.width - width - 8,
-                                   root.mapToItem(root.popupParent, 0, 0).x + root.width - width))
+        x: root.menuSurface
+            ? Math.max(8, Math.min(root.menuSurface.width - width - 8,
+                                   root.mapToItem(root.menuSurface, 0, 0).x + root.width - width))
             : 0
-        y: root.popupParent
-            ? root.mapToItem(root.popupParent, 0, 0).y + root.height + 2
+        y: root.menuSurface
+            ? Math.max(8, Math.min(root.menuSurface.height - implicitHeight - 8,
+                                   root.mapToItem(root.menuSurface, 0, 0).y + root.height + 2))
             : root.height + 2
 
         Item {
@@ -114,11 +122,21 @@ ThemedToolButton {
                 actionIconSource: Qt.resolvedUrl("icons/edit.svg")
                 actionAccessibleName: qsTr("Rename %1").arg(root.displayName(modelData))
                 actionObjectName: "accountRenameButton"
+                // The first account holds the shared application data, so it has
+                // nothing to remove; an account is also never the last one left.
+                secondaryActionIconSource: backend.profileRemovable(modelData)
+                    ? Qt.resolvedUrl("icons/delete.svg") : ""
+                secondaryActionAccessibleName: qsTr("Remove %1").arg(root.displayName(modelData))
+                secondaryActionObjectName: "accountRemoveButton"
                 checkable: true
                 checked: modelData === root.currentProfile
                 onActionTriggered: {
                     accountMenu.close()
                     root.renameRequested(modelData)
+                }
+                onSecondaryActionTriggered: {
+                    accountMenu.close()
+                    root.removeRequested(modelData)
                 }
                 onClicked: {
                     accountMenu.close()

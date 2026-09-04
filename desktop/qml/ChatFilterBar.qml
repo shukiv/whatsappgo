@@ -4,11 +4,12 @@ import org.whatsappgo
 
 Item {
     id: root
+    signal newListRequested()
     property string selectedFilter: "all"
     property int unreadCount: 0
     signal filterSelected(string filter)
 
-    implicitHeight: 52
+    implicitHeight: 42
 
     function selectFilter(filter) {
         selectedFilter = filter
@@ -50,7 +51,7 @@ Item {
             }
             ChatFilterChip {
                 objectName: "filterUnreadButton"
-                text: root.unreadCount > 0 ? qsTr("Unread %1").arg(root.unreadCount) : qsTr("Unread")
+                text: qsTr("Unread")
                 selected: root.selectedFilter === "unread"
                 onClicked: root.selectFilter("unread")
             }
@@ -62,15 +63,45 @@ Item {
             }
             ChatFilterChip {
                 objectName: "filterGroupsButton"
+                visible: root.width >= 440
                 text: qsTr("Groups")
                 selected: root.selectedFilter === "groups"
                 onClicked: root.selectFilter("groups")
             }
-            ChatFilterChip {
+            Repeater {
+                model: backend.chatLabels
+                ChatFilterChip {
+                    required property var modelData
+                    readonly property string filterKey: "label:" + String(modelData.id)
+                    visible: root.width >= 440
+                    text: modelData.name || modelData.id
+                    selected: root.selectedFilter === filterKey
+                    onClicked: root.selectFilter(filterKey)
+                }
+            }
+            ThemedToolButton {
                 objectName: "filterAddButton"
-                text: "+"
-                Accessible.name: qsTr("More chat filters")
-                onClicked: filterMenu.open()
+                width: 32
+                height: 32
+                // WhatsApp Web shows a "+" that makes a new list once the chips
+                // fit, and collapses to a chevron over the hidden ones when they
+                // do not. Showing "+" while chips are hidden would describe the
+                // wrong action.
+                readonly property bool collapsed: root.width < 440
+                iconSource: Qt.resolvedUrl(collapsed ? "icons/chevron-right.svg" : "icons/plus.svg")
+                iconSize: collapsed ? 14 : 16
+                rotation: collapsed ? 90 : 0
+                Accessible.name: collapsed ? qsTr("More chat filters") : qsTr("New list")
+                onClicked: collapsed ? filterMenu.open() : root.newListRequested()
+                background: Rectangle {
+                    radius: width / 2
+                    color: parent.down ? Theme.pressedRow
+                        : parent.hovered || parent.activeFocus ? Theme.hoverRow
+                        : Theme.surface
+                    border.width: parent.activeFocus ? 2 : 1
+                    border.color: parent.activeFocus ? Theme.primary
+                        : Theme.dark ? "#3B4A54" : "#D1D7DB"
+                }
             }
         }
     }

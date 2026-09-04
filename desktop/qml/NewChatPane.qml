@@ -46,7 +46,7 @@ Rectangle {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
+            Layout.preferredHeight: 64
             color: Theme.surface
 
             RowLayout {

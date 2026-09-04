@@ -59,10 +59,11 @@ type chatListParams struct {
 	Archived bool   `json:"archived"`
 }
 type messageListParams struct {
-	ChatJID string `json:"chat_jid"`
-	Before  int64  `json:"before"`
-	Limit   int    `json:"limit"`
-	Refresh bool   `json:"refresh"`
+	ChatJID  string `json:"chat_jid"`
+	Before   int64  `json:"before"`
+	BeforeID string `json:"before_id"`
+	Limit    int    `json:"limit"`
+	Refresh  bool   `json:"refresh"`
 }
 type sharedListParams struct {
 	ChatJID  string `json:"chat_jid"`
@@ -107,6 +108,21 @@ type messagePinParams struct {
 	SenderJID       string `json:"sender_jid"`
 	DurationSeconds int64  `json:"duration_seconds"`
 }
+type messageStarParams struct {
+	ChatJID   string `json:"chat_jid"`
+	MessageID string `json:"message_id"`
+	SenderJID string `json:"sender_jid"`
+	FromMe    bool   `json:"from_me"`
+	Starred   bool   `json:"starred"`
+}
+type messageForwardParams struct {
+	ChatJID   string `json:"chat_jid"`
+	MessageID string `json:"message_id"`
+	ToChatJID string `json:"to_chat_jid"`
+}
+type starredListParams struct {
+	Limit int `json:"limit"`
+}
 type editParams struct {
 	ChatJID   string `json:"chat_jid"`
 	MessageID string `json:"message_id"`
@@ -128,6 +144,9 @@ type playedParams struct {
 type chatFlagParams struct {
 	ChatJID string `json:"chat_jid"`
 	Value   bool   `json:"value"`
+	// DurationSeconds only applies to chat.mute. Zero means "until undone",
+	// which is what the menu's third mute choice asks for.
+	DurationSeconds int64 `json:"duration_seconds"`
 }
 type typingParams struct {
 	ChatJID string `json:"chat_jid"`
@@ -139,6 +158,9 @@ type presenceParams struct {
 type searchParams struct {
 	Query string `json:"query"`
 	Limit int    `json:"limit"`
+	// Set when the search is scoped to one conversation, as the panel that
+	// searches inside an open chat does.
+	ChatJID string `json:"chat_jid"`
 }
 type phoneParams struct {
 	Phone string `json:"phone"`
@@ -186,6 +208,12 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return s.store.ListArchivedChats(ctx, p.Limit, p.Offset, p.Query)
 		}
 		return s.store.ListChats(ctx, p.Limit, p.Offset, p.Query)
+	case "chats.search":
+		var p searchParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.store.SearchChats(ctx, p.Query, p.Limit)
 	case "chats.archived_count":
 		count, err := s.store.ArchivedChatCount(ctx)
 		if err != nil {
@@ -212,6 +240,17 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		}
 		s.normalizeStickerMessages(ctx, info.Preview)
 		return info, nil
+	case "media.shared":
+		var p sharedListParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		page, err := s.store.ListAllSharedMessages(ctx, p.Category, p.Offset, p.Limit)
+		if err != nil {
+			return nil, err
+		}
+		s.normalizeStickerMessages(ctx, page.Messages)
+		return page, nil
 	case "chat.shared":
 		var p sharedListParams
 		if err := decode(raw, &p); err != nil {
@@ -225,6 +264,256 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		return page, nil
 	// "chat.read" already marks messages read for receipts; this one changes
 	// the conversation's own read state, which WhatsApp tracks separately.
+	case "labels.list":
+		labels, err := s.store.ListLabels(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"labels": labels}, nil
+	case "label.create":
+		var p struct {
+			Name  string `json:"name"`
+			Color int    `json:"color"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		label, err := s.gateway.CreateLabel(ctx, p.Name, p.Color)
+		if err != nil {
+			return nil, err
+		}
+		return label, nil
+	case "chat.label":
+		var p struct {
+			ChatJID string `json:"chat_jid"`
+			LabelID string `json:"label_id"`
+			Value   bool   `json:"value"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.LabelID == "" {
+			return nil, errors.New("chat_jid and label_id are required")
+		}
+		if err := s.gateway.SetChatLabeled(ctx, p.ChatJID, p.LabelID, p.Value); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "chat.labels":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		ids, err := s.store.ChatLabelIDs(ctx, p.ChatJID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"label_ids": ids}, nil
+	case "contact.block":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		if err := s.gateway.SetContactBlocked(ctx, p.ChatJID, p.Value); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "contacts.blocked":
+		blocked, err := s.gateway.BlockedContacts(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"blocked": blocked}, nil
+	case "group.create":
+		var p struct {
+			Name         string   `json:"name"`
+			Participants []string `json:"participants"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		chat, err := s.gateway.CreateGroup(ctx, p.Name, p.Participants)
+		if err != nil {
+			return nil, err
+		}
+		return chat, nil
+	case "chats.mark_all_read":
+		cleared, err := s.gateway.MarkAllChatsRead(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "cleared": cleared}, nil
+	case "chat.delete":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		if err := s.gateway.DeleteChat(ctx, p.ChatJID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "chat.clear":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		if err := s.gateway.ClearChat(ctx, p.ChatJID); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "chat.disappearing":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		if err := s.gateway.SetChatDisappearing(ctx, p.ChatJID, int64(p.DurationSeconds)); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "channel.create":
+		var p struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.gateway.CreateChannel(ctx, p.Name, p.Description)
+	case "channel.follow_link":
+		var p struct {
+			Link string `json:"link"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.gateway.FollowChannelLink(ctx, p.Link)
+	case "community.create":
+		var p struct {
+			Name string `json:"name"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.gateway.CreateCommunity(ctx, p.Name)
+	case "group.join_link":
+		var p struct {
+			Link string `json:"link"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.gateway.JoinGroupLink(ctx, p.Link)
+	case "channel.follow", "channel.mute":
+		var p struct {
+			JID   string `json:"jid"`
+			Value bool   `json:"value"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.JID == "" {
+			return nil, errors.New("jid is required")
+		}
+		var err error
+		if method == "channel.follow" {
+			err = s.gateway.SetChannelFollowed(ctx, p.JID, p.Value)
+		} else {
+			err = s.gateway.SetChannelMuted(ctx, p.JID, p.Value)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "status.post":
+		var p struct {
+			Text       string `json:"text"`
+			Path       string `json:"path"`
+			Caption    string `json:"caption"`
+			Background int    `json:"background"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.Path != "" {
+			return s.gateway.PostMediaStatus(ctx, p.Path, p.Caption)
+		}
+		if p.Text == "" {
+			return nil, errors.New("text or path is required")
+		}
+		return s.gateway.PostTextStatus(ctx, p.Text, p.Background)
+	case "privacy.get":
+		settings, err := s.gateway.PrivacySettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return settings, nil
+	case "privacy.set":
+		var p struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.Name == "" || p.Value == "" {
+			return nil, errors.New("name and value are required")
+		}
+		settings, err := s.gateway.SetPrivacySetting(ctx, p.Name, p.Value)
+		if err != nil {
+			return nil, err
+		}
+		return settings, nil
+	case "profile.set_about":
+		var p struct {
+			Text string `json:"text"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if err := s.gateway.SetAbout(ctx, p.Text); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
+	case "chat.export":
+		var p struct {
+			ChatJID string `json:"chat_jid"`
+			Path    string `json:"path"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.Path == "" {
+			return nil, errors.New("chat_jid and path are required")
+		}
+		written, err := s.gateway.ExportChat(ctx, p.ChatJID, p.Path)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true, "path": written}, nil
+	case "chat.favorite":
+		var p chatFlagParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		if err := s.gateway.SetChatFavorite(ctx, p.ChatJID, p.Value); err != nil {
+			return nil, err
+		}
+		return map[string]any{"ok": true}, nil
 	case "chat.pin", "chat.mute", "chat.archive", "chat.set_read":
 		var p chatFlagParams
 		if err := decode(raw, &p); err != nil {
@@ -238,7 +527,10 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		case "chat.pin":
 			err = s.gateway.SetChatPinned(ctx, p.ChatJID, p.Value)
 		case "chat.mute":
-			err = s.gateway.SetChatMuted(ctx, p.ChatJID, p.Value)
+			if p.DurationSeconds < 0 {
+				return nil, errors.New("duration_seconds cannot be negative")
+			}
+			err = s.gateway.SetChatMuted(ctx, p.ChatJID, p.Value, time.Duration(p.DurationSeconds)*time.Second)
 		case "chat.archive":
 			err = s.gateway.SetChatArchived(ctx, p.ChatJID, p.Value)
 		default:
@@ -258,7 +550,7 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		page, err := s.store.ListMessages(ctx, p.ChatJID, p.Before, p.Limit)
+		page, err := s.store.ListMessagesBefore(ctx, p.ChatJID, p.Before, p.BeforeID, p.Limit)
 		if err != nil {
 			return nil, err
 		}
@@ -269,7 +561,13 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		return s.store.SearchMessages(ctx, p.Query, p.Limit)
+		return s.store.SearchMessages(ctx, p.ChatJID, p.Query, p.Limit)
+	case "contacts.list":
+		var p searchParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.store.SearchContacts(ctx, p.Query, p.Limit)
 	case "link.preview":
 		var p linkPreviewParams
 		if err := decode(raw, &p); err != nil {
@@ -416,6 +714,47 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, errors.New("chat_jid and message_id are required")
 		}
 		return okResult(), s.gateway.UnpinMessage(ctx, p.ChatJID, p.MessageID, p.SenderJID)
+	case "message.star":
+		var p messageStarParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		// The gateway emits message.starred itself, and every gateway event is
+		// forwarded to the broker, so publishing here would deliver it twice.
+		if err := s.gateway.SetMessageStarred(ctx, p.ChatJID, p.MessageID, p.SenderJID, p.FromMe, p.Starred); err != nil {
+			return nil, err
+		}
+		return okResult(), nil
+	case "messages.starred":
+		var p starredListParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		items, err := s.store.ListStarredMessages(ctx, p.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"items": items}, nil
+	case "message.forward":
+		var p messageForwardParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" || p.ToChatJID == "" {
+			return nil, errors.New("chat_jid, message_id, and to_chat_jid are required")
+		}
+		sent, err := s.gateway.ForwardMessage(ctx, p.ChatJID, p.MessageID, p.ToChatJID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpsertMessage(ctx, sent, "", false); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "message.upsert", Data: sent})
+		return sent, nil
 	case "message.edit":
 		var p editParams
 		if err := decode(raw, &p); err != nil {

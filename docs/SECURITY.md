@@ -12,18 +12,25 @@ The current preview protects those files with Unix user permissions, not with a
 second application-level encryption layer. Anyone who can read the user's
 account or an unlocked disk can read the local cache.
 
-Opening and scrolling a conversation does not request arbitrary sites mentioned
-in messages. Most link previews are rendered from data the sender included.
-When a user types or pastes a link into the composer, WhatsAppGo requests that
-page and its preview image so the card can be reviewed before sending; the site
-can therefore observe the computer's public IP address.
+Most link previews are rendered from data the sender included, and are shown
+without contacting anyone. WhatsAppGo makes outbound requests to sites named in
+messages in three cases, all of which reveal this computer's public IP address
+to the site:
 
-There is one deliberately narrow historical exception. Once per profile,
-WhatsAppGo sends the URLs of YouTube messages whose stored cards have no image
-to YouTube's public oEmbed endpoint and downloads the returned thumbnails. This
-repairs old YouTube cards in SQLite without crawling arbitrary historical
-links. YouTube can observe the public IP address and requested video URL during
-that pass.
+1. When a user types or pastes a link into the composer, the page and its
+   preview image are requested so the card can be reviewed before sending.
+2. When an open conversation shows a card whose stored image is too small to
+   display, that page is requested once to read a larger preview image. This
+   happens for whichever links the reader is looking at, so opening a
+   conversation can tell those sites the link was viewed.
+3. Once per profile, the URLs of YouTube messages whose stored cards have no
+   image are sent to YouTube's public oEmbed endpoint to repair old cards.
+
+Requests are restricted to HTTP and HTTPS on ports 80 and 443, are refused if
+the host resolves to a loopback, private, link-local, or otherwise non-public
+address, connect to the resolved address directly so a name cannot be rebound
+between the check and the connection, cap redirects and revalidate each one,
+and bound both the response body and the time spent.
 
 The desktop-owned backend accepts commands on a Unix socket below
 `$XDG_RUNTIME_DIR/whatsappgo`. Its directory is mode `0700` and the socket is

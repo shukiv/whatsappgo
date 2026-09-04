@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +97,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_jid, timestamp DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_body ON messages(body) WHERE body <> '';
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_jid);
 CREATE TABLE IF NOT EXISTS media_payloads (
   chat_jid TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -127,6 +129,18 @@ CREATE TABLE IF NOT EXISTS call_logs (
   result TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_call_logs_time ON call_logs(timestamp DESC, id DESC);
+CREATE TABLE IF NOT EXISTS labels (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  color INTEGER NOT NULL DEFAULT 0,
+  deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS chat_labels (
+  label_id TEXT NOT NULL,
+  chat_jid TEXT NOT NULL,
+  PRIMARY KEY (label_id, chat_jid)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_labels_chat ON chat_labels(chat_jid);
 CREATE TABLE IF NOT EXISTS metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -136,6 +150,9 @@ CREATE TABLE IF NOT EXISTS metadata (
 	}
 	// Existing profiles predate chat filters and link previews. Keep migrations
 	// additive so their message history and device identity remain untouched.
+	if err := s.ensureColumn(ctx, "chats", "disappearing_seconds", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "chats", "favorite", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -162,7 +179,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 	if err := s.ensureColumn(ctx, "messages", "audio_waveform", "BLOB"); err != nil {
 		return err
 	}
-	for _, column := range []string{"delivered_at", "read_at", "played_at"} {
+	for _, column := range []string{"delivered_at", "read_at", "played_at", "starred", "forwarding_score"} {
 		if err := s.ensureColumn(ctx, "messages", column, "INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return err
 		}
@@ -180,7 +197,48 @@ CREATE TABLE IF NOT EXISTS metadata (
 			return err
 		}
 	}
-	return s.repairHistoricalUnreadReplay(ctx)
+	if err := s.repairHistoricalUnreadReplay(ctx); err != nil {
+		return err
+	}
+	return s.backfillGroupSenderNames(ctx)
+}
+
+const groupSenderNameBackfillKey = "group_sender_name_backfill_v1"
+
+// backfillGroupSenderNames labels group messages that were stored before the
+// sender name was resolved. History sync often omits the push name, which left
+// every synced group bubble without the name WhatsApp Web always shows. Names
+// already known elsewhere are copied in: first from another message by the same
+// sender, then from that sender's own conversation title. Anything still
+// unknown is left empty for the client to render as a number.
+func (s *Store) backfillGroupSenderNames(ctx context.Context) error {
+	if done, ok, err := s.Metadata(ctx, groupSenderNameBackfillKey); err != nil {
+		return err
+	} else if ok && done == "1" {
+		return nil
+	}
+	// Both passes join against a prepared set rather than running a subquery
+	// per row: the correlated form was quadratic and blew the store's open
+	// deadline on a real history.
+	statements := []string{
+		`UPDATE messages SET sender_name=names.name
+		 FROM (SELECT sender_jid AS jid, MIN(TRIM(sender_name)) AS name FROM messages
+		       WHERE from_me=0 AND TRIM(sender_name)<>'' GROUP BY sender_jid) AS names
+		 WHERE messages.sender_jid=names.jid AND names.name<>''
+		   AND messages.from_me=0 AND TRIM(messages.sender_name)=''
+		   AND messages.chat_jid LIKE '%@g.us'`,
+		`UPDATE messages SET sender_name=TRIM(c.title)
+		 FROM chats c
+		 WHERE c.jid=messages.sender_jid AND TRIM(c.title)<>''
+		   AND messages.from_me=0 AND TRIM(messages.sender_name)=''
+		   AND messages.chat_jid LIKE '%@g.us'`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	return s.SetMetadata(ctx, groupSenderNameBackfillKey, "1")
 }
 
 const unreadReplayRepairMetadataKey = "unread_full_sync_repair_v1"
@@ -408,24 +466,31 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messages
-	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at)
-	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,forwarding_score)
+	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(chat_jid,id) DO UPDATE SET
   sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,timestamp=excluded.timestamp,
-	  kind=excluded.kind,body=excluded.body,from_me=excluded.from_me,
+	  -- A deletion is a tombstone. History synchronisation redelivers the
+	  -- original message, so an unguarded update here would restore the text
+	  -- of a message the sender deleted for everyone.
+	  kind=CASE WHEN messages.revoked=1 THEN messages.kind ELSE excluded.kind END,
+	  body=CASE WHEN messages.revoked=1 THEN messages.body ELSE excluded.body END,
+	  from_me=excluded.from_me,
 	  status=CASE
 	   WHEN messages.status='played' THEN messages.status
 	   WHEN messages.status='read' AND excluded.status IN ('sent','delivered','received') THEN messages.status
 	   WHEN messages.status='delivered' AND excluded.status IN ('sent','received') THEN messages.status
 	   ELSE excluded.status END,
-  reply_to=excluded.reply_to,edited=excluded.edited,revoked=excluded.revoked,
-  media_mime=excluded.media_mime,media_name=excluded.media_name,
+  reply_to=excluded.reply_to,edited=excluded.edited,
+  revoked=CASE WHEN messages.revoked=1 THEN 1 ELSE excluded.revoked END,
+  media_mime=CASE WHEN excluded.media_mime<>'' THEN excluded.media_mime ELSE messages.media_mime END,
+  media_name=CASE WHEN excluded.media_name<>'' THEN excluded.media_name ELSE messages.media_name END,
   -- A message that arrives again, for example through a history page, does not
   -- carry the local cache paths. Keeping the stored ones avoids losing an
   -- already downloaded file or an extracted preview.
   media_path=CASE WHEN excluded.media_path<>'' THEN excluded.media_path ELSE messages.media_path END,
   media_thumbnail=CASE WHEN excluded.media_thumbnail<>'' THEN excluded.media_thumbnail ELSE messages.media_thumbnail END,
-  media_size=excluded.media_size,
+  media_size=CASE WHEN excluded.media_size>0 THEN excluded.media_size ELSE messages.media_size END,
   link_url=CASE WHEN excluded.link_url<>'' THEN excluded.link_url ELSE messages.link_url END,
   link_title=CASE WHEN excluded.link_url<>'' THEN excluded.link_title ELSE messages.link_title END,
   link_description=CASE WHEN excluded.link_url<>'' THEN excluded.link_description ELSE messages.link_description END,
@@ -436,12 +501,16 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
   contact_phone=CASE WHEN excluded.contact_phone<>'' THEN excluded.contact_phone ELSE messages.contact_phone END,
   contact_count=MAX(messages.contact_count,excluded.contact_count),
   latitude=CASE WHEN excluded.latitude<>0 THEN excluded.latitude ELSE messages.latitude END,
-	  longitude=CASE WHEN excluded.longitude<>0 THEN excluded.longitude ELSE messages.longitude END`,
+	  longitude=CASE WHEN excluded.longitude<>0 THEN excluded.longitude ELSE messages.longitude END,
+  -- A redelivered copy of a forward carries the same chain length, but a
+  -- history page for a plain message carries none. Never let a zero erase a
+  -- count that is already known.
+  forwarding_score=MAX(messages.forwarding_score,excluded.forwarding_score)`,
 		msg.ID, msg.ChatJID, msg.SenderJID, msg.SenderName, msg.Timestamp, msg.Kind, msg.Body, msg.FromMe, msg.Status,
 		msg.ReplyTo, msg.Edited, msg.Revoked, msg.MediaMIME, msg.MediaName, msg.MediaPath, msg.MediaThumbnail, msg.MediaSize,
 		msg.LinkURL, msg.LinkTitle, msg.LinkDescription, msg.LinkThumbnail, msg.MediaDuration, packWaveform(msg.AudioWaveform),
 		msg.ContactName, msg.ContactPhone, msg.ContactCount, msg.Latitude, msg.Longitude,
-		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt)
+		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt, msg.ForwardingScore)
 	if err != nil {
 		return err
 	}
@@ -449,26 +518,50 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 }
 
 func (s *Store) ListChats(ctx context.Context, limit, offset int, query string) ([]model.Chat, error) {
-	return s.listChats(ctx, limit, offset, query, false)
+	current := false
+	return s.listChats(ctx, limit, offset, query, &current)
 }
 
 // ListArchivedChats returns the conversations that were put away.
 func (s *Store) ListArchivedChats(ctx context.Context, limit, offset int, query string) ([]model.Chat, error) {
-	return s.listChats(ctx, limit, offset, query, true)
+	archived := true
+	return s.listChats(ctx, limit, offset, query, &archived)
 }
 
-func (s *Store) listChats(ctx context.Context, limit, offset int, query string, archived bool) ([]model.Chat, error) {
+// chatTitleExpr names a conversation the way the chat list does, so a search
+// result and the row it opens never disagree about who the chat is with.
+const chatTitleExpr = `CASE WHEN TRIM(c.local_title)<>'' THEN c.local_title
+	     WHEN TRIM(c.title)<>'' AND c.title<>substr(c.jid,1,instr(c.jid,'@')-1) THEN c.title
+      ELSE COALESCE((SELECT TRIM(s.sender_name) FROM messages s
+                     WHERE s.chat_jid=c.jid AND s.from_me=0 AND TRIM(s.sender_name)<>''
+                     ORDER BY s.timestamp DESC LIMIT 1), c.title) END`
+
+// SearchChats answers the sidebar's Chats group. It spans both shelves because
+// WhatsApp Web returns an archived conversation in search results and marks it
+// as archived, rather than hiding it until the reader opens that list.
+func (s *Store) SearchChats(ctx context.Context, query string, limit int) ([]model.Chat, error) {
+	if strings.TrimSpace(query) == "" {
+		return []model.Chat{}, nil
+	}
+	return s.listChats(ctx, limit, 0, query, nil)
+}
+
+// A nil archived filter spans both shelves.
+func (s *Store) listChats(ctx context.Context, limit, offset int, query string, archived *bool) ([]model.Chat, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	args := []any{archived}
-	where := `WHERE c.archived=? 
- AND c.jid NOT LIKE '%@broadcast'
+	args := []any{}
+	where := `WHERE c.jid NOT LIKE '%@broadcast'
 	AND c.jid NOT LIKE '%@newsletter'
 	AND (m.id IS NOT NULL OR c.pinned=1 OR c.favorite=1)`
+	if archived != nil {
+		where += " AND c.archived=?"
+		args = append(args, *archived)
+	}
 	if strings.TrimSpace(query) != "" {
 		where += " AND (c.local_title LIKE ? ESCAPE '\\' OR c.title LIKE ? ESCAPE '\\' OR c.jid LIKE ? ESCAPE '\\')"
 		q := "%" + escapeLike(strings.TrimSpace(query)) + "%"
@@ -480,11 +573,7 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	// The name the other side publishes is far better than a placeholder built
 	// from their identifier, so it is used when nothing better is stored.
 	rows, err := s.db.QueryContext(ctx, `SELECT c.jid,
-	CASE WHEN TRIM(c.local_title)<>'' THEN c.local_title
-	     WHEN TRIM(c.title)<>'' AND c.title<>substr(c.jid,1,instr(c.jid,'@')-1) THEN c.title
-      ELSE COALESCE((SELECT TRIM(s.sender_name) FROM messages s
-                     WHERE s.chat_jid=c.jid AND s.from_me=0 AND TRIM(s.sender_name)<>''
-                     ORDER BY s.timestamp DESC LIMIT 1), c.title) END,
+	`+chatTitleExpr+`,
  c.avatar_path,COALESCE(m.id,''),COALESCE(m.timestamp,c.last_message_at),
  CASE
 	  WHEN m.id IS NULL THEN ''
@@ -497,7 +586,9 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
   WHEN m.kind='sticker' THEN 'Sticker'
   ELSE 'Message'
  END,
- c.unread_count,c.muted_until,c.pinned,c.pinned_at,c.favorite,c.archived,c.is_group
+ COALESCE(m.kind,''),COALESCE(m.from_me,0),COALESCE(m.status,''),COALESCE(m.media_duration,0),
+ COALESCE((SELECT GROUP_CONCAT(cl.label_id) FROM chat_labels cl WHERE cl.chat_jid=c.jid),''),
+ c.unread_count,c.muted_until,c.pinned,c.pinned_at,c.favorite,c.archived,c.is_group,c.disappearing_seconds
 	FROM chats c
 	LEFT JOIN messages m ON m.chat_jid=c.jid AND m.id=(
   SELECT latest.id FROM messages latest
@@ -512,9 +603,15 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	result := make([]model.Chat, 0)
 	for rows.Next() {
 		var c model.Chat
+		var labelIDs string
 		if err := rows.Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview,
-			&c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup); err != nil {
+			&c.LastMessageKind, &c.LastMessageFromMe, &c.LastMessageStatus, &c.LastMessageDuration, &labelIDs,
+			&c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup,
+			&c.DisappearingSeconds); err != nil {
 			return nil, err
+		}
+		if labelIDs != "" {
+			c.LabelIDs = strings.Split(labelIDs, ",")
 		}
 		result = append(result, c)
 	}
@@ -525,7 +622,7 @@ func (s *Store) GetChat(ctx context.Context, jid string) (model.Chat, error) {
 	jid = s.canonicalChatJID(ctx, jid)
 	var c model.Chat
 	err := s.db.QueryRowContext(ctx, `SELECT jid,COALESCE(NULLIF(local_title,''),title),avatar_path,last_message_id,last_message_at,last_message_preview,
-	 unread_count,muted_until,pinned,pinned_at,favorite,archived,is_group FROM chats WHERE jid=?`, jid).Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview, &c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup)
+	 unread_count,muted_until,pinned,pinned_at,favorite,archived,is_group,disappearing_seconds FROM chats WHERE jid=?`, jid).Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview, &c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup, &c.DisappearingSeconds)
 	return c, err
 }
 
@@ -603,6 +700,52 @@ func (s *Store) SetMessagePinned(ctx context.Context, chatJID, messageID string,
 	return err
 }
 
+// SetMessageStarred records a star locally. Starring belongs to the account
+// rather than to this device, so the caller sends the app-state patch first and
+// only records it here once WhatsApp has accepted it.
+func (s *Store) SetMessageStarred(ctx context.Context, chatJID, messageID string, starred bool) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	if strings.TrimSpace(chatJID) == "" || strings.TrimSpace(messageID) == "" {
+		return errors.New("chat_jid and message_id are required")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET starred=? WHERE chat_jid=? AND id=?`,
+		starred, chatJID, messageID)
+	return err
+}
+
+// ListStarredMessages returns starred messages newest first, across every
+// conversation, which is what the starred-messages destination shows.
+func (s *Store) ListStarredMessages(ctx context.Context, limit int) ([]model.Message, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,
+ m.from_me,m.status,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,
+ COALESCE(c.title,'') FROM messages m LEFT JOIN chats c ON c.jid=m.chat_jid
+ WHERE m.starred=1 AND m.revoked=0 ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.Message, 0, limit)
+	for rows.Next() {
+		var m model.Message
+		var chatTitle string
+		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body,
+			&m.FromMe, &m.Status, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &chatTitle); err != nil {
+			return nil, err
+		}
+		m.Starred = true
+		// The starred list spans conversations, so each row has to say which
+		// one it came from; the sender name alone is ambiguous in groups.
+		if chatTitle != "" {
+			m.ChatTitle = chatTitle
+		}
+		items = append(items, m)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ClearMessagePin(ctx context.Context, chatJID string) error {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	_, err := s.db.ExecContext(ctx, `DELETE FROM message_pins WHERE chat_jid=?`, chatJID)
@@ -638,31 +781,52 @@ func (s *Store) ListSharedMessages(ctx context.Context, chatJID, category string
 	if strings.TrimSpace(chatJID) == "" {
 		return model.SharedMessagePage{}, errors.New("chat_jid is required")
 	}
-	chatJID = s.canonicalChatJID(ctx, chatJID)
+	return s.sharedMessages(ctx, s.canonicalChatJID(ctx, chatJID), category, offset, limit)
+}
+
+// ListAllSharedMessages pages the same content across every conversation, which
+// is what WhatsApp Web's "Media from all chats" browser shows.
+func (s *Store) ListAllSharedMessages(ctx context.Context, category string, offset, limit int) (model.SharedMessagePage, error) {
+	return s.sharedMessages(ctx, "", category, offset, limit)
+}
+
+// sharedMessages backs both browsers. An empty chatJID means every chat.
+func (s *Store) sharedMessages(ctx context.Context, chatJID, category string, offset, limit int) (model.SharedMessagePage, error) {
 	if offset < 0 {
 		offset = 0
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 60
 	}
-	condition := `(kind IN ('image','video','sticker') OR kind='document' OR link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')`
+	condition := `(m.kind IN ('image','video','sticker') OR m.kind='document' OR m.link_url<>'' OR m.body LIKE '%http://%' OR m.body LIKE '%https://%')`
 	switch category {
 	case "media":
-		condition = `kind IN ('image','video','sticker')`
+		condition = `m.kind IN ('image','video','sticker')`
 	case "documents":
-		condition = `kind='document'`
+		condition = `m.kind='document'`
 	case "links":
-		condition = `(link_url<>'' OR body LIKE '%http://%' OR body LIKE '%https://%')`
+		condition = `(m.link_url<>'' OR m.body LIKE '%http://%' OR m.body LIKE '%https://%')`
 	case "all", "":
 	default:
 		return model.SharedMessagePage{}, fmt.Errorf("unknown shared-content category %q", category)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
-	 reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
-	 link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
-	 contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at
-	 FROM messages WHERE chat_jid=? AND revoked=0 AND `+condition+`
-	 ORDER BY timestamp DESC,id DESC LIMIT ? OFFSET ?`, chatJID, limit+1, offset)
+	scope := ""
+	args := []any{}
+	if chatJID != "" {
+		scope = "m.chat_jid=? AND "
+		args = append(args, chatJID)
+	}
+	args = append(args, limit+1, offset)
+	// The chat's title comes along because the browser across every chat labels
+	// each item with the conversation it came from, which the message row alone
+	// cannot say.
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
+	 m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
+	 m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
+	 m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,m.starred,m.forwarding_score,
+	 COALESCE(c.title,'')
+	 FROM messages m LEFT JOIN chats c ON c.jid=m.chat_jid WHERE `+scope+`m.revoked=0 AND `+condition+`
+	 ORDER BY m.timestamp DESC,m.id DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return model.SharedMessagePage{}, err
 	}
@@ -675,7 +839,7 @@ func (s *Store) ListSharedMessages(ctx context.Context, chatJID, category string
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail,
 			&m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
-			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt); err != nil {
+			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore, &m.ChatTitle); err != nil {
 			return model.SharedMessagePage{}, err
 		}
 		m.AudioWaveform = unpackWaveform(waveform)
@@ -691,7 +855,21 @@ func (s *Store) ListSharedMessages(ctx context.Context, chatJID, category string
 	return model.SharedMessagePage{Messages: items, HasMore: hasMore, Offset: offset}, nil
 }
 
+// ListMessages returns the newest page of a conversation.
 func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, limit int) (model.MessagePage, error) {
+	return s.ListMessagesBefore(ctx, chatJID, before, "", limit)
+}
+
+// ListMessagesBefore returns the page immediately older than one message.
+//
+// WhatsApp timestamps have one-second resolution, so a burst of messages
+// shares a single value. Paging on the timestamp alone skipped every message
+// that shared the boundary second, and a page made entirely of them reported
+// no cursor at all, which sent the reader back to the newest message. The
+// cursor is therefore the (timestamp, id) pair the ordering already uses. An
+// empty id sorts below every real one, so it means "everything at or before
+// this instant" and preserves the plain timestamp behaviour.
+func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before int64, beforeID string, limit int) (model.MessagePage, error) {
 	if chatJID == "" {
 		return model.MessagePage{}, errors.New("chat_jid is required")
 	}
@@ -705,10 +883,10 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
  m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
  m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
- m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,
+ m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,m.starred,m.forwarding_score,
  COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0)
  FROM messages m LEFT JOIN messages q ON q.chat_jid=m.chat_jid AND q.id=m.reply_to
- WHERE m.chat_jid=? AND m.timestamp<? AND m.kind NOT IN ('unknown','') ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, limit+1)
+ WHERE m.chat_jid=? AND (m.timestamp,m.id)<(?,?) AND m.kind NOT IN ('unknown','') ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, beforeID, limit+1)
 	if err != nil {
 		return model.MessagePage{}, err
 	}
@@ -722,7 +900,7 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize,
 			&m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
-			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt,
+			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore,
 			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe); err != nil {
 			return model.MessagePage{}, err
 		}
@@ -746,13 +924,15 @@ func (s *Store) ListMessages(ctx context.Context, chatJID string, before int64, 
 		items[i], items[j] = items[j], items[i]
 	}
 	next := int64(0)
+	nextID := ""
 	if len(items) > 0 {
 		next = items[0].Timestamp
+		nextID = items[0].ID
 	}
 	if err := s.attachReactions(ctx, chatJID, items); err != nil {
 		return model.MessagePage{}, err
 	}
-	return model.MessagePage{Messages: items, HasMore: hasMore, NextBefore: next}, nil
+	return model.MessagePage{Messages: items, HasMore: hasMore, NextBefore: next, NextBeforeID: nextID}, nil
 }
 
 // ListStatusGroups returns active status stories grouped by their actual
@@ -812,10 +992,10 @@ func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (mode
 	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
  reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
- contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at
+ contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,starred,forwarding_score
  FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 		&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
-		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt)
+		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore)
 	m.AudioWaveform = unpackWaveform(waveform)
 	return m, err
 }
@@ -840,6 +1020,123 @@ func (s *Store) NewestMessage(ctx context.Context, chatJID string) (model.Messag
  FROM messages WHERE chat_jid=? AND kind NOT IN ('unknown','') ORDER BY timestamp DESC,id DESC LIMIT 1`, chatJID).Scan(
 		&m.ID, &m.ChatJID, &m.SenderJID, &m.Timestamp, &m.FromMe)
 	return m, err
+}
+
+// DeleteChat removes a conversation and everything attached to it. The tables
+// are not linked by foreign keys, so each one is cleared explicitly inside a
+// single transaction: a partial delete would leave orphaned messages that the
+// next history sync would resurrect the chat from.
+func (s *Store) DeleteChat(ctx context.Context, chatJID string) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	statements := []string{
+		`DELETE FROM reactions WHERE chat_jid=?`,
+		`DELETE FROM message_pins WHERE chat_jid=?`,
+		`DELETE FROM media_payloads WHERE chat_jid=?`,
+		`DELETE FROM messages WHERE chat_jid=?`,
+		`DELETE FROM chat_aliases WHERE canonical_jid=? OR alias_jid=?`,
+		`DELETE FROM chats WHERE jid=?`,
+	}
+	for _, statement := range statements {
+		args := []any{chatJID}
+		if strings.Count(statement, "?") == 2 {
+			args = append(args, chatJID)
+		}
+		if _, err := tx.ExecContext(ctx, statement, args...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UpsertLabel records a list WhatsApp told us about, or that this device just
+// created. A deleted label is kept as a tombstone so a later sync cannot
+// resurrect it from an older patch.
+func (s *Store) UpsertLabel(ctx context.Context, label model.Label, deleted bool) error {
+	if strings.TrimSpace(label.ID) == "" {
+		return errors.New("a label needs an id")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO labels(id,name,color,deleted) VALUES(?,?,?,?)
+	 ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color,deleted=excluded.deleted`,
+		label.ID, label.Name, label.Color, deleted)
+	if err != nil || !deleted {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM chat_labels WHERE label_id=?`, label.ID)
+	return err
+}
+
+// ListLabels returns the live lists, oldest id first so the order is stable
+// between runs.
+func (s *Store) ListLabels(ctx context.Context) ([]model.Label, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id,name,color FROM labels WHERE deleted=0 ORDER BY CAST(id AS INTEGER),id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	labels := make([]model.Label, 0)
+	for rows.Next() {
+		var l model.Label
+		if err := rows.Scan(&l.ID, &l.Name, &l.Color); err != nil {
+			return nil, err
+		}
+		labels = append(labels, l)
+	}
+	return labels, rows.Err()
+}
+
+// SetChatLabeled adds or removes one chat from one list.
+func (s *Store) SetChatLabeled(ctx context.Context, chatJID, labelID string, labeled bool) error {
+	if strings.TrimSpace(chatJID) == "" || strings.TrimSpace(labelID) == "" {
+		return errors.New("chat_jid and label_id are required")
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	if !labeled {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM chat_labels WHERE label_id=? AND chat_jid=?`, labelID, chatJID)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO chat_labels(label_id,chat_jid) VALUES(?,?) ON CONFLICT DO NOTHING`, labelID, chatJID)
+	return err
+}
+
+// ChatLabelIDs reports which lists a chat belongs to.
+func (s *Store) ChatLabelIDs(ctx context.Context, chatJID string) ([]string, error) {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	rows, err := s.db.QueryContext(ctx, `SELECT label_id FROM chat_labels WHERE chat_jid=? ORDER BY label_id`, chatJID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// NextLabelID picks an id for a list this device is creating. WhatsApp keys
+// labels by a small integer, so the next free one keeps this device's choice
+// from colliding with a list the account already has.
+func (s *Store) NextLabelID(ctx context.Context) (string, error) {
+	var highest sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(CAST(id AS INTEGER)) FROM labels`).Scan(&highest); err != nil {
+		return "", err
+	}
+	next := int64(1)
+	if highest.Valid && highest.Int64 >= 1 {
+		next = highest.Int64 + 1
+	}
+	return strconv.FormatInt(next, 10), nil
 }
 
 // ArchivedChatCount reports how many conversations are put away.
@@ -1109,6 +1406,122 @@ func (s *Store) UpdateChatArchived(ctx context.Context, jid string, archived boo
 	return err
 }
 
+// ExportChatTranscript walks a conversation oldest-first and writes it in the
+// plain-text shape WhatsApp itself exports, one line per message.
+//
+// The rows are streamed rather than collected: a long conversation is tens of
+// thousands of messages, and holding all of them to join at the end would cost
+// far more than the file itself.
+func (s *Store) ExportChatTranscript(ctx context.Context, chatJID string, write func(string) error) error {
+	if strings.TrimSpace(chatJID) == "" {
+		return errors.New("chat_jid is required")
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	rows, err := s.db.QueryContext(ctx, `SELECT timestamp,sender_name,sender_jid,from_me,kind,body,media_name,revoked
+	 FROM messages WHERE chat_jid=? ORDER BY timestamp ASC,id ASC`, chatJID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			timestamp  int64
+			senderName string
+			senderJID  string
+			fromMe     bool
+			kind       string
+			body       string
+			mediaName  string
+			revoked    bool
+		)
+		if err := rows.Scan(&timestamp, &senderName, &senderJID, &fromMe, &kind, &body, &mediaName, &revoked); err != nil {
+			return err
+		}
+		author := strings.TrimSpace(senderName)
+		if fromMe {
+			author = "You"
+		} else if author == "" {
+			author = displayJID(senderJID)
+		}
+		text := strings.TrimSpace(body)
+		switch {
+		case revoked:
+			text = "This message was deleted"
+		case text == "" && strings.TrimSpace(mediaName) != "":
+			text = mediaName + " (file attached)"
+		case text == "":
+			// A row with neither text nor a filename is still worth a line, so
+			// the transcript keeps the same shape as the conversation.
+			label := strings.TrimSpace(kind)
+			if label == "" || label == "text" {
+				label = "message"
+			}
+			text = "<" + label + " omitted>"
+		}
+		line := fmt.Sprintf("[%s] %s: %s\n",
+			time.UnixMilli(timestamp).Format("02/01/2006, 15:04:05"), author, text)
+		if err := write(line); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// SetChatDisappearing records the disappearing-message timer WhatsApp is
+// keeping for a conversation, in seconds; zero means the feature is off.
+func (s *Store) SetChatDisappearing(ctx context.Context, chatJID string, seconds int64) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,disappearing_seconds) VALUES(?,?,?)
+	 ON CONFLICT(jid) DO UPDATE SET disappearing_seconds=excluded.disappearing_seconds`,
+		chatJID, displayJID(chatJID), seconds)
+	return err
+}
+
+// FavoriteChatJIDs lists the chats currently marked favourite. WhatsApp carries
+// favourites as one whole-list app-state action rather than a flag per chat, so
+// changing one means sending all of them.
+func (s *Store) FavoriteChatJIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT jid FROM chats WHERE favorite<>0 ORDER BY last_message_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jids := make([]string, 0, 8)
+	for rows.Next() {
+		var jid string
+		if err := rows.Scan(&jid); err != nil {
+			return nil, err
+		}
+		jids = append(jids, jid)
+	}
+	return jids, rows.Err()
+}
+
+// ClearChatMessages empties a conversation without removing it, which is what
+// WhatsApp Web's "Clear chat" does: the row stays in the list, its history does
+// not.
+func (s *Store) ClearChatMessages(ctx context.Context, chatJID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`DELETE FROM reactions WHERE chat_jid=?`,
+		`DELETE FROM message_pins WHERE chat_jid=?`,
+		`DELETE FROM media_payloads WHERE message_id IN (SELECT id FROM messages WHERE chat_jid=?)`,
+		`DELETE FROM messages WHERE chat_jid=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, chatJID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chats SET last_message_id='',last_message_at=0,last_message_preview='',
+	 unread_count=0 WHERE jid=?`, chatJID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) UpdateChatFavorites(ctx context.Context, jids []string) error {
 	for i := range jids {
 		jids[i] = s.canonicalChatJID(ctx, jids[i])
@@ -1290,7 +1703,9 @@ func (s *Store) attachReactions(ctx context.Context, chatJID string, messages []
 	return rows.Err()
 }
 
-func (s *Store) SearchMessages(ctx context.Context, query string, limit int) ([]model.Message, error) {
+// SearchMessages answers both the sidebar's Messages group and the panel that
+// searches one conversation. An empty chatJID spans every chat.
+func (s *Store) SearchMessages(ctx context.Context, chatJID, query string, limit int) ([]model.Message, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return []model.Message{}, nil
@@ -1298,9 +1713,27 @@ func (s *Store) SearchMessages(ctx context.Context, query string, limit int) ([]
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
- reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size
- FROM messages WHERE body LIKE ? ESCAPE '\' ORDER BY timestamp DESC LIMIT ?`, "%"+escapeLike(query)+"%", limit)
+	// A hit is only useful with the conversation it came from: the sidebar
+	// labels every message result with the chat, as WhatsApp Web does.
+	like := "%" + escapeLike(query) + "%"
+	// A document is found by its filename, which is the only text a
+	// file-only message carries.
+	args := []any{like, like}
+	scope := ""
+	if chatJID = strings.TrimSpace(chatJID); chatJID != "" {
+		scope = " AND m.chat_jid=?"
+		args = append(args, s.canonicalChatJID(ctx, chatJID))
+	}
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
+ m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
+ COALESCE(`+chatTitleExpr+`,'')
+ FROM messages m LEFT JOIN chats c ON c.jid=m.chat_jid
+ WHERE m.revoked=0
+   AND m.chat_jid NOT LIKE '%@broadcast'
+   AND m.chat_jid NOT LIKE '%@newsletter'
+   AND (m.body LIKE ? ESCAPE '\' OR m.media_name LIKE ? ESCAPE '\')`+scope+`
+ ORDER BY m.timestamp DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,10 +1741,56 @@ func (s *Store) SearchMessages(ctx context.Context, query string, limit int) ([]
 	items := make([]model.Message, 0)
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize); err != nil {
+		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize, &m.ChatTitle); err != nil {
 			return nil, err
 		}
 		items = append(items, m)
+	}
+	return items, rows.Err()
+}
+
+// SearchContacts answers the sidebar's Contacts group: people the address book
+// knows who have no conversation in the list yet. Chats that already appear
+// under Chats are excluded, so a person is never offered twice.
+func (s *Store) SearchContacts(ctx context.Context, query string, limit int) ([]model.Contact, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []model.Contact{}, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	like := "%" + escapeLike(query) + "%"
+	rows, err := s.db.QueryContext(ctx, `SELECT c.jid, `+chatTitleExpr+`, c.avatar_path
+ FROM chats c
+ WHERE c.archived=0
+   AND c.jid NOT LIKE '%@broadcast'
+   AND c.jid NOT LIKE '%@newsletter'
+   AND c.jid NOT LIKE '%@g.us'
+   AND c.pinned=0 AND c.favorite=0
+   AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_jid=c.jid)
+   AND NOT EXISTS (SELECT 1 FROM chat_aliases a WHERE a.alias_jid=c.jid)
+   AND (c.local_title LIKE ? ESCAPE '\' OR c.title LIKE ? ESCAPE '\')
+ ORDER BY 2 COLLATE NOCASE LIMIT ?`, like, like, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.Contact, 0)
+	for rows.Next() {
+		var contact model.Contact
+		if err := rows.Scan(&contact.JID, &contact.Name, &contact.AvatarPath); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(contact.Name) == "" {
+			continue
+		}
+		// Only the legacy address carries a real number; a LID is an opaque
+		// identity that would read as a phone number if it were shown.
+		if at := strings.IndexByte(contact.JID, '@'); at > 0 && contact.JID[at+1:] == "s.whatsapp.net" {
+			contact.Phone = contact.JID[:at]
+		}
+		items = append(items, contact)
 	}
 	return items, rows.Err()
 }
@@ -1429,6 +1908,7 @@ func (s *Store) MessagesForLinkPreviewBackfill(ctx context.Context, after MediaC
 // UpdateLinkPreview replaces a message's cached card without changing its
 // body, timestamp, delivery state, or conversation ordering.
 func (s *Store) UpdateLinkPreview(ctx context.Context, chatJID, messageID, rawURL, title, description, thumbnail string) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET
  link_url=CASE WHEN ?<>'' THEN ? ELSE link_url END,
  link_title=CASE WHEN ?<>'' THEN ? ELSE link_title END,

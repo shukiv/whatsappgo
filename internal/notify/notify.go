@@ -1,3 +1,5 @@
+//go:build linux
+
 package notify
 
 import (
@@ -37,21 +39,6 @@ var notificationDaemonCandidates = []string{
 }
 
 const notificationSoundName = "message-new-instant"
-
-// Message is everything the desktop needs to present one incoming message.
-// Keeping the avatar with the text prevents notification integrations from
-// silently losing sender identity as their platform payloads evolve.
-type Message struct {
-	ChatJID  string
-	Title    string
-	Body     string
-	IconPath string
-}
-
-type Notifier interface {
-	Notify(context.Context, Message) error
-	Close() error
-}
 
 type Desktop struct {
 	mu                sync.Mutex
@@ -508,13 +495,13 @@ func ownedAndProtected(info os.FileInfo) bool {
 	return stat.Uid == 0 || stat.Uid == uint32(os.Geteuid())
 }
 
+// Presents is true for the freedesktop backend: it hands the message to the
+// session's notification service, which draws it whether or not a client of
+// this daemon is running.
+func (d *Desktop) Presents() bool { return true }
+
 func (d *Desktop) Close() error {
 	var err error
 	d.closeOnce.Do(func() { close(d.done); d.conn.RemoveSignal(d.signals); err = d.conn.Close() })
 	return err
 }
-
-type Noop struct{}
-
-func (Noop) Notify(context.Context, Message) error { return nil }
-func (Noop) Close() error                          { return nil }

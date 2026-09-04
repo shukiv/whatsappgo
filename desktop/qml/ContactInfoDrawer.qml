@@ -22,13 +22,20 @@ Rectangle {
     signal searchRequested()
     signal muteChanged(bool muted)
     signal archiveChanged(bool archived)
+    signal favoriteChanged(bool favorite)
+    signal blockChanged(bool blocked)
+    signal disappearingRequested()
+    signal starredRequested()
+    signal exportRequested()
+    signal clearRequested()
+    signal deleteRequested()
     signal openFileRequested(string path)
     signal imagePreviewRequested(var message)
     signal avatarPreviewRequested(string path, string title)
     signal downloadRequested(string messageId)
     signal openLinkRequested(string url)
 
-    width: Math.min(440, parent ? parent.width : 440)
+    width: Math.min(540, parent ? parent.width : 540)
     visible: opened
     color: Theme.surface
     border.width: 1
@@ -73,7 +80,7 @@ Rectangle {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
+            Layout.preferredHeight: 64
             color: Theme.surface
 
             RowLayout {
@@ -140,8 +147,8 @@ Rectangle {
                         id: avatarButton
                         objectName: "contactAvatarButton"
                         anchors.horizontalCenter: parent.horizontalCenter
-                        width: 144
-                        height: 144
+                        width: 120
+                        height: 120
                         padding: 0
                         flat: true
                         enabled: Boolean(root.avatarPath)
@@ -153,7 +160,7 @@ Rectangle {
                             color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : "transparent"
                         }
                         contentItem: Avatar {
-                            diameter: 144
+                            diameter: 120
                             title: root.title
                             fallbackIdentity: !root.avatarPath
                             source: root.localUrl(root.avatarPath)
@@ -290,18 +297,54 @@ Rectangle {
                 Rectangle { width: parent.width; height: 8; color: Theme.surfaceMuted }
 
                 ItemDelegate {
+                    objectName: "drawerFavoriteRow"
                     width: parent.width
-                    height: 68
-                    enabled: false
-                    Accessible.name: root.chat && root.chat.favorite ? qsTr("Favorite chat, managed by WhatsApp") : qsTr("Add to Favorites, managed by WhatsApp")
+                    height: 64
+                    Accessible.name: root.chat && root.chat.favorite ? qsTr("Remove from Favorites") : qsTr("Add to Favorites")
+                    onClicked: root.favoriteChanged(!(root.chat && root.chat.favorite))
                     contentItem: RowLayout {
                         spacing: 14
-                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/heart.svg"); tint: Theme.icon }
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/heart.svg"); tint: root.chat && root.chat.favorite ? Theme.primary : Theme.icon }
+                        Label { Layout.fillWidth: true; text: root.chat && root.chat.favorite ? qsTr("Remove from Favorites") : qsTr("Add to Favorites"); color: Theme.text; font.pixelSize: 15 }
+                    }
+                }
+
+                ItemDelegate {
+                    objectName: "drawerStarredRow"
+                    width: parent.width
+                    height: 64
+                    Accessible.name: qsTr("Starred messages")
+                    onClicked: root.starredRequested()
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/star.svg"); tint: Theme.icon }
+                        Label { Layout.fillWidth: true; text: qsTr("Starred messages"); color: Theme.text; font.pixelSize: 15 }
+                    }
+                }
+
+                ItemDelegate {
+                    objectName: "drawerDisappearingRow"
+                    width: parent.width
+                    height: 68
+                    Accessible.name: qsTr("Disappearing messages")
+                    onClicked: root.disappearingRequested()
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/mute.svg"); tint: Theme.icon }
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 1
-                            Label { text: root.chat && root.chat.favorite ? qsTr("Favorite") : qsTr("Add to Favorites"); color: Theme.text; font.pixelSize: 15 }
-                            Label { text: qsTr("Managed by WhatsApp"); color: Theme.textMuted; font.pixelSize: 12 }
+                            Label { text: qsTr("Disappearing messages"); color: Theme.text; font.pixelSize: 15 }
+                            Label {
+                                readonly property int seconds: Number(root.chat && root.chat.disappearing_seconds || 0)
+                                text: seconds === 0 ? qsTr("Off")
+                                    : seconds === 86400 ? qsTr("24 hours")
+                                    : seconds === 604800 ? qsTr("7 days")
+                                    : seconds === 7776000 ? qsTr("90 days")
+                                    : qsTr("On")
+                                color: Theme.textMuted
+                                font.pixelSize: 12
+                            }
                         }
                     }
                 }
@@ -355,13 +398,76 @@ Rectangle {
                     }
                 }
 
+                ItemDelegate {
+                    objectName: "drawerExportRow"
+                    width: parent.width
+                    height: 64
+                    Accessible.name: qsTr("Export chat")
+                    onClicked: root.exportRequested()
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/document.svg"); tint: Theme.icon }
+                        Label { Layout.fillWidth: true; text: qsTr("Export chat"); color: Theme.text; font.pixelSize: 15 }
+                    }
+                }
+
+                Rectangle { width: parent.width; height: 8; color: Theme.surfaceMuted }
+
+                ItemDelegate {
+                    id: blockRow
+                    objectName: "drawerBlockRow"
+                    width: parent.width
+                    // Groups have nobody to block, so the row stays out of a
+                    // group's drawer rather than failing when pressed. The
+                    // decision is its own property: `visible` reports effective
+                    // visibility, which says nothing while an ancestor is hidden.
+                    readonly property bool blockable: !(root.chat && root.chat.is_group)
+                    visible: blockable
+                    height: blockable ? 64 : 0
+                    readonly property bool blocked: backend.blockedContacts.some(
+                        jid => String(jid).split("@")[0] === String(root.chat && root.chat.jid || "").split("@")[0])
+                    Accessible.name: blocked ? qsTr("Unblock") : qsTr("Block")
+                    onClicked: root.blockChanged(!blocked)
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/block.svg"); tint: Theme.danger }
+                        Label { Layout.fillWidth: true; text: blockRow.blocked ? qsTr("Unblock") : qsTr("Block"); color: Theme.danger; font.pixelSize: 15 }
+                    }
+                }
+
+                ItemDelegate {
+                    objectName: "drawerClearRow"
+                    width: parent.width
+                    height: 64
+                    Accessible.name: qsTr("Clear chat")
+                    onClicked: root.clearRequested()
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/block.svg"); tint: Theme.danger }
+                        Label { Layout.fillWidth: true; text: qsTr("Clear chat"); color: Theme.danger; font.pixelSize: 15 }
+                    }
+                }
+
+                ItemDelegate {
+                    objectName: "drawerDeleteRow"
+                    width: parent.width
+                    height: 64
+                    Accessible.name: qsTr("Delete chat")
+                    onClicked: root.deleteRequested()
+                    contentItem: RowLayout {
+                        spacing: 14
+                        TintedIcon { Layout.preferredWidth: 24; Layout.preferredHeight: 24; Layout.leftMargin: 16; source: Qt.resolvedUrl("icons/delete.svg"); tint: Theme.danger }
+                        Label { Layout.fillWidth: true; text: qsTr("Delete chat"); color: Theme.danger; font.pixelSize: 15 }
+                    }
+                }
+
                 Label {
                     width: parent.width - 32
                     leftPadding: 16
                     rightPadding: 16
                     topPadding: 16
                     bottomPadding: 24
-                    text: qsTr("Blocking, reporting, calls, and disappearing-message settings are not exposed by the linked-device API, so WhatsAppGo does not show controls that would fail silently.")
+                    text: qsTr("Reporting and calls are not carried by the linked-device protocol, so WhatsAppGo does not show controls that would fail silently.")
                     color: Theme.textMuted
                     font.pixelSize: 12
                     wrapMode: Text.Wrap

@@ -6,10 +6,10 @@ Button {
     id: root
     property bool selected: false
 
-    implicitHeight: 40
-    implicitWidth: Math.max(40, contentItem.implicitWidth + 20)
-    leftPadding: 10
-    rightPadding: 10
+    implicitHeight: 32
+    implicitWidth: Math.max(32, contentItem.implicitWidth + 24)
+    leftPadding: 12
+    rightPadding: 12
     hoverEnabled: true
     focusPolicy: Qt.TabFocus
     checkable: true
@@ -20,9 +20,12 @@ Button {
 
     contentItem: Label {
         text: root.text
-        color: root.selected ? (Theme.dark ? Theme.text : "#006B55") : Theme.textMuted
+        color: root.selected ? Theme.filterChipSelectedText : Theme.textMuted
+        // Measured from the live client: 13.33 px at regular weight in both
+        // states. The chip does not gain weight when it is selected; the filled
+        // pill is what marks the selection.
         font.pixelSize: 13
-        font.weight: root.selected ? Font.DemiBold : Font.Medium
+        font.weight: Font.Normal
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideNone
@@ -31,13 +34,13 @@ Button {
     background: Rectangle {
         radius: height / 2
         color: root.selected
-            ? (Theme.dark ? Theme.primaryContainer : "#E7FCE3")
+            ? Theme.primaryContainer
             : root.down ? Theme.pressedRow
             : root.hovered || root.activeFocus ? Theme.hoverRow
             : Theme.surface
+        // The live client outlines both states with the same hairline; only the
+        // fill distinguishes a selected filter.
         border.width: root.activeFocus ? 2 : 1
-        border.color: root.activeFocus ? Theme.primary
-            : root.selected ? (Theme.dark ? Theme.primary : "#A9DCA4")
-            : Theme.dark ? "#3B4A54" : "#D1D7DB"
+        border.color: root.activeFocus ? Theme.primary : Theme.filterChipBorder
     }
 }

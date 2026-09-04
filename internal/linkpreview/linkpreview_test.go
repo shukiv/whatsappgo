@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -130,5 +131,63 @@ func TestResolveYouTubeFallsBackWhenMaxResolutionIsUnavailable(t *testing.T) {
 	}
 	if len(preview.Thumbnail) == 0 {
 		t.Fatal("oEmbed fallback thumbnail was lost")
+	}
+}
+
+func TestIsPublicIPRejectsAddressesThatMustNotBeReached(t *testing.T) {
+	blocked := []string{
+		"127.0.0.1", "::1", // loopback
+		"10.1.2.3", "172.16.0.1", "192.168.1.1", "fd00::1", // private
+		"169.254.169.254", "fe80::1", // link-local, incl. cloud metadata
+		"::ffff:127.0.0.1", "::ffff:169.254.169.254", // the same, mapped into IPv6
+		"0.0.0.0", "0.1.2.3", // this network
+		"100.64.0.1", "100.127.255.255", // carrier-grade NAT and overlay networks
+		"192.0.0.1", "198.18.0.1", "240.0.0.1", "255.255.255.255", // reserved
+		"224.0.0.1", // multicast
+	}
+	for _, address := range blocked {
+		if isPublicIP(net.ParseIP(address)) {
+			t.Errorf("%s was treated as a public address", address)
+		}
+	}
+	for _, address := range []string{"1.1.1.1", "8.8.8.8", "93.184.216.34", "2606:4700::1111"} {
+		if !isPublicIP(net.ParseIP(address)) {
+			t.Errorf("%s should be reachable", address)
+		}
+	}
+	if isPublicIP(nil) {
+		t.Error("a missing address was treated as public")
+	}
+}
+
+func TestPublicClientKeepsAProxyOutAndBoundsHTTP2(t *testing.T) {
+	client := publicClient()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("the preview client does not use an http.Transport")
+	}
+	// A proxy would connect onward itself, so the private-address check would
+	// only ever see the proxy's address.
+	if transport.Proxy != nil {
+		t.Error("the preview client would honour a proxy from the environment")
+	}
+	// HTTP/2 is negotiated, because hosts behind some networks refuse an
+	// http/1.1-only offer, but its framing layer is bounded: a hostile server
+	// can otherwise hold a client goroutine on control frames while no request
+	// is outstanding, which the request timeout does not cover.
+	if transport.HTTP2 == nil {
+		t.Fatal("the preview client leaves HTTP/2 framing unbounded")
+	}
+	if transport.HTTP2.SendPingTimeout <= 0 || transport.HTTP2.PingTimeout <= 0 {
+		t.Error("an HTTP/2 connection that stops answering is never closed")
+	}
+	if transport.HTTP2.WriteByteTimeout <= 0 {
+		t.Error("an HTTP/2 connection that stops reading is never closed")
+	}
+	if transport.HTTP2.MaxReadFrameSize <= 0 {
+		t.Error("a single HTTP/2 frame can make the client buffer without limit")
+	}
+	if client.Timeout <= 0 {
+		t.Error("the preview client has no overall timeout")
 	}
 }

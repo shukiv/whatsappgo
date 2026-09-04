@@ -29,31 +29,36 @@ func ResolveProfile(profile string) (Paths, error) {
 	if !validProfile.MatchString(profile) {
 		return Paths{}, errors.New("profile must contain 1-32 lowercase letters, numbers, underscores, or hyphens")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Paths{}, err
-	}
+	// The XDG variables stay honoured on every platform. They are how the
+	// tests and the sandboxed runs redirect a whole profile, and honouring
+	// them costs nothing where the platform has its own convention.
 	dataBase := os.Getenv("XDG_DATA_HOME")
 	if dataBase == "" {
-		dataBase = filepath.Join(home, ".local", "share")
+		base, err := defaultDataBase()
+		if err != nil {
+			return Paths{}, err
+		}
+		dataBase = base
 	}
 	cacheBase := os.Getenv("XDG_CACHE_HOME")
 	if cacheBase == "" {
-		cacheBase = filepath.Join(home, ".cache")
+		base, err := defaultCacheBase()
+		if err != nil {
+			return Paths{}, err
+		}
+		cacheBase = base
 	}
-	runtimeBase := os.Getenv("XDG_RUNTIME_DIR")
-	if runtimeBase == "" {
-		return Paths{}, errors.New("XDG_RUNTIME_DIR is not set; a per-user runtime directory is required")
+	runtimeBase, err := runtimeBaseDir()
+	if err != nil {
+		return Paths{}, err
 	}
 
 	dataDir := filepath.Join(dataBase, "whatsappgo")
 	cacheDir := filepath.Join(cacheBase, "whatsappgo")
 	runtimeDir := filepath.Join(runtimeBase, "whatsappgo")
-	socketName := "whatsappd.sock"
 	if profile != "default" {
 		dataDir = filepath.Join(dataDir, "profiles", profile)
 		cacheDir = filepath.Join(cacheDir, "profiles", profile)
-		socketName = "whatsappd-" + profile + ".sock"
 	}
 	return Paths{
 		Profile:    profile,
@@ -64,7 +69,7 @@ func ResolveProfile(profile string) (Paths, error) {
 		MessageDB:  filepath.Join(dataDir, "messages.db"),
 		MediaDB:    filepath.Join(dataDir, "media.db"),
 		MediaDir:   filepath.Join(cacheDir, "media"),
-		Socket:     filepath.Join(runtimeDir, socketName),
+		Socket:     SocketAddress(runtimeDir, profile),
 	}, nil
 }
 

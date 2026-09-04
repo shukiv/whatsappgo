@@ -14,6 +14,10 @@ class ProfileMonitor final : public QObject
 public:
     explicit ProfileMonitor(const QString &profile, const QString &socketPath, QObject *parent = nullptr);
     int count() const { return m_count; }
+    // Stops every source of work before the monitor is destroyed. deleteLater
+    // keeps the object alive until the event loop returns, and the socket and
+    // timers below keep reporting on an account that no longer exists.
+    void shutdown();
 
 signals:
     void countChanged(const QString &profile, int count);

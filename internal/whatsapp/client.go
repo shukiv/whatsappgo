@@ -46,15 +46,18 @@ type Client struct {
 	notifier notify.Notifier
 	mediaDir string
 
-	mu                 sync.RWMutex
-	status             model.ConnectionStatus
-	nextSub            uint64
-	subs               map[uint64]func(gateway.Event)
-	pairing            bool
-	closed             bool
-	historyRequests    map[string]time.Time
-	resolveLinkPreview func(context.Context, string) (model.LinkPreview, error)
-	mediaRetries       map[types.MessageID]*mediaRetryWaiter
+	mu              sync.RWMutex
+	status          model.ConnectionStatus
+	nextSub         uint64
+	subs            map[uint64]func(gateway.Event)
+	pairing         bool
+	closed          bool
+	historyRequests map[string]time.Time
+	// Set while the post-connection sweep is running, so a reconnect does not
+	// start a second one beside it.
+	connectSweepRunning bool
+	resolveLinkPreview  func(context.Context, string) (model.LinkPreview, error)
+	mediaRetries        map[types.MessageID]*mediaRetryWaiter
 
 	// These hooks keep the expired-media recovery path deterministic in tests.
 	// Production clients leave them nil and use the whatsmeow methods below.
@@ -285,6 +288,14 @@ func (c *Client) SendText(ctx context.Context, req gateway.TextRequest) (model.M
 	return c.withCachedOutgoingLinkPreview(result, req.Preview), nil
 }
 
+// historyRequestWindow is how long one page request suppresses an identical
+// one. It also bounds how long the dedup record is worth keeping.
+const historyRequestWindow = 30 * time.Second
+
+// ErrHistoryRequestInFlight reports that an identical page was already
+// requested and its answer has not arrived yet.
+var ErrHistoryRequestInFlight = errors.New("a history page for this anchor was already requested")
+
 func (c *Client) RequestHistory(ctx context.Context, chatJID string, count int) error {
 	oldest, err := c.store.OldestMessage(ctx, chatJID)
 	if err != nil {
@@ -331,9 +342,19 @@ func (c *Client) requestHistoryFrom(ctx context.Context, anchor model.Message, c
 	}
 	boundary := purpose + ":" + chat.String() + ":" + anchor.ID
 	c.mu.Lock()
-	if requestedAt, ok := c.historyRequests[boundary]; ok && time.Since(requestedAt) < 30*time.Second {
+	if requestedAt, ok := c.historyRequests[boundary]; ok && time.Since(requestedAt) < historyRequestWindow {
 		c.mu.Unlock()
-		return nil
+		// Someone else asked for this exact page moments ago. Saying so lets
+		// the caller wait for that answer instead of mistaking the silence
+		// for "this conversation has no more history".
+		return ErrHistoryRequestInFlight
+	}
+	// Entries older than the window can never suppress anything again, so they
+	// are dropped here rather than accumulating for the life of the daemon.
+	for key, requestedAt := range c.historyRequests {
+		if time.Since(requestedAt) >= historyRequestWindow {
+			delete(c.historyRequests, key)
+		}
 	}
 	c.historyRequests[boundary] = time.Now()
 	c.mu.Unlock()
@@ -417,6 +438,38 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 	return msg, err
 }
 
+// SetChannelFollowed follows or leaves a channel. WhatsApp calls these
+// newsletters on the wire.
+func (c *Client) SetChannelFollowed(ctx context.Context, channelJID string, followed bool) error {
+	target, err := types.ParseJID(channelJID)
+	if err != nil {
+		return err
+	}
+	if followed {
+		err = c.wa.FollowNewsletter(ctx, target)
+	} else {
+		err = c.wa.UnfollowNewsletter(ctx, target)
+	}
+	if err != nil {
+		return err
+	}
+	c.emit(gateway.Event{Name: "channel.updated", Data: map[string]any{"jid": channelJID, "followed": followed}})
+	return nil
+}
+
+// SetChannelMuted mutes or unmutes a channel's updates.
+func (c *Client) SetChannelMuted(ctx context.Context, channelJID string, muted bool) error {
+	target, err := types.ParseJID(channelJID)
+	if err != nil {
+		return err
+	}
+	if err := c.wa.NewsletterToggleMute(ctx, target, muted); err != nil {
+		return err
+	}
+	c.emit(gateway.Event{Name: "channel.updated", Data: map[string]any{"jid": channelJID, "muted": muted}})
+	return nil
+}
+
 func (c *Client) ListChannels(ctx context.Context) ([]model.Channel, error) {
 	items, err := c.wa.GetSubscribedNewsletters(ctx)
 	if err != nil {
@@ -495,6 +548,13 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 		return model.Message{}, err
 	}
 	contextInfo := c.replyContext(ctx, req.ChatJID, req.ReplyTo)
+	if req.ForwardingScore > 0 {
+		if contextInfo == nil {
+			contextInfo = &waE2E.ContextInfo{}
+		}
+		contextInfo.IsForwarded = proto.Bool(true)
+		contextInfo.ForwardingScore = proto.Uint32(uint32(req.ForwardingScore))
+	}
 	payload := buildMediaPayload(kind, mimeType, filepath.Base(req.Path), req.Caption, upload, contextInfo, req.Voice)
 	resp, err := c.wa.SendMessage(ctx, chat, payload)
 	if err != nil {
@@ -510,7 +570,7 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store sent attachment: " + err.Error()}})
 		}
 	}
-	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size()}, nil
+	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), ForwardingScore: req.ForwardingScore}, nil
 }
 
 func (c *Client) cacheOutgoing(sourcePath, chatJID, messageID, kind string) (string, error) {
@@ -1028,4 +1088,23 @@ func buildMediaPayload(kind, mimeType, name, caption string, u whatsmeow.UploadR
 	default:
 		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{URL: &u.URL, DirectPath: &u.DirectPath, MediaKey: u.MediaKey, FileEncSHA256: u.FileEncSHA256, FileSHA256: u.FileSHA256, FileLength: &u.FileLength, Mimetype: &mimeType, FileName: &name, Caption: &caption, ContextInfo: ctx}}
 	}
+}
+
+// beginConnectSweep claims the right to run the post-connection sweep. It
+// reports false when one is already running, so a reconnect does not start a
+// second sweep alongside it.
+func (c *Client) beginConnectSweep() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.connectSweepRunning {
+		return false
+	}
+	c.connectSweepRunning = true
+	return true
+}
+
+func (c *Client) endConnectSweep() {
+	c.mu.Lock()
+	c.connectSweepRunning = false
+	c.mu.Unlock()
 }

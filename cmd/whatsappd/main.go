@@ -86,7 +86,10 @@ func run(socketOverride, profile string, desktopNotifications bool) error {
 	var notifier notify.Notifier = notify.Noop{}
 	if desktopNotifications {
 		if desktop, err := notify.NewDesktop(paths.Profile); err != nil {
-			log.Printf("desktop notifications disabled: %v", err)
+			// No service this daemon can post to. The notification event still
+			// goes out, and the desktop client presents it with the platform's
+			// own API. See notify.Notifier.Presents.
+			log.Printf("presenting notifications through the desktop client: %v", err)
 		} else {
 			notifier = desktop
 			defer desktop.Close()

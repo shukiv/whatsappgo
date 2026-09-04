@@ -76,6 +76,9 @@ whatsappctl call chat.set_read '{"chat_jid":"15551234567@s.whatsapp.net","value"
 whatsappctl call message.react '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":"","emoji":"👍"}'
 whatsappctl call message.pin '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":"","duration_seconds":604800}'
 whatsappctl call message.unpin '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":""}'
+whatsappctl call message.star '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","sender_jid":"","from_me":true,"starred":true}'
+whatsappctl --pretty call messages.starred '{"limit":50}'
+whatsappctl call message.forward '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","to_chat_jid":"15559876543@s.whatsapp.net"}'
 whatsappctl call message.edit '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","text":"Corrected"}'
 whatsappctl call message.delete @delete.json
 printf '{"query":"contract","limit":25}' | whatsappctl call messages.search -
@@ -155,6 +158,9 @@ All parameter objects reject unknown fields.
 | `message.react` | `chat_jid`, `message_id`, `sender_jid`, `emoji` | Add reaction; empty emoji removes it |
 | `message.pin` | `chat_jid`, `message_id`, `sender_jid`, `duration_seconds` | Pin for 86400, 604800, or 2592000 seconds |
 | `message.unpin` | `chat_jid`, `message_id`, `sender_jid` | Remove the chat's pinned message |
+| `message.star` | `chat_jid`, `message_id`, `sender_jid`, `from_me`, `starred` | Star or unstar for the whole account |
+| `messages.starred` | `limit` | Starred messages across every chat, newest first |
+| `message.forward` | `chat_jid`, `message_id`, `to_chat_jid` | Re-send into another chat, marked as forwarded |
 | `message.edit` | `chat_jid`, `message_id`, `text` | Edit eligible sent text |
 | `message.delete` | `chat_jid`, `message_id`, `sender_jid` | Delete an eligible message for everyone |
 | `contact.resolve` | `phone` | Validate number and return/create its chat |

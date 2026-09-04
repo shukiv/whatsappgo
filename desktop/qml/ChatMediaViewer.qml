@@ -149,7 +149,7 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        height: 72
+        height: 64
         color: Theme.surface
 
         RowLayout {

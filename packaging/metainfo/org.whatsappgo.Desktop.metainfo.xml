@@ -7,7 +7,7 @@
   <project_license>GPL-3.0-or-later</project_license>
   <developer id="org.whatsappgo"><name>WhatsAppGo Contributors</name></developer>
   <description>
-    <p>WhatsAppGo is an unofficial Linux-first WhatsApp client. A native Qt and Kirigami interface automatically manages its bundled Go backend, which uses the WhatsApp multi-device protocol.</p>
+    <p>WhatsAppGo is an unofficial Linux-first WhatsApp client. A native Qt interface automatically manages its bundled Go backend, which uses the WhatsApp multi-device protocol.</p>
     <p>It supports linked-device login, text and media messages, local history, replies, reactions, receipts, typing indicators, search, and desktop notifications. Voice and video calls are not supported.</p>
   </description>
   <launchable type="desktop-id">org.whatsappgo.Desktop.desktop</launchable>

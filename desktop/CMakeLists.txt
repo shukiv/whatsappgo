@@ -7,7 +7,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 Network Multimedia)
-find_package(KF6Kirigami 6.0 REQUIRED)
 
 qt_standard_project_setup(REQUIRES 6.5)
 qt_policy(SET QTP0004 NEW)
@@ -30,8 +29,52 @@ qt_add_resources(whatsappgo "desktop-assets"
     FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/org.whatsappgo.Desktop.svg"
 )
 
+# WhatsApp Web renders in Roboto, which it ships as a webfont so it looks the
+# same on a machine that has never installed it. Qt can only use families the
+# font database knows, so the interface carries its own copy instead of relying
+# on a distribution package. Apache-2.0; see fonts/Roboto-COPYRIGHT.
+#
+# BIG_RESOURCES is required, not an optimisation. Without it `rcc` emits the
+# fonts as a C++ byte array — roughly 1.5 million lines for the CJK collection
+# alone — and the compiler needs gigabytes of scratch space to assemble it.
+qt_add_resources(whatsappgo "bundled-fonts"
+    BIG_RESOURCES
+    PREFIX "/fonts"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+    FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansArabic-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansArmenian-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansBengali-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansCJK-Regular.ttc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansCherokee-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansDevanagari-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansEthiopic-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansGeorgian-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansGujarati-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansGurmukhi-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansHebrew-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansKannada-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansKhmer-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansLao-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansMalayalam-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansMongolian-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansMyanmar-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansOriya-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansSinhala-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansSyriac-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansTamil-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansTelugu-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansThaana-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansThai-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/Roboto-Bold.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/Roboto-Medium.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fonts/Roboto-Regular.ttf"
+)
+
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/Playback.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/SearchHighlight.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/RowTime.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(whatsappgo
     URI org.whatsappgo
@@ -41,10 +84,15 @@ qt_add_qml_module(whatsappgo
         qml/Main.qml
         qml/Theme.qml
         qml/Playback.qml
+        qml/SearchHighlight.qml
+        qml/RowTime.qml
+        qml/SearchResultsPane.qml
+        qml/ChatSearchPanel.qml
         qml/PairingPage.qml
         qml/ChatListDelegate.qml
         qml/ChatFilterBar.qml
         qml/ChatFilterChip.qml
+        qml/MediaLibraryPane.qml
         qml/AccountSwitcherButton.qml
         qml/StatusAvatar.qml
         qml/StatusPage.qml
@@ -61,6 +109,13 @@ qt_add_qml_module(whatsappgo
         qml/ReadReceipt.qml
         qml/EmojiPicker.qml
         qml/AttachmentMenu.qml
+        qml/SettingsPane.qml
+        qml/SettingsRow.qml
+        qml/SettingsToggleRow.qml
+        qml/SettingsChoiceRow.qml
+        qml/DialogRadioButton.qml
+        qml/DialogTextField.qml
+        qml/WhatsAppDialog.qml
         qml/WhatsAppMenuPopup.qml
         qml/WhatsAppMenuItem.qml
         qml/VoiceRecorder.qml
@@ -115,7 +170,6 @@ qt_add_qml_module(whatsappgo
 
 target_link_libraries(whatsappgo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia
-    KF6::Kirigami
 )
 
 target_compile_definitions(whatsappgo PRIVATE
@@ -123,16 +177,56 @@ target_compile_definitions(whatsappgo PRIVATE
     QT_NO_CAST_TO_ASCII
 )
 
-install(TARGETS whatsappgo RUNTIME DESTINATION bin)
-install(PROGRAMS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd
-    ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappctl
-    DESTINATION bin
+# The daemon carries the platform's executable suffix; the desktop client looks
+# for it next to itself under exactly this name.
+if(WIN32)
+    set(WHATSAPPGO_DAEMON_SUFFIX ".exe")
+else()
+    set(WHATSAPPGO_DAEMON_SUFFIX "")
+endif()
+
+set_target_properties(whatsappgo PROPERTIES
+    # No console window behind the application on Windows.
+    WIN32_EXECUTABLE ON
+    # A .app bundle on macOS: the platform will not show a notification, a dock
+    # icon or a menu bar for a bare executable.
+    MACOSX_BUNDLE ON
+    MACOSX_BUNDLE_BUNDLE_NAME "WhatsAppGo"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.whatsappgo.Desktop"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
-install(FILES ../packaging/applications/org.whatsappgo.Desktop.desktop
-        DESTINATION share/applications)
-install(FILES ../assets/org.whatsappgo.Desktop.svg
-        DESTINATION share/icons/hicolor/scalable/apps)
+
+if(APPLE)
+    # Inside the bundle the daemon sits beside the client in Contents/MacOS,
+    # which is the first place daemonExecutable() looks.
+    install(TARGETS whatsappgo BUNDLE DESTINATION .)
+    install(PROGRAMS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappctl
+        DESTINATION whatsappgo.app/Contents/MacOS
+    )
+elseif(WIN32)
+    install(TARGETS whatsappgo RUNTIME DESTINATION .)
+    install(PROGRAMS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd${WHATSAPPGO_DAEMON_SUFFIX}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappctl${WHATSAPPGO_DAEMON_SUFFIX}
+        DESTINATION .
+    )
+else()
+    install(TARGETS whatsappgo RUNTIME DESTINATION bin)
+    install(PROGRAMS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd
+        ${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappctl
+        DESTINATION bin
+    )
+    # Freedesktop metadata has no meaning on Windows or macOS, which describe
+    # an application through the executable itself.
+    install(FILES ../packaging/applications/org.whatsappgo.Desktop.desktop
+            DESTINATION share/applications)
+    install(FILES ../assets/org.whatsappgo.Desktop.svg
+            DESTINATION share/icons/hicolor/scalable/apps)
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
@@ -182,6 +276,30 @@ if(BUILD_TESTING)
     target_include_directories(chat-list-updates-test PRIVATE src)
     target_link_libraries(chat-list-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
+    qt_add_executable(notification-routing-test
+        tests/NotificationRouting.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+    )
+    target_include_directories(notification-routing-test PRIVATE src)
+    target_link_libraries(notification-routing-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
+    qt_add_executable(backend-probe-test
+        tests/BackendProbe.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+    )
+    target_include_directories(backend-probe-test PRIVATE src)
+    target_link_libraries(backend-probe-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
     qt_add_executable(link-preview-upgrade-test
         tests/LinkPreviewUpgrade.cpp
         src/messagemodel.cpp
@@ -206,6 +324,8 @@ if(BUILD_TESTING)
     target_include_directories(profile-display-names-test PRIVATE src)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME desktop-profile-display-names COMMAND profile-display-names-test)
+    add_test(NAME desktop-notification-routing COMMAND notification-routing-test)
+    add_test(NAME desktop-backend-probe COMMAND backend-probe-test)
     set_tests_properties(desktop-profile-display-names PROPERTIES TIMEOUT 5)
 
     qt_add_executable(message-model-test
@@ -228,6 +348,12 @@ if(BUILD_TESTING)
     add_test(NAME desktop-tray-behavior COMMAND tray-behavior-test)
     set_tests_properties(desktop-tray-behavior PROPERTIES TIMEOUT 10)
 
+    add_test(NAME desktop-bundled-font COMMAND whatsappgo --bundled-font-test)
+    set_tests_properties(desktop-bundled-font PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 15
+    )
+
     add_test(NAME desktop-qml-smoke COMMAND whatsappgo --smoke-test)
     set_tests_properties(desktop-qml-smoke PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
@@ -247,6 +373,15 @@ if(BUILD_TESTING)
     add_test(NAME desktop-layout-regressions COMMAND whatsappgo --layout-regression-test)
     add_test(NAME desktop-media-preview COMMAND whatsappgo --media-preview-test)
     add_test(NAME desktop-chat-filters COMMAND whatsappgo --chat-filter-test)
+    add_test(NAME desktop-chat-row-menu COMMAND whatsappgo --chat-row-menu-test)
+    add_test(NAME desktop-search-results COMMAND whatsappgo --search-results-test)
+    add_test(NAME desktop-profile-removal COMMAND whatsappgo --profile-removal-test)
+    # The same removal with the per-account monitors constructed, which is how
+    # the application runs it. WHATSAPPGO_BACKEND points at a program that exits
+    # at once, so no daemon is left behind - which also means the monitors never
+    # reach a live socket. This covers the teardown path; it does not reproduce
+    # the crash that needed a connected monitor. See docs for that repro.
+    add_test(NAME desktop-profile-removal-monitored COMMAND whatsappgo --profile-removal-test)
     add_test(NAME desktop-backend-lifecycle COMMAND whatsappgo --profile lifecycle-test --backend-lifecycle-test)
     add_test(NAME desktop-resize-rendering COMMAND whatsappgo --resize-rendering-test)
     add_test(NAME desktop-message-layout COMMAND whatsappgo --message-layout-test)
@@ -257,6 +392,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-link-preview-upgrade COMMAND link-preview-upgrade-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
+    add_test(NAME desktop-file-drop COMMAND whatsappgo --file-drop-test)
     add_test(NAME desktop-status-stories COMMAND whatsappgo --status-stories-test)
     add_test(NAME desktop-presence-display COMMAND whatsappgo --presence-display-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
@@ -275,7 +411,15 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )
-    set_tests_properties(desktop-layout-regressions desktop-media-preview desktop-chat-filters PROPERTIES
+    set_tests_properties(desktop-profile-removal PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-test/config"
+        TIMEOUT 20
+    )
+    set_tests_properties(desktop-profile-removal-monitored PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_DISABLE_PROFILE_MONITORS=0;WHATSAPPGO_BACKEND=/bin/false;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-monitored/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-monitored/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-monitored/config"
+        TIMEOUT 30
+    )
+    set_tests_properties(desktop-layout-regressions desktop-media-preview desktop-chat-filters desktop-chat-row-menu desktop-search-results PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )

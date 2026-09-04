@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
@@ -20,6 +21,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"github.com/shukiv/whatsappgo/internal/imagesafe"
 	"github.com/shukiv/whatsappgo/internal/model"
 )
 
@@ -248,7 +250,11 @@ func fetchThumbnail(ctx context.Context, client *http.Client, rawURL string) ([]
 	if len(data) > maxImageBytes {
 		return nil, errors.New("preview image is too large")
 	}
-	source, _, err := image.Decode(bytes.NewReader(data))
+	// The picture comes from whatever server the linked page names, so its
+	// declared size is checked before any of it is allocated, and a decoder
+	// that panics on malformed input fails this one preview instead of the
+	// whole daemon.
+	source, err := imagesafe.Decode(data, imagesafe.MaxPicturePixels)
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +291,31 @@ func scaledImage(source image.Image, maxWidth, maxHeight int) image.Image {
 
 func publicClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// A proxy would receive the request and connect onward itself, so the
+	// address checked below would be the proxy's rather than the preview
+	// target's, and an internal host would become reachable again.
+	transport.Proxy = nil
+	// This client is pointed at servers named in messages, so the HTTP/2
+	// framing layer is bounded rather than trusted: a hostile server can
+	// otherwise hold a client goroutine on control frames while no request is
+	// outstanding, which the request timeout does not cover. The ping health
+	// check closes a connection that stops answering, the write timeout closes
+	// one that stops reading, and the frame size caps what a single frame can
+	// make us buffer.
+	//
+	// HTTP/1.1 alone is not an option: hosts behind this network answer an
+	// http/1.1-only ALPN offer with an HTTP/2 GOAWAY carrying
+	// "http2_handshake_failed", so every preview from such a host failed.
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	transport.Protocols = &protocols
+	transport.HTTP2 = &http.HTTP2Config{
+		SendPingTimeout:  10 * time.Second,
+		PingTimeout:      5 * time.Second,
+		WriteByteTimeout: 10 * time.Second,
+		MaxReadFrameSize: 1 << 20,
+	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
@@ -328,9 +359,36 @@ func validateWebURL(parsed *url.URL) error {
 	return nil
 }
 
+// reservedRanges covers addresses Go's own predicates do not classify but
+// which still must not be reached: shared address space used by carrier-grade
+// NAT and by overlay networks such as Tailscale, "this network", and the
+// reserved top of the address space.
+var reservedRanges = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+}
+
 func isPublicIP(ip net.IP) bool {
-	return ip != nil && !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsLinkLocalUnicast() &&
-		!ip.IsLinkLocalMulticast() && !ip.IsMulticast() && !ip.IsUnspecified()
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	address = address.Unmap()
+	for _, reserved := range reservedRanges {
+		if reserved.Contains(address) {
+			return false
+		}
+	}
+	return true
 }
 
 func cleanText(value string) string { return strings.Join(strings.Fields(value), " ") }

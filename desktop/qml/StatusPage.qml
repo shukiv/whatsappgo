@@ -10,6 +10,9 @@ RowLayout {
     property url ownAvatar
     signal groupRequested(int index)
     signal avatarRequested(string jid)
+    signal textStatusRequested()
+    signal photoStatusRequested()
+    signal statusPrivacyRequested()
     spacing: 0
 
     function relativeTime(milliseconds) {
@@ -33,7 +36,7 @@ RowLayout {
 
             RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 72
+                Layout.preferredHeight: 64
                 Layout.leftMargin: 24
                 Layout.rightMargin: 16
 
@@ -45,16 +48,22 @@ RowLayout {
                     font.weight: Font.DemiBold
                 }
                 ThemedToolButton {
+                    id: statusMenuButton
+                    objectName: "statusMenuButton"
                     Layout.preferredWidth: 44
                     Layout.preferredHeight: 44
                     iconSource: Qt.resolvedUrl("icons/menu.svg")
                     Accessible.name: qsTr("Status menu")
+                    onClicked: statusMenu.opened ? statusMenu.close() : statusMenu.open()
                     background: Rectangle { radius: 22; color: parent.hovered ? Theme.hoverRow : "transparent" }
                 }
                 ThemedToolButton {
+                    id: addStatusButton
+                    objectName: "addStatusButton"
                     Layout.preferredWidth: 44
                     Layout.preferredHeight: 44
                     Accessible.name: qsTr("Add status update")
+                    onClicked: addStatusMenu.opened ? addStatusMenu.close() : addStatusMenu.open()
                     contentItem: Label {
                         text: "+"
                         color: Theme.text
@@ -233,6 +242,55 @@ RowLayout {
                 font.pixelSize: 15
                 wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignHCenter
+            }
+        }
+    }
+
+    WhatsAppMenuPopup {
+        id: statusMenu
+        objectName: "statusMenu"
+        parent: Overlay.overlay
+        width: 220
+        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
+            statusMenuButton.mapToItem(Overlay.overlay, 0, statusMenuButton.height).x - width + 44))
+        y: statusMenuButton.mapToItem(Overlay.overlay, 0, statusMenuButton.height).y + 4
+
+        WhatsAppMenuItem {
+            objectName: "statusPrivacyItem"
+            text: qsTr("Status privacy")
+            iconSource: Qt.resolvedUrl("icons/block.svg")
+            onClicked: {
+                statusMenu.close()
+                root.statusPrivacyRequested()
+            }
+        }
+    }
+
+    WhatsAppMenuPopup {
+        id: addStatusMenu
+        objectName: "addStatusMenu"
+        parent: Overlay.overlay
+        width: 220
+        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
+            addStatusButton.mapToItem(Overlay.overlay, 0, addStatusButton.height).x - width + 44))
+        y: addStatusButton.mapToItem(Overlay.overlay, 0, addStatusButton.height).y + 4
+
+        WhatsAppMenuItem {
+            objectName: "addPhotoStatusItem"
+            text: qsTr("Photos and videos")
+            iconSource: Qt.resolvedUrl("icons/gallery.svg")
+            onClicked: {
+                addStatusMenu.close()
+                root.photoStatusRequested()
+            }
+        }
+        WhatsAppMenuItem {
+            objectName: "addTextStatusItem"
+            text: qsTr("Text")
+            iconSource: Qt.resolvedUrl("icons/edit.svg")
+            onClicked: {
+                addStatusMenu.close()
+                root.textStatusRequested()
             }
         }
     }

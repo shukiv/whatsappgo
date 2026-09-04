@@ -12,6 +12,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
 #include <QQmlContext>
+#include <QQmlExpression>
 #include <QQuickStyle>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -25,8 +26,13 @@
 #include <QIcon>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontDatabase>
+#include <QFontInfo>
+#include <QFontMetrics>
 #include <QMenu>
+#include <QQmlProperty>
 #include <QQuickItem>
+#include <QStyleHints>
 #include <QProcess>
 #include <QSystemTrayIcon>
 #include <QTemporaryDir>
@@ -98,22 +104,78 @@ int main(int argc, char *argv[])
     // The same face stack WhatsApp Web asks for, resolved against whatever the
     // system actually has. Leaving it to Qt's default picked a heavier font
     // than the interface is designed around.
+    //
+    // Roboto leads the list because that is what the web client renders. It is
+    // bundled rather than depended on, so the interface looks the same on a
+    // machine that has never installed it.
+    //
+    // Roboto covers no Hebrew or Arabic, so the families after it are not
+    // decoration: they are what actually draws those scripts. WhatsApp Web
+    // falls back the same way, which is why the two clients agree there too.
+    // Roboto draws Latin, Greek and Cyrillic; the bundled Noto faces draw the
+    // scripts Roboto has no glyphs for. Without them a conversation in Hebrew,
+    // Hindi or Thai is rendered by whatever the machine happens to have, which
+    // on a minimal system means several unrelated typefaces in one list.
     {
+        QStringList bundledFamilies;
+        const QDir fontDirectory(QStringLiteral(":/fonts"));
+        // Sorted so the resulting fallback order is identical on every machine.
+        const auto faces = fontDirectory.entryList({QStringLiteral("*.ttf"), QStringLiteral("*.ttc")},
+                                                   QDir::Files, QDir::Name);
+        for (const auto &face : faces) {
+            const int id = QFontDatabase::addApplicationFont(fontDirectory.filePath(face));
+            if (id < 0) {
+                qWarning().noquote() << QStringLiteral("bundled font %1 could not be loaded").arg(face);
+                continue;
+            }
+            for (const auto &family : QFontDatabase::applicationFontFamilies(id)) {
+                if (!bundledFamilies.contains(family))
+                    bundledFamilies.append(family);
+            }
+        }
+        // Roboto has to be first: it is the face the interface is measured
+        // against, and every other bundled family is only a script fallback.
+        bundledFamilies.removeAll(QStringLiteral("Roboto"));
+        bundledFamilies.prepend(QStringLiteral("Roboto"));
+
         QFont interfaceFont = QGuiApplication::font();
-        interfaceFont.setFamilies({
+        interfaceFont.setFamilies(bundledFamilies + QStringList{
+            // Anything the bundle does not cover, CJK most of all, is still
+            // drawn from the system so no script degrades to empty boxes.
+            QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Noto Sans CJK JP"),
+            QStringLiteral("Noto Sans CJK KR"), QStringLiteral("Noto Sans"),
             QStringLiteral("Segoe UI"), QStringLiteral("Helvetica Neue"), QStringLiteral("Helvetica"),
             QStringLiteral("Lucida Grande"), QStringLiteral("Ubuntu"), QStringLiteral("Cantarell"),
-            QStringLiteral("Fira Sans"), QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans"),
-            QStringLiteral("Arial"),
+            QStringLiteral("Fira Sans"), QStringLiteral("Droid Sans Fallback"),
+            QStringLiteral("WenQuanYi Zen Hei"), QStringLiteral("DejaVu Sans"), QStringLiteral("Arial"),
         });
         interfaceFont.setPixelSize(14);
         QGuiApplication::setFont(interfaceFont);
     }
-    // Kirigami's desktop integration supplies the matching platform theme on
-    // every Linux desktop; it does not require running the Plasma shell.
-    // Users can still override it with QT_QUICK_CONTROLS_STYLE.
-    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
+    // org.kde.desktop draws Qt Quick Controls with the platform's own widget
+    // theme, which is what makes the application look native on a Linux
+    // desktop; it does not require running the Plasma shell. It ships with
+    // qqc2-desktop-style, which is not installed everywhere and does not exist
+    // on Windows or macOS, so it is chosen only when it is actually available
+    // and Qt's own default is left alone otherwise. QT_QUICK_CONTROLS_STYLE
+    // still overrides both.
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+#ifdef Q_OS_LINUX
+        // Fusion is named as the fallback so a Linux desktop without
+        // qqc2-desktop-style still gets a styled application rather than the
+        // unstyled Basic controls.
+        QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
         QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+#else
+        // Windows and macOS get Fusion rather than their native style. Almost
+        // every control here is drawn by the application's own QML against
+        // Theme.qml, so a native style would restyle only the handful of
+        // primitives underneath and make those the one part of the window that
+        // does not match WhatsApp. Fusion leaves them neutral, which keeps all
+        // three platforms rendering the same design.
+        QQuickStyle::setStyle(QStringLiteral("Fusion"));
+#endif
+    }
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Native low-memory WhatsApp client"));
@@ -128,6 +190,8 @@ int main(int argc, char *argv[])
     parser.addOption(searchNavigationTestOption);
     QCommandLineOption messageInteractionTestOption(QStringLiteral("message-interaction-test"), QStringLiteral("Verify message text can be selected and links are interactive"));
     parser.addOption(messageInteractionTestOption);
+    QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
+    parser.addOption(bundledFontTestOption);
     QCommandLineOption clipboardImageTestOption(QStringLiteral("clipboard-image-test"), QStringLiteral("Verify native image copy and paste preparation"));
     parser.addOption(clipboardImageTestOption);
     QCommandLineOption layoutRegressionTestOption(QStringLiteral("layout-regression-test"), QStringLiteral("Verify unread badges and multiline message geometry"));
@@ -136,6 +200,20 @@ int main(int argc, char *argv[])
     parser.addOption(mediaPreviewTestOption);
     QCommandLineOption chatFilterTestOption(QStringLiteral("chat-filter-test"), QStringLiteral("Verify chat filter controls and filtering behavior"));
     parser.addOption(chatFilterTestOption);
+    QCommandLineOption profileRemovalTestOption(QStringLiteral("profile-removal-test"), QStringLiteral("Verify removing an account deletes its data and refuses the first account"));
+    parser.addOption(profileRemovalTestOption);
+    QCommandLineOption openDialogOption(QStringLiteral("open-dialog"), QStringLiteral("Open the named dialog before taking a screenshot"), QStringLiteral("objectName"));
+    parser.addOption(openDialogOption);
+    QCommandLineOption searchQueryOption(QStringLiteral("search-query"), QStringLiteral("Run a sidebar search before taking a screenshot"), QStringLiteral("text"));
+    parser.addOption(searchQueryOption);
+    QCommandLineOption conversationSearchOption(QStringLiteral("conversation-search"), QStringLiteral("Search inside the open conversation before taking a screenshot"), QStringLiteral("text"));
+    parser.addOption(conversationSearchOption);
+    QCommandLineOption removeProfileOption(QStringLiteral("remove-account"), QStringLiteral("Accept the account-removal dialog for the named account before taking a screenshot"), QStringLiteral("profile"));
+    parser.addOption(removeProfileOption);
+    QCommandLineOption chatRowMenuTestOption(QStringLiteral("chat-row-menu-test"), QStringLiteral("Verify the hovered chat row's chevron opens the row menu"));
+    parser.addOption(chatRowMenuTestOption);
+    QCommandLineOption searchResultsTestOption(QStringLiteral("search-results-test"), QStringLiteral("Verify the sidebar search swaps the chat list for grouped results"));
+    parser.addOption(searchResultsTestOption);
     QCommandLineOption backendLifecycleTestOption(QStringLiteral("backend-lifecycle-test"), QStringLiteral("Verify that the desktop owns its bundled backend process"));
     parser.addOption(backendLifecycleTestOption);
     QCommandLineOption resizeRenderingTestOption(QStringLiteral("resize-rendering-test"), QStringLiteral("Verify that resizing schedules a complete scene repaint"));
@@ -148,6 +226,8 @@ int main(int argc, char *argv[])
     parser.addOption(desktopIntegrationTestOption);
     QCommandLineOption contactInfoTestOption(QStringLiteral("contact-info-test"), QStringLiteral("Verify the contact information and shared-content drawer"));
     parser.addOption(contactInfoTestOption);
+    QCommandLineOption fileDropTestOption(QStringLiteral("file-drop-test"), QStringLiteral("Verify the dropped-file confirmation"));
+    parser.addOption(fileDropTestOption);
     QCommandLineOption statusStoriesTestOption(QStringLiteral("status-stories-test"), QStringLiteral("Verify grouped status rows and sequential story playback"));
     parser.addOption(statusStoriesTestOption);
     QCommandLineOption presenceDisplayTestOption(QStringLiteral("presence-display-test"), QStringLiteral("Verify offline and last-seen header text"));
@@ -156,32 +236,47 @@ int main(int argc, char *argv[])
     parser.addOption(screenshotOption);
     QCommandLineOption themeOption(QStringLiteral("theme"), QStringLiteral("Override the appearance for this run (system, light, or dark)"), QStringLiteral("mode"));
     parser.addOption(themeOption);
-    QCommandLineOption sectionOption(QStringLiteral("section"), QStringLiteral("Open a primary section (chats, status, calls, channels, communities, or profile)"), QStringLiteral("name"));
+    QCommandLineOption sectionOption(QStringLiteral("section"), QStringLiteral("Open a primary section (chats, status, calls, channels, communities, media, or profile)"), QStringLiteral("name"));
     parser.addOption(sectionOption);
+    QCommandLineOption settingsSectionOption(QStringLiteral("settings-section"), QStringLiteral("Open one page of Settings (profile, account, privacy, chats, or blocked)"), QStringLiteral("name"));
+    parser.addOption(settingsSectionOption);
     parser.process(app);
     const bool smokeTest = parser.isSet(smokeTestOption);
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
+    const bool bundledFontTest = parser.isSet(bundledFontTestOption);
     const bool clipboardImageTest = parser.isSet(clipboardImageTestOption);
     const bool layoutRegressionTest = parser.isSet(layoutRegressionTestOption);
     const bool mediaPreviewTest = parser.isSet(mediaPreviewTestOption);
     const bool chatFilterTest = parser.isSet(chatFilterTestOption);
+    const bool chatRowMenuTest = parser.isSet(chatRowMenuTestOption);
+    const bool searchResultsTest = parser.isSet(searchResultsTestOption);
+    const bool profileRemovalTest = parser.isSet(profileRemovalTestOption);
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
     const bool messageLayoutTest = parser.isSet(messageLayoutTestOption);
     const bool messageScrollTest = parser.isSet(messageScrollTestOption);
     const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
     const bool contactInfoTest = parser.isSet(contactInfoTestOption);
+    const bool fileDropTest = parser.isSet(fileDropTestOption);
     const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
     const bool presenceDisplayTest = parser.isSet(presenceDisplayTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
+    const auto openDialogName = parser.value(openDialogOption);
+    const auto screenshotSearchQuery = parser.value(searchQueryOption);
+    const auto screenshotRemoveAccount = parser.value(removeProfileOption);
+    const auto screenshotConversationSearch = parser.value(conversationSearchOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
-        || layoutRegressionTest || mediaPreviewTest || chatFilterTest || backendLifecycleTest || resizeRenderingTest
+        || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
+        || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || presenceDisplayTest
+        || presenceDisplayTest || bundledFontTest || fileDropTest
         || !screenshotPath.isEmpty();
 
-    if (automatedRun)
+    // Automated runs keep the per-account monitors off, because each one opens
+    // a socket and can start a daemon. An explicit setting wins, so the paths
+    // that only exist with monitors running can still be exercised.
+    if (automatedRun && !qEnvironmentVariableIsSet("WHATSAPPGO_DISABLE_PROFILE_MONITORS"))
         qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
 
     auto initialProfile = parser.value(profileOption);
@@ -211,6 +306,10 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
     }
 
+    // The chat a tray notification was about. QSystemTrayIcon::messageClicked
+    // carries nothing, so the chat has to be remembered between showing the
+    // message and the click that follows it.
+    QString lastNotifiedChat;
     bool trayAvailable = !automatedRun && QSystemTrayIcon::isSystemTrayAvailable();
     if (!automatedRun)
         app.setQuitOnLastWindowClosed(!TrayBehavior::shouldKeepRunning(trayAvailable));
@@ -277,6 +376,22 @@ int main(int argc, char *argv[])
                          [activateWindow](QSystemTrayIcon::ActivationReason reason) {
                              if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
                                  activateWindow();
+                         });
+        // Where the daemon has no notification service of its own - Windows and
+        // macOS both route notifications through the foreground application -
+        // it forwards the message and the tray icon presents it. The daemon
+        // marks the ones it already showed, so this never fires twice.
+        QObject::connect(&backend, &RpcClient::notificationRequested, &app,
+                         [icon = trayIcon.get(), applicationIcon, &lastNotifiedChat](const QString &chatJid, const QString &title, const QString &body) {
+                             lastNotifiedChat = chatJid;
+                             icon->showMessage(title, body, applicationIcon, 8000);
+                         });
+        QObject::connect(trayIcon.get(), &QSystemTrayIcon::messageClicked, &app,
+                         [&backend, activateWindow, &lastNotifiedChat] {
+                             const auto chatJid = lastNotifiedChat;
+                             activateWindow();
+                             if (!chatJid.isEmpty())
+                                 backend.openChat(chatJid, chatJid);
                          });
         const auto updateTrayStatus = [&backend, icon = trayIcon.get(), trayStatusAction] {
             const auto status = backend.status();
@@ -402,10 +517,54 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         auto *list = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactSharedList")));
         const auto listTop = list && drawerItem ? list->mapToItem(drawerItem, QPointF(0, 0)).y() : -1.0;
+
+        // The drawer carries the same actions the PWA's does. They are asserted
+        // by name because a row that quietly stops being built would otherwise
+        // look like a shorter drawer rather than a missing feature.
+        bool drawerActionsPresent = true;
+        for (const auto &name : {QStringLiteral("drawerFavoriteRow"), QStringLiteral("drawerStarredRow"),
+                                 QStringLiteral("drawerDisappearingRow"), QStringLiteral("drawerExportRow"),
+                                 QStringLiteral("drawerBlockRow"), QStringLiteral("drawerClearRow"),
+                                 QStringLiteral("drawerDeleteRow")}) {
+            if (drawer->findChild<QObject *>(name) == nullptr)
+                drawerActionsPresent = false;
+        }
+        auto *blockRow = drawer->findChild<QObject *>(QStringLiteral("drawerBlockRow"));
+        // The action list belongs to the drawer's own page, not to the shared
+        // content view the assertions above left open.
+        drawer->setProperty("sharedView", false);
+        QCoreApplication::processEvents();
+        // Read from the row's own decision rather than from `visible`: the drawer
+        // under test has no window, so effective visibility says nothing.
+        const bool blockShownForContact = blockRow != nullptr && blockRow->property("blockable").toBool();
+        // A second drawer rather than a mutated one: the group case is about what
+        // the drawer builds for a group, and building it is the clearest way to
+        // ask.
+        QVariantMap groupChat = chat;
+        groupChat[QStringLiteral("jid")] = QStringLiteral("120363000000000000@g.us");
+        groupChat[QStringLiteral("is_group")] = true;
+        std::unique_ptr<QObject> groupDrawer(component.createWithInitialProperties({
+            {QStringLiteral("opened"), true},
+            {QStringLiteral("width"), 440},
+            {QStringLiteral("height"), 800},
+            {QStringLiteral("selectedChat"), groupChat},
+            {QStringLiteral("info"), QVariantMap{{QStringLiteral("chat"), groupChat}}},
+        }));
+        QCoreApplication::processEvents();
+        auto *groupBlockRow = groupDrawer
+            ? groupDrawer->findChild<QObject *>(QStringLiteral("drawerBlockRow")) : nullptr;
+        const bool blockHiddenForGroup = groupBlockRow != nullptr
+            && !groupBlockRow->property("blockable").toBool();
+        // Restored so the checks below still describe the view they were written
+        // against.
+        drawer->setProperty("sharedView", true);
+        drawer->setProperty("activeCategory", QStringLiteral("links"));
+        QCoreApplication::processEvents();
         return back != nullptr && back->width() >= 44 && back->height() >= 44
-                && avatarButton && avatarButton->width() >= 144 && avatarButton->height() >= 144
+                && avatarButton && avatarButton->width() >= 120 && avatarButton->height() >= 120
                 && resolvedOriginalAvatar && originalAvatarPath.toString() == QStringLiteral("/tmp/test-contact.jpg")
                 && avatarClicked
+                && drawerActionsPresent && blockShownForContact && blockHiddenForGroup
                 && drawer->property("sharedView").toBool()
                 && drawer->property("activeCategory").toString() == QStringLiteral("links")
                 && drawer->property("width").toReal() >= 320
@@ -526,7 +685,66 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (bundledFontTest) {
+        // The interface is measured against WhatsApp Web in Roboto. If the
+        // bundled faces stop being packaged the application keeps running and
+        // silently draws in whatever the system offers, which is exactly the
+        // regression that is hard to notice in review.
+        const auto families = QFontDatabase::families();
+        const bool robotoPresent = families.contains(QStringLiteral("Roboto"));
+        const auto resolved = QFontInfo(QGuiApplication::font()).family();
+        const auto styles = QFontDatabase::styles(QStringLiteral("Roboto"));
+
+        // A sample per bundled script. `QFontMetrics::inFont` asks whether the
+        // resolved font can actually draw the character, so a font that is
+        // packaged but never reached still fails here.
+        const QList<QPair<QString, QChar>> scriptSamples{
+            {QStringLiteral("Hebrew"), QChar(0x05D0)},      {QStringLiteral("Arabic"), QChar(0x0627)},
+            {QStringLiteral("Devanagari"), QChar(0x0915)},  {QStringLiteral("Bengali"), QChar(0x0995)},
+            {QStringLiteral("Tamil"), QChar(0x0B95)},       {QStringLiteral("Telugu"), QChar(0x0C15)},
+            {QStringLiteral("Kannada"), QChar(0x0C95)},     {QStringLiteral("Malayalam"), QChar(0x0D15)},
+            {QStringLiteral("Gujarati"), QChar(0x0A95)},    {QStringLiteral("Gurmukhi"), QChar(0x0A15)},
+            {QStringLiteral("Oriya"), QChar(0x0B15)},       {QStringLiteral("Sinhala"), QChar(0x0D9A)},
+            {QStringLiteral("Thai"), QChar(0x0E01)},        {QStringLiteral("Lao"), QChar(0x0E81)},
+            {QStringLiteral("Khmer"), QChar(0x1780)},       {QStringLiteral("Myanmar"), QChar(0x1000)},
+            {QStringLiteral("Ethiopic"), QChar(0x1200)},    {QStringLiteral("Armenian"), QChar(0x0531)},
+            {QStringLiteral("Georgian"), QChar(0x10D0)},    {QStringLiteral("Thaana"), QChar(0x0780)},
+            {QStringLiteral("Cherokee"), QChar(0x13A0)},    {QStringLiteral("Syriac"), QChar(0x0710)},
+            {QStringLiteral("Mongolian"), QChar(0x1820)},
+            // CJK: a Han ideograph, Japanese kana, and Hangul all come from the
+            // one bundled collection, so each is checked separately.
+            {QStringLiteral("Han"), QChar(0x4E2D)},         {QStringLiteral("Kana"), QChar(0x3042)},
+            {QStringLiteral("Hangul"), QChar(0xAC00)},
+        };
+        QStringList uncovered;
+        for (const auto &[script, sample] : scriptSamples) {
+            QFont probe = QGuiApplication::font();
+            if (!QFontMetrics(probe).inFont(sample))
+                uncovered.append(script);
+        }
+        qInfo().noquote() << QStringLiteral("bundled font: present=%1 resolved=%2 styles=%3 scripts=%4/%5 uncovered=%6")
+                                 .arg(robotoPresent).arg(resolved).arg(styles.join(QLatin1Char(',')))
+                                 .arg(scriptSamples.size() - uncovered.size()).arg(scriptSamples.size())
+                                 .arg(uncovered.isEmpty() ? QStringLiteral("none") : uncovered.join(QLatin1Char(',')));
+        return robotoPresent && resolved == QStringLiteral("Roboto") && styles.size() >= 3
+                && uncovered.isEmpty()
+            ? EXIT_SUCCESS
+            : EXIT_FAILURE;
+    }
     if (messageInteractionTest) {
+        // The image branch of this test needs a real file on disk: a delegate
+        // whose picture fails to load never builds the preview control the
+        // assertions below reach for. Write the fixture rather than relying on
+        // one left behind by an earlier run.
+        const QString imageFixturePath = QDir::temp().filePath(QStringLiteral("whatsappgo-image-test.jpg"));
+        {
+            QImage imageFixture(64, 48, QImage::Format_RGB32);
+            imageFixture.fill(QColor(0, 160, 120));
+            if (!imageFixture.save(imageFixturePath, "JPEG")) {
+                qWarning().noquote() << QStringLiteral("could not write %1").arg(imageFixturePath);
+                return EXIT_FAILURE;
+            }
+        }
         QQmlComponent component(&engine);
         component.setData(R"QML(
             import QtQuick
@@ -539,6 +757,7 @@ int main(int argc, char *argv[])
                 visible: true
                 property var testMessage
                 property var imageMessage
+                property var forwardedMessage
                 property string previewedMessageId: ""
                 property string previewedMediaPath: ""
                 property string quotedMessageId: ""
@@ -562,6 +781,11 @@ int main(int argc, char *argv[])
 					opened: Boolean(harness.infoMessage.id)
 					message: harness.infoMessage
 				}
+                MessageDelegate {
+                    objectName: "forwardedInteractionDelegate"
+                    width: 800
+                    modelData: harness.forwardedMessage
+                }
                 MessageDelegate {
                     objectName: "imageInteractionDelegate"
                     width: 800
@@ -594,10 +818,20 @@ int main(int argc, char *argv[])
         };
         std::unique_ptr<QObject> harness(component.createWithInitialProperties({
             {QStringLiteral("testMessage"), message},
+            {QStringLiteral("forwardedMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("forwarded-test")},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("Passed along")},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+                {QStringLiteral("starred"), true},
+                {QStringLiteral("forwarding_score"), 6},
+            }},
             {QStringLiteral("imageMessage"), QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("image-test")},
                 {QStringLiteral("kind"), QStringLiteral("image")},
-                {QStringLiteral("media_path"), QStringLiteral("/tmp/whatsappgo-image-test.jpg")},
+                {QStringLiteral("media_path"), imageFixturePath},
                 {QStringLiteral("from_me"), false},
                 {QStringLiteral("timestamp"), 0},
                 {QStringLiteral("status"), QStringLiteral("received")},
@@ -623,9 +857,18 @@ int main(int argc, char *argv[])
         auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
         auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
 		auto *infoAction = delegate->findChild<QObject *>(QStringLiteral("messageInfoAction"));
+		auto *starAction = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageStarAction")));
+		auto *forwardAction = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageForwardAction")));
 		auto *infoDrawer = qobject_cast<QQuickItem *>(harness->findChild<QObject *>(QStringLiteral("messageInfoDrawerHarness")));
         auto *quotedMessagePreview = qobject_cast<QQuickItem *>(
             delegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview")));
+        auto *forwardedDelegate = harness->findChild<QObject *>(QStringLiteral("forwardedInteractionDelegate"));
+        auto *forwardedMark = qobject_cast<QQuickItem *>(
+            forwardedDelegate ? forwardedDelegate->findChild<QObject *>(QStringLiteral("forwardedMark")) : nullptr);
+        auto *forwardedLabel =
+            forwardedDelegate ? forwardedDelegate->findChild<QObject *>(QStringLiteral("forwardedLabel")) : nullptr;
+        auto *starredMark = qobject_cast<QQuickItem *>(
+            forwardedDelegate ? forwardedDelegate->findChild<QObject *>(QStringLiteral("starredMark")) : nullptr);
         auto *imageDelegate = harness->findChild<QObject *>(QStringLiteral("imageInteractionDelegate"));
         const bool imagePreviewInvoked = imageDelegate
             && QMetaObject::invokeMethod(imageDelegate, "openVisualMedia");
@@ -633,8 +876,24 @@ int main(int argc, char *argv[])
         const auto rendered = body->property("text").toString();
         const bool selected = QMetaObject::invokeMethod(body, "selectAll")
             && !body->property("selectedText").toString().isEmpty();
+        // Exercise the bottom-edge path that previously let the menu extend
+        // below the window and visibly cut off its final actions.
+        delegate->setProperty("y", 380.0);
         const bool menuOpened = menuButton && QMetaObject::invokeMethod(menuButton, "click");
         QCoreApplication::processEvents();
+		QEventLoop popupPositioningLoop;
+		QTimer::singleShot(20, &popupPositioningLoop, &QEventLoop::quit);
+		popupPositioningLoop.exec();
+		auto *menuParent = menu ? menu->property("parent").value<QObject *>() : nullptr;
+		auto *reactionParent = quickReactions ? quickReactions->property("parent").value<QObject *>() : nullptr;
+		const bool menuFitsWindow = menu && menuParent
+			&& menu->property("y").toReal() >= 8.0
+			&& menu->property("y").toReal() + menu->property("height").toReal()
+				<= menuParent->property("height").toReal() - 7.5;
+		const bool reactionsFitWindow = quickReactions && reactionParent
+			&& quickReactions->property("y").toReal() >= 8.0
+			&& quickReactions->property("y").toReal() + quickReactions->property("height").toReal()
+				<= reactionParent->property("height").toReal() - 7.5;
 		const bool infoClicked = infoAction && QMetaObject::invokeMethod(infoAction, "click");
 		QCoreApplication::processEvents();
 		auto *infoPreview = infoDrawer ? infoDrawer->findChild<QObject *>(QStringLiteral("messageInfoPreview")) : nullptr;
@@ -670,15 +929,27 @@ int main(int argc, char *argv[])
                 && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏  👍 2")
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
                 && menuOpened && menu && menu->property("visible").toBool()
+				&& qAbs(menu->property("width").toReal() - 196.0) < 0.01
+				&& menuFitsWindow && reactionsFitWindow
 				&& infoClicked && harness->property("infoMessageId").toString() == QStringLiteral("message-test")
-				&& infoDrawer && infoDrawer->isVisible() && infoDrawer->width() <= 440 && infoPreview
+				&& infoDrawer && infoDrawer->isVisible() && infoDrawer->width() <= 540 && infoPreview
                 && quickReactions && quickReactions->property("visible").toBool()
                 && quotedMessagePreview && quotedMessagePreview->isVisible()
                 && quotedMessagePreview->height() >= 44 && quoteClicked
                 && harness->property("quotedMessageId").toString() == QStringLiteral("quoted-message-test")
+                // Star and Forward apply to any message that has not been
+                // deleted, so both must be offered here.
+                && starAction && starAction->isVisible()
+                && forwardAction && forwardAction->isVisible()
+                // A forwarded message says so in the bubble, and a long chain
+                // says how long, the way WhatsApp Web labels one. A star is
+                // only visible in the meta row once the menu is closed.
+                && forwardedMark && forwardedMark->isVisible() && forwardedLabel
+                && forwardedLabel->property("text").toString() == QStringLiteral("Forwarded many times")
+                && starredMark && starredMark->isVisible()
                 && imagePreviewInvoked
                 && harness->property("previewedMessageId").toString() == QStringLiteral("image-test")
-                && harness->property("previewedMediaPath").toString() == QStringLiteral("/tmp/whatsappgo-image-test.jpg")
+                && harness->property("previewedMediaPath").toString() == imageFixturePath
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
@@ -725,7 +996,8 @@ int main(int argc, char *argv[])
         const bool customAccountNameShown = accountMenuItem
             && accountMenuItem->property("text").toString() == QStringLiteral("Personal");
         const bool accountEditAvailable = accountEditButton && accountEditButton->isVisible()
-            && accountEditButton->width() >= 40.0 && accountEditButton->height() >= 40.0;
+            && accountEditButton->width() >= 32.0 && accountEditButton->width() <= 36.0
+            && accountEditButton->height() >= 32.0 && accountEditButton->height() <= 36.0;
         if (accountMenu)
             QMetaObject::invokeMethod(accountMenu, "close");
         QCoreApplication::processEvents();
@@ -791,31 +1063,39 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         const bool sidebarUsesStableModel = chatListItem
             && qvariant_cast<QObject *>(chatListItem->property("model")) == backend.chatListModel();
-        return accountUnreadBadge && accountUnreadBadge->isVisible() && accountChipItem
-                && accountClicked && standaloneAccountMenuOpened
-                && customAccountNameShown
-                && accountEditAvailable
-                && accountMenu->property("height").toReal() >= 100.0
-                && accountMenu->property("width").toReal() == 244.0
-                && qFuzzyIsNull(accountMenu->property("x").toReal())
-                && accountMenu->property("y").toReal() >= accountChip->property("height").toReal()
-                && actualAccountClicked
-                && accountUnreadBadge->width() >= 19.0 && accountChip->property("width").toReal() == 44.0
-                && accountChip->property("totalUnread").toInt() == 12
-                && qAbs(timestampRight - badgeRight) <= 2.0
-                && chatItem->height() <= 76.0
-                && chatItem->x() >= 8.0
-                && rowBackground->property("radius").toReal() >= 10.0
-                && chatViewport && chatListItem && chatScrollBar
-                && chatListItem->width() + chatScrollBar->width() <= chatViewport->width()
-                && chatScrollBar->width() <= 8.0
-                && sidebarUsesStableModel
-                && (previewTop - titleBottom) <= 8.0
-                && preview->implicitHeight() <= 22.0
-                && !preview->property("text").toString().contains(QStringLiteral("<br>"))
-                && preview->property("text").toString().contains(QStringLiteral("line Second"))
-                && bubble && bubble->width() < 360.0
-                && tail && qFuzzyIsNull(tail->rotation()) && tail->z() >= 0.0
+        const auto note = [](bool condition, const char *what) {
+            if (!condition)
+                qInfo().noquote() << QStringLiteral("FAIL: ") + QString::fromUtf8(what);
+            return condition;
+        };
+        return note(accountUnreadBadge && accountUnreadBadge->isVisible(), "account unread badge")
+                && note(accountChipItem != nullptr, "account chip item")
+                && note(accountClicked, "account chip click")
+                && note(standaloneAccountMenuOpened, "standalone account menu opened")
+                && note(customAccountNameShown, "custom account name")
+                && note(accountEditAvailable, "account edit action")
+                && note(accountMenu->property("height").toReal() >= 76.0, "account menu height")
+                && note(accountMenu->property("width").toReal() == 244.0, "account menu width")
+                && note(accountMenu->property("x").toReal() >= 0.0, "account menu x")
+                && note(accountMenu->property("y").toReal() >= accountChip->property("height").toReal(), "account menu y")
+                && note(actualAccountClicked, "window account chip click")
+                && note(accountUnreadBadge->width() >= 19.0, "unread badge width")
+                && note(accountChip->property("width").toReal() == 44.0, "account chip width")
+                && note(accountChip->property("totalUnread").toInt() == 12, "account total unread")
+                && note(qAbs(timestampRight - badgeRight) <= 2.0, "timestamp/badge alignment")
+                && note(chatItem->height() <= 76.0, "chat row height")
+                && note(chatItem->x() >= 8.0, "chat row inset")
+                && note(rowBackground->property("radius").toReal() >= 10.0, "chat row radius")
+                && note(chatViewport && chatListItem && chatScrollBar, "sidebar list parts")
+                && note(chatListItem->width() + chatScrollBar->width() <= chatViewport->width(), "sidebar list width")
+                && note(chatScrollBar->width() <= 8.0, "sidebar scrollbar width")
+                && note(sidebarUsesStableModel, "sidebar model")
+                && note((previewTop - titleBottom) <= 8.0, "name/preview gap")
+                && note(preview->implicitHeight() <= 22.0, "preview height")
+                && note(!preview->property("text").toString().contains(QStringLiteral("<br>")), "preview line break")
+                && note(preview->property("text").toString().contains(QStringLiteral("line Second")), "preview text")
+                && note(bubble && bubble->width() < 360.0, "bubble width")
+                && note(tail && qFuzzyIsNull(tail->rotation()) && tail->z() >= 0.0, "bubble tail")
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
@@ -1363,15 +1643,6 @@ int main(int argc, char *argv[])
         if (messageList == nullptr || messages == nullptr)
             return EXIT_FAILURE;
 
-        // This embedded test supplies its own model without opening a real
-        // account chat. Reveal the conversation column so window-system wheel
-        // events can actually hit the ListView rather than the empty-chat pane.
-        auto *messageViewport = messageList->parentItem();
-        auto *conversationColumn = messageViewport ? messageViewport->parentItem() : nullptr;
-        if (conversationColumn != nullptr)
-            conversationColumn->setVisible(true);
-        QCoreApplication::processEvents();
-
         bool passed = true;
         const auto require = [&passed](bool condition, const QString &description) {
             if (!condition) {
@@ -1438,6 +1709,21 @@ int main(int argc, char *argv[])
         // Exercise the same event path as a physical mouse wheel, delivered
         // directly to WhatsAppGo's QQuickWindow so desktop focus or another
         // application cannot affect the result.
+        //
+        // With no daemon to talk to the window sits on the pairing page, which
+        // leaves the conversation split hidden, so the ListView is not
+        // hit-testable and the wheel would land on nothing. The reveal goes
+        // through QQmlProperty because a plain setVisible leaves the
+        // `visible: backend.loggedIn` binding in place, and the next failed
+        // reconnect re-hides the split mid-test.
+        for (QQuickItem *ancestor = messageList; ancestor != nullptr; ancestor = ancestor->parentItem())
+            QQmlProperty(ancestor, QStringLiteral("visible")).write(true);
+        QCoreApplication::processEvents();
+        settle();
+
+        // Both taken after the reveal: showing the split relays out the list, so a
+        // point or a tail captured before it would no longer describe the list the
+        // wheel lands on.
         const qreal wheelTailY = messageList->property("contentY").toReal();
         const QPointF wheelPosition = messageList->mapToScene(
             QPointF(messageList->width() / 2.0, messageList->height() / 2.0));
@@ -1608,7 +1894,7 @@ int main(int argc, char *argv[])
         };
         for (const auto &name : attachmentActions) {
             auto *action = qobject_cast<QQuickItem *>(root->findChild<QObject *>(name));
-            if (!action || !action->isVisible() || action->height() < 44) {
+            if (!action || !action->isVisible() || action->height() < 35 || action->height() > 37) {
                 qWarning() << "attachment action invalid" << name << action
                            << (action ? action->isVisible() : false)
                            << (action ? action->height() : 0);
@@ -1679,7 +1965,8 @@ int main(int argc, char *argv[])
         const bool imageActionsReady = actionMenuOpened && imageActionMenu && imageActionMenu->property("visible").toBool()
             && imageClickHandler && copyImageAction && saveImageAction
             && copyImageAction->isVisible() && saveImageAction->isVisible()
-            && copyImageAction->height() >= 44 && saveImageAction->height() >= 44;
+            && copyImageAction->height() >= 36 && copyImageAction->height() <= 40
+            && saveImageAction->height() >= 36 && saveImageAction->height() <= 40;
         if (imageActionMenu)
             QMetaObject::invokeMethod(imageActionMenu, "close");
         QGuiApplication::clipboard()->clear();
@@ -1768,7 +2055,8 @@ int main(int argc, char *argv[])
         auto *unread = bar->findChild<QObject *>(QStringLiteral("filterUnreadButton"));
         auto *favorites = bar->findChild<QObject *>(QStringLiteral("filterFavoritesButton"));
         auto *groups = bar->findChild<QObject *>(QStringLiteral("filterGroupsButton"));
-        if (!all || !unread || !favorites || !groups)
+        auto *overflow = bar->findChild<QObject *>(QStringLiteral("filterAddButton"));
+        if (!all || !unread || !favorites || !groups || !overflow)
             return EXIT_FAILURE;
         const bool clicked = QMetaObject::invokeMethod(unread, "click");
         QCoreApplication::processEvents();
@@ -1788,12 +2076,320 @@ int main(int argc, char *argv[])
         const bool groupAccepted = accepts({{QStringLiteral("is_group"), true}})
             && !accepts({{QStringLiteral("is_group"), false}});
         return all->property("text").toString() == QStringLiteral("All")
-                && unread->property("text").toString() == QStringLiteral("Unread 3")
+                && unread->property("text").toString() == QStringLiteral("Unread")
                 && favorites->property("text").toString() == QStringLiteral("Favorites")
                 && groups->property("text").toString() == QStringLiteral("Groups")
+                && qAbs(bar->property("implicitHeight").toReal() - 42.0) < 0.01
+                && qAbs(all->property("implicitHeight").toReal() - 32.0) < 0.01
+                && !groups->property("visible").toBool()
+                && qAbs(overflow->property("width").toReal() - 32.0) < 0.01
+                && qAbs(overflow->property("height").toReal() - 32.0) < 0.01
                 && clicked && unreadSelected && unreadAccepted && favoriteAccepted && groupAccepted
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
+    }
+    if (profileRemovalTest) {
+        // Removing an account deletes files, so the behaviour is checked rather
+        // than assumed. The test works in its own XDG directories, set by the
+        // test definition, and cleans up after itself by construction: the
+        // account it makes is the account it removes.
+        const auto probe = QStringLiteral("removal-probe");
+        backend.addProfile(probe);
+        QCoreApplication::processEvents();
+        if (!backend.profiles().contains(probe))
+            return EXIT_FAILURE;
+
+        auto dataBase = qEnvironmentVariable("XDG_DATA_HOME");
+        if (dataBase.isEmpty())
+            dataBase = QDir::home().filePath(QStringLiteral(".local/share"));
+        const QDir probeData(QDir(dataBase).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(probe)));
+        if (!probeData.mkpath(QStringLiteral(".")))
+            return EXIT_FAILURE;
+        QFile marker(probeData.filePath(QStringLiteral("messages.db")));
+        if (!marker.open(QIODevice::WriteOnly))
+            return EXIT_FAILURE;
+        marker.write("probe");
+        marker.close();
+
+        // The first account holds the shared data directory, so it is never
+        // removable however it is asked for.
+        if (backend.profileRemovable(QStringLiteral("default")))
+            return EXIT_FAILURE;
+        backend.removeProfile(QStringLiteral("default"));
+        QCoreApplication::processEvents();
+        if (!backend.profiles().contains(QStringLiteral("default")))
+            return EXIT_FAILURE;
+
+        backend.removeProfile(probe);
+        QCoreApplication::processEvents();
+        if (backend.profiles().contains(probe) || probeData.exists())
+            return EXIT_FAILURE;
+
+        // Removing the account that is open is the path the menu actually
+        // takes: it has to leave the account before deleting what it is
+        // standing on. The non-current case above never exercises that.
+        const auto current = QStringLiteral("removal-probe-current");
+        backend.addProfile(current);
+        QCoreApplication::processEvents();
+        backend.switchProfile(current);
+        QCoreApplication::processEvents();
+        if (backend.profile() != current)
+            return EXIT_FAILURE;
+        const QDir currentData(QDir(dataBase).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(current)));
+        if (!currentData.mkpath(QStringLiteral(".")))
+            return EXIT_FAILURE;
+        backend.removeProfile(current);
+        QCoreApplication::processEvents();
+        if (backend.profiles().contains(current) || currentData.exists())
+            return EXIT_FAILURE;
+        if (backend.profile() == current)
+            return EXIT_FAILURE;
+
+        // The account's monitor and daemon are torn down asynchronously, and a
+        // monitor that outlives the account asks for its daemon back. Give the
+        // event loop time to make that mistake before declaring the account
+        // gone for good.
+        QEventLoop settle;
+        QTimer::singleShot(2500, &settle, &QEventLoop::quit);
+        settle.exec();
+        if (currentData.exists()) {
+            qInfo().noquote() << QStringLiteral("FAIL: the removed account's data directory came back");
+            return EXIT_FAILURE;
+        }
+        if (backend.profiles().contains(current)) {
+            qInfo().noquote() << QStringLiteral("FAIL: the removed account reappeared in the account list");
+            return EXIT_FAILURE;
+        }
+        return EXIT_SUCCESS;
+    }
+    if (chatRowMenuTest) {
+        // The chat rows only exist while the sidebar has chats, so this drives a
+        // delegate of its own rather than waiting on a daemon. It is parented into
+        // the window because the row menu attaches to that window's overlay.
+        auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
+        auto *mainWindow = qobject_cast<QQuickWindow *>(mainRoot);
+        if (mainWindow == nullptr)
+            return EXIT_FAILURE;
+
+        const QVariantMap personalChat{
+            {QStringLiteral("jid"), QStringLiteral("15551234567@s.whatsapp.net")},
+            {QStringLiteral("title"), QStringLiteral("Row Menu")},
+            {QStringLiteral("last_message_preview"), QStringLiteral("Hello")},
+            {QStringLiteral("unread_count"), 2},
+            {QStringLiteral("pinned"), true},
+        };
+        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/ChatListDelegate.qml")));
+        std::unique_ptr<QObject> row(component.createWithInitialProperties({
+            {QStringLiteral("modelData"), personalChat},
+            {QStringLiteral("current"), false},
+            {QStringLiteral("width"), 420},
+        }));
+        if (!row) {
+            qInfo().noquote() << component.errorString();
+            return EXIT_FAILURE;
+        }
+        auto *rowItem = qobject_cast<QQuickItem *>(row.get());
+        if (rowItem == nullptr)
+            return EXIT_FAILURE;
+        rowItem->setParentItem(mainWindow->contentItem());
+        // Away from the origin, where the offscreen platform leaves the pointer
+        // and would otherwise report the row as permanently hovered.
+        rowItem->setPosition(QPointF(600.0, 400.0));
+        QCoreApplication::processEvents();
+
+        auto *menuButton = row->findChild<QObject *>(QStringLiteral("chatRowMenuButton"));
+        auto *rowMenu = row->findChild<QObject *>(QStringLiteral("chatContextMenu"));
+        auto *blockItem = row->findChild<QObject *>(QStringLiteral("chatBlockItem"));
+        auto *pinnedMark = row->findChild<QObject *>(QStringLiteral("pinnedMark"));
+        auto *unreadBadge = row->findChild<QObject *>(QStringLiteral("unreadBadge"));
+        if (menuButton == nullptr || rowMenu == nullptr || blockItem == nullptr
+                || pinnedMark == nullptr || unreadBadge == nullptr)
+            return EXIT_FAILURE;
+
+        bool passed = true;
+        const auto require = [&passed](bool condition, const QString &description) {
+            if (!condition) {
+                passed = false;
+                qInfo().noquote() << QStringLiteral("FAIL: ") + description;
+            }
+        };
+
+        require(!menuButton->property("visible").toBool(),
+                QStringLiteral("the row chevron shows on a row that is neither hovered nor open"));
+        require(pinnedMark->property("visible").toBool() && unreadBadge->property("visible").toBool(),
+                QStringLiteral("the pin and unread marks are missing from a resting row"));
+
+        // Hover the row the way a pointer would, so the chevron appears, then
+        // press it where it actually landed.
+        auto *buttonItem = qobject_cast<QQuickItem *>(menuButton);
+        if (buttonItem == nullptr)
+            return EXIT_FAILURE;
+        const auto sendMouse = [mainWindow](QEvent::Type type, const QPointF &scenePosition,
+                                            Qt::MouseButton button, Qt::MouseButtons buttons) {
+            QMouseEvent event(type, scenePosition, mainWindow->mapToGlobal(scenePosition.toPoint()),
+                              button, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(mainWindow, &event);
+            QCoreApplication::processEvents();
+        };
+        sendMouse(QEvent::MouseMove, rowItem->mapToScene(QPointF(rowItem->width() / 2.0, rowItem->height() / 2.0)),
+                  Qt::NoButton, Qt::NoButton);
+        require(menuButton->property("visible").toBool(),
+                QStringLiteral("hovering a chat row did not reveal its chevron"));
+
+        const QPointF buttonCentre = buttonItem->mapToScene(
+            QPointF(buttonItem->width() / 2.0, buttonItem->height() / 2.0));
+        sendMouse(QEvent::MouseButtonPress, buttonCentre, Qt::LeftButton, Qt::LeftButton);
+        sendMouse(QEvent::MouseButtonRelease, buttonCentre, Qt::LeftButton, Qt::NoButton);
+        // A Popup reports `opened` only once its enter transition has run.
+        QEventLoop menuLoop;
+        QTimer::singleShot(200, &menuLoop, &QEventLoop::quit);
+        menuLoop.exec();
+        require(rowMenu->property("opened").toBool(),
+                QStringLiteral("the row chevron did not open the chat menu"));
+        require(menuButton->property("visible").toBool(),
+                QStringLiteral("the row chevron disappeared while its own menu was open"));
+        require(!pinnedMark->property("visible").toBool() && !unreadBadge->property("visible").toBool(),
+                QStringLiteral("the pin and unread marks stayed visible behind the row chevron"));
+        require(blockItem->property("visible").toBool(),
+                QStringLiteral("a one-to-one chat is missing the Block item"));
+
+        QVariantMap groupChat = personalChat;
+        groupChat[QStringLiteral("jid")] = QStringLiteral("120363000000000000@g.us");
+        row->setProperty("modelData", groupChat);
+        QCoreApplication::processEvents();
+        require(!blockItem->property("visible").toBool(),
+                QStringLiteral("a group chat offers Block, which WhatsApp Web does not"));
+
+        rowItem->setParentItem(nullptr);
+        return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (searchResultsTest) {
+        auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
+        auto *mainWindow = qobject_cast<QQuickWindow *>(mainRoot);
+        if (mainWindow == nullptr)
+            return EXIT_FAILURE;
+        // `visible` on an item is parent-aware, so the sidebar reports nothing
+        // at all until the window it lives in is up.
+        mainWindow->show();
+        QCoreApplication::processEvents();
+
+        bool passed = true;
+        const auto require = [&passed](bool condition, const QString &description) {
+            if (!condition) {
+                passed = false;
+                qInfo().noquote() << QStringLiteral("FAIL: ") + description;
+            }
+        };
+
+        auto *archivedRow = mainRoot->findChild<QObject *>(QStringLiteral("archivedRow"));
+        auto *chatList = mainRoot->findChild<QObject *>(QStringLiteral("chatList"));
+        auto *pane = mainRoot->findChild<QObject *>(QStringLiteral("searchResultsPane"));
+        if (archivedRow == nullptr || chatList == nullptr || pane == nullptr)
+            return EXIT_FAILURE;
+
+        require(!pane->property("visible").toBool(),
+                QStringLiteral("the results pane is on screen before anything is typed"));
+
+        // The window is what the search field drives; going through the client
+        // is what a keystroke does, and is where the query has to survive.
+        backend.searchChats(QStringLiteral("hola"));
+        QCoreApplication::processEvents();
+        require(pane->property("visible").toBool(),
+                QStringLiteral("typing a query did not raise the results pane"));
+        require(!chatList->property("visible").toBool(),
+                QStringLiteral("the chat list stayed behind the results"));
+        require(!archivedRow->property("visible").toBool(),
+                QStringLiteral("the archived row stayed on screen during a search"));
+
+        // Every event in the app refreshes the chat list; none of them may drop
+        // the query, which is the whole of the bug this covers.
+        backend.refreshChats();
+        QCoreApplication::processEvents();
+        require(backend.chatQuery() == QStringLiteral("hola"),
+                QStringLiteral("a chat-list refresh cleared the live search query"));
+        require(pane->property("visible").toBool(),
+                QStringLiteral("a chat-list refresh closed the results pane"));
+
+        backend.searchChats(QString());
+        QCoreApplication::processEvents();
+        require(!pane->property("visible").toBool(),
+                QStringLiteral("clearing the query left the results pane up"));
+        require(chatList->property("visible").toBool(),
+                QStringLiteral("clearing the query did not bring the chat list back"));
+
+        // Grouping is checked on a pane of its own, where the hits can be set
+        // without a daemon to answer the three requests.
+        const QVariantList chatHits{QVariantMap{
+            {QStringLiteral("jid"), QStringLiteral("15551234567@s.whatsapp.net")},
+            {QStringLiteral("title"), QStringLiteral("Hola Neighbour")},
+            {QStringLiteral("last_message_preview"), QStringLiteral("see you")},
+        }};
+        const QVariantList contactHits{QVariantMap{
+            {QStringLiteral("jid"), QStringLiteral("15559876543@s.whatsapp.net")},
+            {QStringLiteral("name"), QStringLiteral("Hila Halamit")},
+        }};
+        const QVariantList messageHits{QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("m1")},
+            {QStringLiteral("chat_jid"), QStringLiteral("15551234567@s.whatsapp.net")},
+            {QStringLiteral("chat_title"), QStringLiteral("Karen Gomez")},
+            {QStringLiteral("body"), QStringLiteral("<b>Hola</b> shuki & co")},
+            {QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch()},
+        }};
+
+        QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/SearchResultsPane.qml")));
+        std::unique_ptr<QObject> standalone(component.createWithInitialProperties({
+            {QStringLiteral("query"), QStringLiteral("hola")},
+            {QStringLiteral("width"), 380},
+            {QStringLiteral("height"), 600},
+        }));
+        if (!standalone) {
+            qInfo().noquote() << component.errorString();
+            return EXIT_FAILURE;
+        }
+        auto *standaloneItem = qobject_cast<QQuickItem *>(standalone.get());
+        if (standaloneItem == nullptr)
+            return EXIT_FAILURE;
+        standaloneItem->setParentItem(mainWindow->contentItem());
+        QCoreApplication::processEvents();
+
+        auto *empty = standalone->findChild<QObject *>(QStringLiteral("searchResultsEmpty"));
+        if (empty == nullptr)
+            return EXIT_FAILURE;
+        require(empty->property("visible").toBool(),
+                QStringLiteral("a query with no hits does not say so"));
+
+        standalone->setProperty("chatHits", chatHits);
+        standalone->setProperty("contactHits", contactHits);
+        standalone->setProperty("messageHits", messageHits);
+        QCoreApplication::processEvents();
+
+        require(!empty->property("visible").toBool(),
+                QStringLiteral("the empty notice stayed up beside real results"));
+        // Three hits plus the header each group earns.
+        require(standalone->property("rows").toList().size() == 6,
+                QStringLiteral("the three result groups did not each get a heading"));
+
+        // A body is drawn as rich text, so tags a sender wrote must arrive as
+        // characters rather than as markup this app renders for them. The
+        // offscreen platform never lays the list out, so the helper the rows
+        // call is exercised directly rather than through a delegate.
+        QQmlExpression markup(qmlContext(standalone.get()), standalone.get(),
+                              QStringLiteral("SearchHighlight.markup('<b>Hola</b> shuki & co', 'hola', '#25D366')"));
+        const auto bodyText = markup.evaluate().toString();
+        require(!markup.hasError(), QStringLiteral("the highlight helper could not be called"));
+        require(bodyText.contains(QStringLiteral("&lt;b&gt;")) && bodyText.contains(QStringLiteral("&lt;/b&gt;"))
+                    && bodyText.contains(QStringLiteral("&amp; co")),
+                QStringLiteral("a message body was rendered as markup instead of text"));
+        require(bodyText.contains(QStringLiteral("<font color=\"#25D366\"><b>Hola</b></font>")),
+                QStringLiteral("the matched run in a message body was not tinted"));
+
+        standalone->setProperty("contactHits", QVariantList{});
+        QCoreApplication::processEvents();
+        require(standalone->property("rows").toList().size() == 4,
+                QStringLiteral("an empty group left its heading behind"));
+
+        standaloneItem->setParentItem(nullptr);
+        return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (backendLifecycleTest) {
         auto verifyOwnership = [&backend] {
@@ -1821,6 +2417,49 @@ int main(int argc, char *argv[])
         backend.discardClipboardImage(localUrl);
         return copied && !QFileInfo::exists(path) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
+    if (fileDropTest) {
+        if (engine.rootObjects().isEmpty())
+            return EXIT_FAILURE;
+        auto *root = engine.rootObjects().constFirst();
+        auto *dropArea = root->findChild<QObject *>(QStringLiteral("fileDropArea"));
+        auto *dialog = root->findChild<QObject *>(QStringLiteral("dropSendDialog"));
+        if (dropArea == nullptr || dialog == nullptr)
+            return EXIT_FAILURE;
+        // Dropping onto no conversation has nowhere to send, so the area stays
+        // inert until a chat is open.
+        if (dropArea->property("enabled").toBool())
+            return EXIT_FAILURE;
+        dialog->setProperty("files", QVariantList{QStringLiteral("file:///tmp/one.png")});
+        QMetaObject::invokeMethod(dialog, "open");
+        QCoreApplication::processEvents();
+        auto *caption = root->findChild<QObject *>(QStringLiteral("dropCaptionField"));
+        if (caption == nullptr || !caption->property("visible").toBool())
+            return EXIT_FAILURE;
+        // A caption belongs to one file. With several, WhatsApp asks per item
+        // and this dialog does not, so it must not offer a single shared one.
+        dialog->setProperty("files", QVariantList{QStringLiteral("file:///tmp/one.png"),
+                                                  QStringLiteral("file:///tmp/two.png")});
+        QCoreApplication::processEvents();
+        if (caption->property("visible").toBool())
+            return EXIT_FAILURE;
+        // With --screenshot the same run captures the dialog, so its appearance
+        // can be reviewed without driving the live window.
+        if (!screenshotPath.isEmpty()) {
+            dialog->setProperty("files", QVariantList{QStringLiteral("file:///tmp/quarterly-report.pdf")});
+            QMetaObject::invokeMethod(dialog, "open");
+            auto *window = qobject_cast<QQuickWindow *>(root);
+            if (window == nullptr)
+                return EXIT_FAILURE;
+            int result = EXIT_FAILURE;
+            QTimer::singleShot(1200, &app, [window, screenshotPath, &result] {
+                result = window->grabWindow().save(screenshotPath) ? EXIT_SUCCESS : EXIT_FAILURE;
+                QCoreApplication::exit(result);
+            });
+            app.exec();
+            return result;
+        }
+        return EXIT_SUCCESS;
+    }
     if (smokeTest && screenshotPath.isEmpty()) {
         if (engine.rootObjects().isEmpty())
             return EXIT_FAILURE;
@@ -1831,7 +2470,82 @@ int main(int argc, char *argv[])
         auto *navigationRail = root->findChild<QObject *>(QStringLiteral("navigationRail"));
         auto *selectedNavigation = root->findChild<QObject *>(QStringLiteral("navigationChatsBackground"));
         auto *chatBackgroundPattern = root->findChild<QObject *>(QStringLiteral("chatBackgroundPattern"));
-        if (!navigationRail || !selectedNavigation || !chatBackgroundPattern)
+        // Starred messages live in the main menu, as they do in WhatsApp Web,
+        // and the destination they open has to exist alongside the entry.
+        auto *starredMenuItem = root->findChild<QObject *>(QStringLiteral("starredMessagesMenuItem"));
+        auto *starredDialog = root->findChild<QObject *>(QStringLiteral("starredMessagesDialog"));
+        // WhatsApp Web puts an overflow menu at the right of the conversation
+        // header. Only the entries with real behaviour are offered, so the
+        // menu never shows a control that does nothing when clicked.
+        auto *conversationMenuButton = root->findChild<QObject *>(QStringLiteral("conversationMenuButton"));
+        auto *conversationMenu = root->findChild<QObject *>(QStringLiteral("conversationMenu"));
+        // The app menu gained the PWA's own first entries; both need the
+        // destination they open to exist alongside them.
+        const QStringList appMenuItems{
+            QStringLiteral("newGroupMenuItem"),
+            QStringLiteral("newGroupDialog"),
+            QStringLiteral("newGroupNameField"),
+            QStringLiteral("newGroupCreateAction"),
+            QStringLiteral("markAllReadMenuItem"),
+            QStringLiteral("fileDropArea"),
+            QStringLiteral("fileDropOverlay"),
+            QStringLiteral("dropSendDialog"),
+            QStringLiteral("dropSendAction"),
+            QStringLiteral("newListDialog"),
+            QStringLiteral("newListNameField"),
+            QStringLiteral("newListCreateAction"),
+            QStringLiteral("filterAddButton"),
+            QStringLiteral("selectChatsMenuItem"),
+            QStringLiteral("chatSelectionBar"),
+            QStringLiteral("chatSelectionCancelButton"),
+            QStringLiteral("chatSelectionArchiveButton"),
+            QStringLiteral("messageSelectionBar"),
+            QStringLiteral("messageSelectionCountLabel"),
+            QStringLiteral("messageSelectionStarButton"),
+            QStringLiteral("messageSelectionDeleteButton"),
+            QStringLiteral("conversationSelectItem"),
+            QStringLiteral("conversationBlockItem"),
+            QStringLiteral("conversationDeleteItem"),
+            QStringLiteral("conversationDeleteDialog"),
+            QStringLiteral("pairingAccountSwitcher"),
+            QStringLiteral("pairingBackButton"),
+            QStringLiteral("navigationMediaButton"),
+            QStringLiteral("mediaLibraryPane"),
+            QStringLiteral("mediaLibraryList"),
+        };
+        // Nothing has been switched away from in a fresh window, so the linking
+        // screen's back arrow must stay hidden rather than offering a profile
+        // that was never open.
+        auto *pairingBack = root->findChild<QObject *>(QStringLiteral("pairingBackButton"));
+        if (pairingBack != nullptr && pairingBack->property("visible").toBool())
+            return EXIT_FAILURE;
+        // The row menu's entries live in a delegate, so they only exist once
+        // the list has chats; the smoke run has none and cannot assert them.
+        for (const auto &name : appMenuItems) {
+            if (root->findChild<QObject *>(name) == nullptr)
+                return EXIT_FAILURE;
+        }
+        const QStringList conversationMenuItems{
+            QStringLiteral("conversationContactInfoItem"),
+            QStringLiteral("conversationSearchItem"),
+            QStringLiteral("conversationMuteItem"),
+            QStringLiteral("conversationCloseItem"),
+        };
+        for (const auto &name : conversationMenuItems) {
+            if (root->findChild<QObject *>(name) == nullptr)
+                return EXIT_FAILURE;
+        }
+        // The PWA rail runs on a 44 px pitch: a 10 px inset, 40 px actions and
+        // 4 px gaps. Pinning the three values keeps the rhythm from drifting
+        // back to the 46 px pitch that pushed every action out of alignment.
+        auto *navigationRailColumn = root->findChild<QObject *>(QStringLiteral("navigationRailColumn"));
+        if (!navigationRail || !selectedNavigation || !chatBackgroundPattern
+            || !starredMenuItem || !starredDialog
+            || !conversationMenuButton || !conversationMenu || !navigationRailColumn)
+            return EXIT_FAILURE;
+        if (navigationRailColumn->property("anchors").value<QObject *>()->property("topMargin").toReal() != 10
+            || navigationRailColumn->property("anchors").value<QObject *>()->property("bottomMargin").toReal() != 10
+            || navigationRailColumn->property("spacing").toReal() != 4)
             return EXIT_FAILURE;
         const auto railColor = navigationRail->property("color").value<QColor>();
         const auto selectedColor = selectedNavigation->property("color").value<QColor>();
@@ -1845,7 +2559,62 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (!screenshotPath.isEmpty()) {
-        QTimer::singleShot(1200, &app, [&engine, screenshotPath] {
+        QTimer::singleShot(1000, &app, [&engine, &backend, openDialogName, screenshotSearchQuery, screenshotRemoveAccount] {
+            // A screenshot of a dialog needs the dialog on screen; opening it by
+            // name keeps that out of the shipping UI.
+            if (engine.rootObjects().isEmpty())
+                return;
+            // The same reasoning covers the sidebar results, which otherwise
+            // need a keystroke nobody can send to a screenshot run.
+            if (!screenshotSearchQuery.isEmpty()) {
+                auto *field = engine.rootObjects().constFirst()->findChild<QObject *>(QStringLiteral("chatSearchField"));
+                if (field != nullptr)
+                    field->setProperty("text", screenshotSearchQuery);
+                backend.searchChats(screenshotSearchQuery);
+            }
+            if (openDialogName.isEmpty())
+                return;
+            auto *dialog = engine.rootObjects().constFirst()->findChild<QObject *>(openDialogName);
+            if (dialog != nullptr)
+                QMetaObject::invokeMethod(dialog, "open");
+        });
+        // The in-conversation panel needs a chat open and the daemon's answer,
+        // neither of which a screenshot run can click its way to.
+        if (!screenshotConversationSearch.isEmpty()) {
+            QTimer::singleShot(3500, &app, [&engine, screenshotConversationSearch] {
+                if (engine.rootObjects().isEmpty())
+                    return;
+                auto *root = engine.rootObjects().constFirst();
+                QMetaObject::invokeMethod(root, "openConversationSearch");
+                auto *panel = root->findChild<QObject *>(QStringLiteral("chatSearchPanel"));
+                if (panel != nullptr)
+                    QMetaObject::invokeMethod(panel, "queryEdited", Q_ARG(QString, screenshotConversationSearch));
+            });
+        }
+
+        // The removal dialog is the only way an account is deleted, so the path
+        // under test is the dialog's own, not the client call alone. It waits
+        // for the account's own daemon to be up, which is the state the
+        // teardown has to survive.
+        if (!screenshotRemoveAccount.isEmpty()) {
+            QTimer::singleShot(4000, &app, [&engine, screenshotRemoveAccount] {
+                if (engine.rootObjects().isEmpty())
+                    return;
+                auto *dialog = engine.rootObjects().constFirst()->findChild<QObject *>(QStringLiteral("removeAccountDialog"));
+                if (dialog == nullptr)
+                    return;
+                dialog->setProperty("profile", screenshotRemoveAccount);
+                QMetaObject::invokeMethod(dialog, "open");
+                QMetaObject::invokeMethod(dialog, "accept");
+            });
+        }
+
+        // A search has three round trips to make before there is anything to
+        // photograph, which the dialog case does not.
+        const int grabDelay = !screenshotRemoveAccount.isEmpty() ? 8000
+            : !screenshotConversationSearch.isEmpty() ? 7000
+            : (screenshotSearchQuery.isEmpty() ? 1800 : 5000);
+        QTimer::singleShot(grabDelay, &app, [&engine, screenshotPath] {
             if (engine.rootObjects().isEmpty()) {
                 QCoreApplication::exit(EXIT_FAILURE);
                 return;

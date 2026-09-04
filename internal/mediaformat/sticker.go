@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"golang.org/x/image/webp"
+
+	"github.com/shukiv/whatsappgo/internal/imagesafe"
 )
 
 const maxStickerBytes = 16 << 20
@@ -29,25 +31,43 @@ func StickerPNG(path string) (string, error) {
 	if info, err := os.Stat(target); err == nil && info.Size() > 0 {
 		return target, nil
 	}
+	// The size is checked before reading so an implausibly large file is
+	// rejected rather than pulled into memory first.
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() > maxStickerBytes {
+		return "", errors.New("sticker is too large to convert")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	if len(data) > maxStickerBytes {
-		return "", errors.New("sticker is too large to convert")
-	}
-	decoded, err := webp.Decode(bytes.NewReader(data))
+	// The header is checked before decoding: a sticker may declare a canvas of
+	// sixteen thousand pixels a side, which would be allocated in full before
+	// any pixel was read.
+	decoded, err := decodeWebP(data)
 	if err != nil {
 		frame, frameErr := firstAnimatedFrame(data)
 		if frameErr != nil {
 			return "", err
 		}
-		decoded, err = webp.Decode(bytes.NewReader(frame))
+		decoded, err = decodeWebP(frame)
 		if err != nil {
 			return "", err
 		}
 	}
 	return writePNG(target, decoded)
+}
+
+func decodeWebP(data []byte) (image.Image, error) {
+	if err := imagesafe.EnsureDecodable(data, imagesafe.MaxThumbnailPixels); err != nil {
+		return nil, err
+	}
+	return imagesafe.Recovered(func() (image.Image, error) {
+		return webp.Decode(bytes.NewReader(data))
+	})
 }
 
 func writePNG(target string, source image.Image) (string, error) {
@@ -86,11 +106,14 @@ func firstAnimatedFrame(data []byte) ([]byte, error) {
 		return nil, errors.New("invalid WebP container")
 	}
 	for offset := 12; offset+8 <= len(data); {
-		length := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
-		end := offset + 8 + length
-		if length < 0 || end > len(data) {
+		// The declared length is compared against the bytes that remain, so a
+		// chunk header claiming more than the file holds cannot produce an
+		// out-of-range slice, and the arithmetic cannot wrap on any platform.
+		length := uint64(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+		if length > uint64(len(data)-offset-8) {
 			return nil, errors.New("invalid WebP chunk")
 		}
+		end := offset + 8 + int(length)
 		if string(data[offset:offset+4]) == "ANMF" {
 			payload := data[offset+8 : end]
 			if len(payload) < 24 {
@@ -113,7 +136,7 @@ func firstAnimatedFrame(data []byte) ([]byte, error) {
 			binary.LittleEndian.PutUint32(result[4:8], uint32(len(body)))
 			return append(result, body...), nil
 		}
-		offset = end + length%2
+		offset = end + int(length%2)
 	}
 	return nil, errors.New("animated WebP has no frame")
 }

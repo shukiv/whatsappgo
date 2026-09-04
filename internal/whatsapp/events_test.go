@@ -760,3 +760,169 @@ func TestHistorySyncKeepsDeliveryState(t *testing.T) {
 		t.Fatalf("delivery state regressed to %q", stored.Status)
 	}
 }
+
+func TestConnectSweepRunsOneAtATime(t *testing.T) {
+	c := &Client{}
+	if !c.beginConnectSweep() {
+		t.Fatal("the first sweep was refused")
+	}
+	// A reconnect while a sweep is running must not start a second one: the
+	// two would suppress each other's page requests and then conclude the
+	// conversations had no more history.
+	if c.beginConnectSweep() {
+		t.Fatal("a second sweep started alongside the first")
+	}
+	c.endConnectSweep()
+	if !c.beginConnectSweep() {
+		t.Fatal("a sweep could not start after the previous one finished")
+	}
+	c.endConnectSweep()
+}
+
+func TestReceiptsThatReportNoProgressLeaveTheMarkAlone(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	chat := types.NewJID("123", types.DefaultUserServer)
+	if err := st.UpsertMessage(ctx, model.Message{ID: "m1", ChatJID: chat.String(), Timestamp: 1,
+		Kind: "text", Body: "hi", FromMe: true, Status: "sent"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+
+	// A failed send and an inactive device say nothing about delivery.
+	for _, receiptType := range []types.ReceiptType{types.ReceiptTypeServerError, types.ReceiptTypeInactive} {
+		c.handleReceipt(&waEvents.Receipt{
+			MessageSource: types.MessageSource{Chat: chat},
+			MessageIDs:    []types.MessageID{"m1"},
+			Type:          receiptType,
+			Timestamp:     time.Unix(10, 0),
+		})
+		stored, err := st.GetMessage(ctx, chat.String(), "m1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Status != "sent" {
+			t.Fatalf("%v marked the message %q", receiptType, stored.Status)
+		}
+	}
+
+	// A real delivery receipt still moves it along.
+	c.handleReceipt(&waEvents.Receipt{
+		MessageSource: types.MessageSource{Chat: chat},
+		MessageIDs:    []types.MessageID{"m1"},
+		Type:          types.ReceiptTypeDelivered,
+		Timestamp:     time.Unix(20, 0),
+	})
+	stored, err := st.GetMessage(ctx, chat.String(), "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "delivered" {
+		t.Fatalf("a delivery receipt left the message %q", stored.Status)
+	}
+}
+
+func TestStarAppStateEventUpdatesLocalMessage(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	jid := types.NewJID("123", types.DefaultUserServer)
+	if err := st.UpsertMessage(ctx, model.Message{ID: "m1", ChatJID: jid.String(),
+		Timestamp: 10, Kind: "text", Body: "keep me"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+	// Starring on the phone reaches a linked device only as this app-state
+	// event, so without it the flag would never arrive here.
+	c.handleEvent(&waEvents.Star{ChatJID: jid, MessageID: "m1", IsFromMe: false,
+		Timestamp: time.Unix(1_700_000_000, 0),
+		Action:    &waSyncAction.StarAction{Starred: proto.Bool(true)}})
+	stored, err := st.GetMessage(ctx, jid.String(), "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Starred {
+		t.Fatal("star app-state event did not star the local message")
+	}
+	c.handleEvent(&waEvents.Star{ChatJID: jid, MessageID: "m1", IsFromMe: false,
+		Timestamp: time.Unix(1_700_000_100, 0),
+		Action:    &waSyncAction.StarAction{Starred: proto.Bool(false)}})
+	if stored, err = st.GetMessage(ctx, jid.String(), "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Starred {
+		t.Fatal("unstarring on another device left the message starred")
+	}
+}
+
+func TestMessageFromEventReadsForwardingScore(t *testing.T) {
+	newEvent := func(context *waE2E.ContextInfo) *waEvents.Message {
+		return &waEvents.Message{
+			Info: types.MessageInfo{MessageSource: types.MessageSource{
+				Chat: types.NewJID("123", types.DefaultUserServer)}, ID: "m1", Timestamp: time.Unix(100, 0)},
+			Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String("passed along"), ContextInfo: context}},
+		}
+	}
+	// The first hop of a chain is flagged without a score, and it still has to
+	// show the "Forwarded" label.
+	first := messageFromEvent(newEvent(&waE2E.ContextInfo{IsForwarded: proto.Bool(true)}))
+	if first.ForwardingScore != 1 {
+		t.Fatalf("flagged forward scored %d, want 1", first.ForwardingScore)
+	}
+	long := messageFromEvent(newEvent(&waE2E.ContextInfo{
+		IsForwarded: proto.Bool(true), ForwardingScore: proto.Uint32(7)}))
+	if long.ForwardingScore != 7 {
+		t.Fatalf("forwarding score = %d, want 7", long.ForwardingScore)
+	}
+	plain := messageFromEvent(newEvent(nil))
+	if plain.ForwardingScore != 0 {
+		t.Fatalf("an ordinary message scored %d, want 0", plain.ForwardingScore)
+	}
+}
+
+func TestStarPatchKeyLeavesTheSenderSlotEmptyExceptForGroupMessages(t *testing.T) {
+	direct := types.NewJID("123", types.DefaultUserServer)
+	group := types.NewJID("456", types.GroupServer)
+	participant := types.NewJID("789", types.DefaultUserServer)
+	// WhatsApp reads the literal "0" as "this key needs no sender". An empty
+	// JID serialises to "" instead, and the server accepts that key silently
+	// while the phone never matches it, so the star simply never appears.
+	for _, tc := range []struct {
+		name      string
+		chat      types.JID
+		senderJID string
+		fromMe    bool
+		want      string
+	}{
+		{"own message in a direct chat", direct, "", true, "0"},
+		{"their message in a direct chat", direct, direct.String(), false, "0"},
+		{"own message in a group", group, "", true, "0"},
+		{"someone else's group message", group, participant.String(), false, participant.String()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sender, err := starSenderJID(tc.chat, tc.senderJID, tc.fromMe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			patch := appstate.BuildStar(tc.chat, sender, "m1", tc.fromMe, true)
+			if len(patch.Mutations) != 1 {
+				t.Fatalf("patch carries %d mutations, want 1", len(patch.Mutations))
+			}
+			index := patch.Mutations[0].Index
+			if len(index) != 5 {
+				t.Fatalf("index = %v, want 5 elements", index)
+			}
+			if index[4] != tc.want {
+				t.Fatalf("sender slot = %q, want %q (index %v)", index[4], tc.want, index)
+			}
+		})
+	}
+}

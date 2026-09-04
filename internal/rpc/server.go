@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"os"
 	"sync"
@@ -27,6 +28,11 @@ type Server struct {
 	closeOnce sync.Once
 	connMu    sync.Mutex
 	conns     map[net.Conn]struct{}
+
+	// socketCheckInterval overrides how often Serve confirms it still owns
+	// its socket. Zero means the default; only tests set it, and only before
+	// Serve starts, so the watcher goroutine never races the writer.
+	socketCheckInterval time.Duration
 }
 
 func NewServer(path string, handler Handler, broker *appEvents.Broker) *Server {
@@ -34,15 +40,8 @@ func NewServer(path string, handler Handler, broker *appEvents.Broker) *Server {
 }
 
 func (s *Server) Listen() error {
-	if err := removeStaleSocket(s.path); err != nil {
-		return err
-	}
-	ln, err := net.Listen("unix", s.path)
+	ln, err := listen(s.path)
 	if err != nil {
-		return err
-	}
-	if err := os.Chmod(s.path, 0o600); err != nil {
-		ln.Close()
 		return err
 	}
 	s.listener = ln
@@ -56,6 +55,18 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}
 	go func() { <-ctx.Done(); s.Close() }()
+	// A daemon whose socket was taken away can no longer be reached, but it
+	// keeps running and keeps its databases open. Stop instead, so the next
+	// client start-up replaces it rather than stacking another one on top.
+	replaced := watchListener(ctx, s.path, s.socketCheckInterval)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-replaced:
+			log.Printf("stopping: another process replaced %s", s.path)
+			s.Close()
+		}
+	}()
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -95,6 +106,12 @@ func (s *Server) Close() error {
 	return err
 }
 
+// maxConcurrentRequests bounds the work one connection can have running. It is
+// large enough that a search never waits behind the avatar and media requests a
+// scrolling list produces, and small enough to keep a runaway client from
+// starting unbounded work.
+const maxConcurrentRequests = 8
+
 func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(parent)
@@ -126,6 +143,13 @@ func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 			}
 		}
 	}()
+	// Requests are handled off the read loop so that a slow one - a media
+	// download, a history page - does not hold up every request behind it. The
+	// desktop matches replies to requests by id, so order is free to change.
+	// The slot count bounds the work a burst of requests can start at once.
+	slots := make(chan struct{}, maxConcurrentRequests)
+	var inFlight sync.WaitGroup
+	defer inFlight.Wait()
 	for {
 		var req Request
 		_ = conn.SetReadDeadline(time.Time{})
@@ -135,40 +159,37 @@ func (s *Server) serveConn(parent context.Context, conn net.Conn) {
 			}
 			return
 		}
-		resp := Response{Version: ProtocolVersion, ID: req.ID}
-		if req.Version != ProtocolVersion {
-			resp.Error = &Error{Code: "unsupported_version", Message: "unsupported protocol version"}
-		} else if req.ID == "" || req.Method == "" {
-			resp.Error = &Error{Code: "invalid_request", Message: "id and method are required"}
-		} else {
+		if req.Version != ProtocolVersion || req.ID == "" || req.Method == "" {
+			resp := Response{Version: ProtocolVersion, ID: req.ID}
+			if req.Version != ProtocolVersion {
+				resp.Error = &Error{Code: "unsupported_version", Message: "unsupported protocol version"}
+			} else {
+				resp.Error = &Error{Code: "invalid_request", Message: "id and method are required"}
+			}
+			if err := write(resp); err != nil {
+				return
+			}
+			continue
+		}
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		inFlight.Add(1)
+		go func(req Request) {
+			defer inFlight.Done()
+			defer func() { <-slots }()
+			resp := Response{Version: ProtocolVersion, ID: req.ID}
 			result, err := s.handler.Handle(ctx, req.Method, req.Params)
 			if err != nil {
 				resp.Error = &Error{Code: "request_failed", Message: err.Error()}
 			} else {
 				resp.Result = result
 			}
-		}
-		if err := write(resp); err != nil {
-			return
-		}
+			if write(resp) != nil {
+				cancel()
+			}
+		}(req)
 	}
-}
-
-func removeStaleSocket(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return errors.New("refusing to replace non-socket path: " + path)
-	}
-	conn, err := net.DialTimeout("unix", path, 150*time.Millisecond)
-	if err == nil {
-		conn.Close()
-		return errors.New("daemon is already listening on " + path)
-	}
-	return os.Remove(path)
 }

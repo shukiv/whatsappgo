@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -15,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/imagesafe"
 	"github.com/shukiv/whatsappgo/internal/linkpreview"
 	"github.com/shukiv/whatsappgo/internal/model"
 	localstore "github.com/shukiv/whatsappgo/internal/store"
@@ -92,10 +92,13 @@ func (c *Client) withCachedOutgoingLinkPreview(msg model.Message, preview model.
 	return msg
 }
 
-// RefreshLinkPreview replaces the tiny inline image WhatsApp sometimes puts
-// in a synced link card. It is called only for a card the desktop is already
-// displaying, so opening one chat does not crawl links from other private
-// conversations.
+// RefreshLinkPreview replaces the tiny inline image WhatsApp sometimes puts in
+// a synced link card by asking the linked page for a larger one.
+//
+// The desktop requests this for the link cards in the page of messages it has
+// loaded, so opening a conversation can fetch from several sites at once. It
+// never reaches links in conversations that were not opened, and each message
+// is attempted once per session.
 func (c *Client) RefreshLinkPreview(ctx context.Context, chatJID, messageID string) (model.Message, error) {
 	message, err := c.store.GetMessage(ctx, chatJID, messageID)
 	if err != nil {
@@ -117,7 +120,12 @@ func (c *Client) RefreshLinkPreview(ctx context.Context, chatJID, messageID stri
 	}
 	preview, err := resolver(ctx, message.LinkURL)
 	if err != nil {
-		return model.Message{}, err
+		// A preview that cannot be fetched is a normal outcome for a link in a
+		// message: the site may be down, may block us, or may not describe
+		// itself. The message is returned unchanged rather than reported as a
+		// failure, which used to put a raw transport error in front of the
+		// reader.
+		return message, nil
 	}
 	extension := ".jpg"
 	if preview.ThumbnailMIME == "image/png" {
@@ -156,8 +164,10 @@ func (c *Client) writeThumbnailFile(key string, data []byte, ext string, replace
 	if len(data) == 0 || len(data) > maxInlineThumbnail || ext == "" {
 		return ""
 	}
-	// A truncated or unrecognised payload would render as a broken picture.
-	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+	// A truncated or unrecognised payload would render as a broken picture,
+	// and one that merely claims an enormous canvas would exhaust memory
+	// before a single pixel was read.
+	if err := imagesafe.EnsureDecodable(data, imagesafe.MaxThumbnailPixels); err != nil {
 		return ""
 	}
 	dir := filepath.Join(c.mediaDir, "thumbnails")

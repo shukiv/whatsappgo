@@ -3,7 +3,7 @@
 ## Toolchain
 
 WhatsAppGo requires Go 1.26+, CMake 3.22+, a C++20 compiler, Qt 6.5+ (Core,
-Gui, Quick, Quick Controls 2, Network, Multimedia), and KF6 Kirigami.
+Gui, Quick, Quick Controls 2, Network, Multimedia).
 
 On Debian 13:
 
@@ -11,8 +11,7 @@ On Debian 13:
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev qt6-multimedia-dev \
-  libkirigami-dev extra-cmake-modules \
-  qml6-module-org-kde-kirigami qml6-module-org-kde-desktop \
+  qml6-module-org-kde-desktop \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 ```
 
@@ -47,10 +46,13 @@ go vet ./...
 ctest --test-dir desktop/build --output-on-failure
 ```
 
-The desktop suite covers QML startup, clean stderr, themes, search navigation,
-selectable/linkified messages, clipboard images, unread/multiline layout,
-media preview, filters, automatic pairing, backend ownership, and bubble-tail
-rendering. Tests use offscreen Qt and isolated XDG paths when they persist data.
+The desktop suite currently contains 26 tests. It covers QML startup, clean
+stderr, themes, search and quoted-message navigation, selectable/linkified
+messages, clipboard images, message and chat-list wheel scrolling during model
+updates, presence, status-notification suppression, media preview/playback,
+played receipts, filters, compact geometry, menu edge clamping, automatic
+pairing, backend ownership, and bubble-tail rendering. Tests use offscreen Qt
+and isolated XDG paths when they persist data.
 
 When fixing a bug, add a focused regression that fails before the production
 change. Storage tests use in-memory SQLite. WhatsApp adapter tests exercise
@@ -101,6 +103,23 @@ virtualized, cap media dimensions, preserve RTL/Unicode text, and add accessible
 names for icon-only controls. Avoid transformed negative-z primitives in list
 delegates; some software/hybrid-GPU scene graphs render them as unbounded
 stripes.
+
+The native desktop geometry is specified in
+[`design-system/whatsappgo/pages/desktop.md`](../design-system/whatsappgo/pages/desktop.md).
+Its measured baselines include a 64 px rail and headers, 40 px rail actions,
+32 px filter chips, 36 px menu rows, and component-specific popup widths. Do not
+reintroduce a single oversized default for all menus. Responsive filter ordering
+and overflow behavior are part of the specification, not screenshot-only polish.
+
+`Popup` content may not reach its final height until the first polish after
+`open()`. Shared menus therefore clamp both before and after opening and whenever
+their final implicit height changes. Tests for a bottom-edge message menu must
+assert both the action menu and paired reaction tray remain within the window.
+
+Let `ListView` handle ordinary mouse-wheel physics. Code that restores an anchor
+after pagination or a real reorder must key it by stable message/chat identity
+and pixel offset. Avatar, preview, unread, receipt, and presence refreshes must
+not reset `contentY`, `currentIndex`, or force the list back to an endpoint.
 
 Declare QtMultimedia objects inside a `Loader` that is inactive until they are
 needed. A `MediaPlayer` or `VideoOutput` created at startup initialises the

@@ -1,7 +1,8 @@
 # Installing WhatsAppGo
 
 WhatsAppGo is currently distributed as source. The repository contains Debian,
-RPM, Flatpak, and AppImage packaging definitions, but no signed binary release
+RPM, Flatpak and AppImage definitions for Linux, an Inno Setup installer for
+Windows and a bundle-and-notarise script for macOS, but no signed binary release
 is published yet.
 
 The desktop application and its Go backend are installed together. Start only
@@ -9,13 +10,12 @@ The desktop application and its Go backend are installed together. Start only
 
 ## Requirements
 
-- Linux
+- Linux, Windows 10 or newer, or macOS 12 or newer
 - Go 1.26 or newer
 - CMake 3.22 or newer
 - a C++20 compiler and `pkg-config`
 - Qt 6.5 or newer: Base (including Widgets), Declarative/Quick, Quick Controls,
   Network, and Multimedia
-- KDE Frameworks 6 Kirigami
 
 If an older Go installation supports toolchain selection, leave
 `GOTOOLCHAIN=auto` enabled so Go can obtain the version declared by `go.mod`.
@@ -26,8 +26,7 @@ If an older Go installation supports toolchain selection, leave
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev qt6-multimedia-dev \
-  libkirigami-dev extra-cmake-modules \
-  qml6-module-org-kde-kirigami qml6-module-org-kde-desktop \
+  qml6-module-org-kde-desktop \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 ```
 
@@ -36,14 +35,14 @@ sudo apt-get install -y build-essential cmake ninja-build pkg-config \
 ```bash
 sudo dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config \
   qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel \
-  kf6-kirigami-devel
+  kf6-qqc2-desktop-style
 ```
 
 ### Arch Linux and Manjaro
 
 ```bash
 sudo pacman -S --needed base-devel cmake ninja pkgconf \
-  qt6-base qt6-declarative qt6-multimedia kirigami
+  qt6-base qt6-declarative qt6-multimedia qqc2-desktop-style
 ```
 
 The repository can check the native dependencies without changing the system:
@@ -51,6 +50,54 @@ The repository can check the native dependencies without changing the system:
 ```bash
 make check-desktop-deps
 ```
+
+`make check-desktop-deps` is a Linux check; on Windows and macOS the Qt
+installer provides everything the build needs.
+
+### Windows
+
+Install Qt 6.5 or newer (Base, Declarative, Quick Controls, Network,
+Multimedia), the Go toolchain, CMake and a C++ compiler. Then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -QtDir C:\Qt\6.8.2\msvc2022_64
+```
+
+That produces a portable ZIP under `build\`, and an installer as well when
+[Inno Setup](https://jrsoftware.org/isinfo.php) is installed. Pass
+`-SignThumbprint <thumbprint>` to sign every executable; unsigned builds run,
+but SmartScreen warns about them.
+
+The daemon and the desktop client talk over a named pipe rather than a
+filesystem socket, so nothing appears under the runtime directory on Windows.
+
+### macOS
+
+Install Qt 6.5 or newer, the Go toolchain and the Xcode command line tools,
+then:
+
+```bash
+CMAKE_PREFIX_PATH=~/Qt/6.8.2/macos packaging/macos/build.sh
+```
+
+That produces `build/macos/whatsappgo.app` and a DMG beside it. Signing and
+notarisation run only when the environment provides credentials:
+
+```bash
+export MACOS_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export MACOS_NOTARY_PROFILE=whatsappgo   # from 'xcrun notarytool store-credentials'
+packaging/macos/build.sh
+```
+
+Without them the bundle is unsigned: it runs on the machine that built it, and
+Gatekeeper refuses it anywhere else.
+
+### Notifications away from Linux
+
+On Linux the daemon posts notifications to the desktop's own service, so they
+appear whether or not the window is open. Windows and macOS route notifications
+through the foreground application, so there the daemon hands the message to the
+desktop client and notifications appear only while WhatsAppGo is running.
 
 ## Build and run without installing
 

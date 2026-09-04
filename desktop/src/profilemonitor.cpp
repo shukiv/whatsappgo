@@ -45,6 +45,19 @@ ProfileMonitor::ProfileMonitor(const QString &profile, const QString &socketPath
     QTimer::singleShot(0, this, &ProfileMonitor::connectSocket);
 }
 
+void ProfileMonitor::shutdown()
+{
+    m_reconnectTimer.stop();
+    m_refreshTimer.stop();
+    // Drop the socket's own signals first: aborting a connected socket emits
+    // disconnected and errorOccurred, and those handlers would start the
+    // reconnect timer again on an object that is about to go.
+    m_socket.disconnect();
+    m_socket.abort();
+    m_pendingId.clear();
+    m_refreshAgain = false;
+}
+
 void ProfileMonitor::connectSocket()
 {
     if (m_socket.state() == QLocalSocket::UnconnectedState)

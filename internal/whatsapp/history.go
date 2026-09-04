@@ -81,6 +81,9 @@ func (c *Client) collectChatHistory(ctx context.Context, chatJID string) (int, b
 			return collected, true
 		}
 		if err := c.RequestHistory(ctx, chatJID, historyPageSize); err != nil {
+			// An identical request is already outstanding, so this sweep must
+			// not decide anything about the conversation: concluding it was
+			// exhausted would mark it finished for good.
 			return collected, false
 		}
 		added, arrived := c.awaitOlderHistory(ctx, chatJID, before)

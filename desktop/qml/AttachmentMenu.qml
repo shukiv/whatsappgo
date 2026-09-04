@@ -5,7 +5,8 @@ import org.whatsappgo
 WhatsAppMenuPopup {
     id: root
     objectName: "attachmentMenu"
-    width: 224
+    width: 154
+    property int actionHeight: 35
 
     signal documentRequested()
     signal photosVideosRequested()
@@ -17,6 +18,7 @@ WhatsAppMenuPopup {
     WhatsAppMenuItem {
         id: documentAction
         objectName: "attachmentDocument"
+        height: root.actionHeight
         text: qsTr("Document")
         iconSource: Qt.resolvedUrl("icons/document.svg")
         iconTint: Theme.attachmentDocument
@@ -28,6 +30,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentPhotosVideos"
+        height: root.actionHeight
         text: qsTr("Photos and videos")
         iconSource: Qt.resolvedUrl("icons/gallery.svg")
         iconTint: Theme.attachmentMedia
@@ -39,6 +42,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentCamera"
+        height: root.actionHeight
         text: qsTr("Camera")
         iconSource: Qt.resolvedUrl("icons/camera.svg")
         iconTint: Theme.attachmentCamera
@@ -51,6 +55,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentAudio"
+        height: root.actionHeight
         text: qsTr("Audio")
         iconSource: Qt.resolvedUrl("icons/headphones.svg")
         iconTint: Theme.attachmentAudio
@@ -62,6 +67,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentContact"
+        height: root.actionHeight
         text: qsTr("Contact")
         iconSource: Qt.resolvedUrl("icons/contact.svg")
         iconTint: Theme.attachmentContact
@@ -74,6 +80,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentPoll"
+        height: root.actionHeight
         text: qsTr("Poll")
         iconSource: Qt.resolvedUrl("icons/poll.svg")
         iconTint: Theme.attachmentPoll
@@ -86,6 +93,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentEvent"
+        height: root.actionHeight
         text: qsTr("Event")
         iconSource: Qt.resolvedUrl("icons/calendar.svg")
         iconTint: Theme.attachmentEvent
@@ -98,6 +106,7 @@ WhatsAppMenuPopup {
 
     WhatsAppMenuItem {
         objectName: "attachmentSticker"
+        height: root.actionHeight
         text: qsTr("New sticker")
         iconSource: Qt.resolvedUrl("icons/sticker.svg")
         iconTint: Theme.attachmentSticker

@@ -529,11 +529,97 @@ Item {
                 ctx.moveTo(12, 14)
                 ctx.lineTo(12, 17)
                 ctx.stroke()
+            } else if (root.kind === "check") {
+                // A plain tick for selection state; the receipt marks draw
+                // their own pair separately.
+                ctx.beginPath()
+                ctx.moveTo(5, 12.5)
+                ctx.lineTo(9.8, 17)
+                ctx.lineTo(19, 7)
+                ctx.stroke()
+            } else if (root.kind === "star" || root.kind === "star-filled") {
+                const points = 5
+                const outer = 8.6
+                const inner = 3.6
+                ctx.beginPath()
+                for (let i = 0; i < points * 2; ++i) {
+                    // Start at the top point rather than at angle zero, which
+                    // would stand the star on a vertex.
+                    const angle = -Math.PI / 2 + i * Math.PI / points
+                    const radius = (i % 2 === 0) ? outer : inner
+                    const px = 12 + Math.cos(angle) * radius
+                    const py = 12 + Math.sin(angle) * radius
+                    if (i === 0)
+                        ctx.moveTo(px, py)
+                    else
+                        ctx.lineTo(px, py)
+                }
+                ctx.closePath()
+                if (root.kind === "star-filled")
+                    ctx.fill()
+                else
+                    ctx.stroke()
+            } else if (root.kind === "forward") {
+                // An arrow curving out to the right: the mirror of reply.
+                ctx.beginPath()
+                ctx.moveTo(15, 17)
+                ctx.lineTo(20, 12)
+                ctx.lineTo(15, 7)
+                ctx.moveTo(20, 12)
+                ctx.lineTo(11, 12)
+                ctx.bezierCurveTo(6, 12, 4, 15, 4, 19)
+                ctx.stroke()
             } else if (root.kind === "chevron-right") {
                 ctx.beginPath()
                 ctx.moveTo(9, 5)
                 ctx.lineTo(16, 12)
                 ctx.lineTo(9, 19)
+                ctx.stroke()
+            } else if (root.kind === "info") {
+                ctx.beginPath()
+                ctx.arc(12, 12, 8.5, 0, Math.PI * 2)
+                ctx.stroke()
+                ctx.beginPath()
+                ctx.moveTo(12, 11)
+                ctx.lineTo(12, 16.5)
+                ctx.stroke()
+                ctx.beginPath()
+                ctx.arc(12, 7.8, 1.15, 0, Math.PI * 2)
+                ctx.fill()
+            } else if (root.kind === "play") {
+                ctx.beginPath()
+                ctx.moveTo(8, 5)
+                ctx.lineTo(19, 12)
+                ctx.lineTo(8, 19)
+                ctx.closePath()
+                ctx.fill()
+            } else if (root.kind === "sort") {
+                ctx.beginPath()
+                ctx.moveTo(4, 7)
+                ctx.lineTo(20, 7)
+                ctx.moveTo(6, 12)
+                ctx.lineTo(18, 12)
+                ctx.moveTo(9, 17)
+                ctx.lineTo(15, 17)
+                ctx.stroke()
+            } else if (root.kind === "plus") {
+                ctx.beginPath()
+                ctx.moveTo(12, 5)
+                ctx.lineTo(12, 19)
+                ctx.moveTo(5, 12)
+                ctx.lineTo(19, 12)
+                ctx.stroke()
+            } else if (root.kind === "block") {
+                ctx.beginPath()
+                ctx.arc(12, 12, 8.5, 0, Math.PI * 2)
+                ctx.moveTo(6, 18)
+                ctx.lineTo(18, 6)
+                ctx.stroke()
+            } else if (root.kind === "chevron-down") {
+                ctx.beginPath()
+                ctx.moveTo(5, 9)
+                ctx.lineTo(12, 16)
+                ctx.lineTo(19, 9)
                 ctx.stroke()
             }
 

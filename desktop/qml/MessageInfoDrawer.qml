@@ -11,7 +11,7 @@ Rectangle {
     property var message: ({})
     signal closeRequested()
 
-    width: Math.min(440, parent ? parent.width : 440)
+    width: Math.min(540, parent ? parent.width : 540)
     visible: opened
     color: Theme.surface
     border.width: 1
@@ -65,7 +65,7 @@ Rectangle {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 72
+            Layout.preferredHeight: 64
             color: Theme.surface
 
             RowLayout {

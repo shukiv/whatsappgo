@@ -6,7 +6,7 @@ WhatsAppGo is one user-facing desktop application implemented by two native
 processes:
 
 ```text
-whatsappgo (Qt 6 / QML / Kirigami)
+whatsappgo (Qt 6 / QML)
    │ starts, monitors, and stops
    ├── whatsappd --profile default
    ├── whatsappd --profile work
@@ -22,7 +22,8 @@ whatsappgo (Qt 6 / QML / Kirigami)
           │
           ├── device.db      keys, sessions, app state
           ├── messages.db    chats, messages, aliases, receipts
-          └── media/         downloaded media and avatars
+          ├── media.db       durable attachment bytes
+          └── media/         materialized media, previews, and avatars
 ```
 
 The Go helper remains a separate process for fault isolation and because the
@@ -44,6 +45,8 @@ but normal packages do not install or require systemd user units.
 - owns the application window and backend child-process lifecycle
 - renders virtualized chat/message lists and native controls
 - keeps only visible/paged message data in memory
+- preserves list anchors across pagination and in-place model refreshes
+- renders aspect-fit images and audio/video playback inside the application
 - sends typed RPC requests and consumes live events
 - manages account tabs, theme preference, clipboard, file dialogs, system tray,
   and interactive desktop notifications
@@ -131,8 +134,14 @@ network service.
 
 A link preview belongs to the message: the sending client resolves the page and
 puts the title, description, and a small picture inside the protobuf. WhatsAppGo
-stores those fields and renders them. It never requests the linked page, so
-reading a conversation reveals nothing to the sites it mentions.
+stores those fields and renders them as they arrived.
+
+Some senders embed a picture too small to fill a card. For those, and only for
+cards an open conversation is already showing, the daemon fetches the linked
+page once to read its preview image. That request is made from this computer,
+so opening such a conversation does tell those sites the link was looked at.
+Each message is attempted once per session, and a card whose stored picture is
+already wide enough is never refetched.
 
 History synchronisation strips the inline picture from media messages, and does
 not carry link previews for messages that predate this feature. Pictures are

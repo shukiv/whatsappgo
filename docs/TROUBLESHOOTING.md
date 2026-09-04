@@ -13,8 +13,9 @@ make desktop
 ## `module "org.kde.desktop" is not installed`
 
 Install the distribution's KDE desktop QML style module. On Debian 13 it is
-`qml6-module-org-kde-desktop`. Kirigami is a Qt component library and does not
-require the Plasma desktop session.
+`qml6-module-org-kde-desktop`. It is a Qt Quick Controls style and does not
+require the Plasma desktop session. The style is chosen only on Linux, and only
+when nothing has set `QT_QUICK_CONTROLS_STYLE`; Windows and macOS use Fusion.
 
 For a temporary diagnostic run, use:
 
@@ -80,6 +81,23 @@ The application cannot retrieve messages that WhatsApp did not provide to the
 linked device. Keep the phone and desktop online during initial sync and try
 scrolling to the oldest local boundary again.
 
+## A conversation or the chat list jumps while scrolling
+
+Current builds let the Qt list handle ordinary mouse-wheel input and preserve a
+stable row/message anchor while models update. Rebuild before diagnosing an old
+binary:
+
+```bash
+make desktop
+./desktop/build/whatsappgo
+```
+
+If a current build still jumps, note whether it is the conversation or chat
+list, whether older history was loading, and whether an avatar, preview, unread
+badge, or new message changed at the same moment. Include the Qt version,
+display scale, mouse versus touchpad, and a short screen recording. Do not send
+message text, phone numbers, or profile databases.
+
 ## Duplicate conversations for one person
 
 Restart a current build so directory synchronization can apply the verified
@@ -113,6 +131,15 @@ Conversations synced by an older build are filled in once, in the background,
 the next time the account connects; reopen the conversation afterwards. A
 message whose preview WhatsApp never sent still shows the descriptive row with
 a **Download** action.
+
+## An image is cropped or its open-image menu is missing
+
+Current builds open pictures inside WhatsAppGo at aspect-fit 100%. The whole
+source should be visible before zooming, including portrait and ultrawide
+screenshots. Clicking the open image with either mouse button shows **Copy
+image** and **Save image as…**. Rebuild if the image opens through `xdg-open` or
+is still cropped. If only a thumbnail looks soft, press **Download** and allow
+the message to refresh to the full-resolution cached source.
 
 ## Clicking a notification does not open the conversation
 
@@ -163,6 +190,6 @@ type, not only copied filename text.
 ## Safe diagnostic information
 
 When reporting a problem, include the application version, Linux distribution,
-Qt/Kirigami versions, the exact error, and whether software or RHI rendering is
+Qt versions, the exact error, and whether software or RHI rendering is
 used. Do not include QR contents, pairing codes, `device.db`, `messages.db`,
 message text, phone numbers, or complete JIDs.

@@ -4,6 +4,17 @@ import QtQuick
 QtObject {
     property string preferredMode: "system"
 
+    // WhatsApp names the platform in its own empty state ("WhatsApp for
+    // Windows"), so this application does the same rather than claiming Linux
+    // everywhere.
+    readonly property string platformName: {
+        switch (Qt.platform.os) {
+        case "windows": return qsTr("Windows")
+        case "osx": return qsTr("Mac")
+        default: return qsTr("Linux")
+        }
+    }
+
     readonly property string requestedMode: {
         const args = Qt.application.arguments
         for (let i = 0; i < args.length; ++i) {
@@ -59,7 +70,16 @@ QtObject {
     readonly property color outgoingBubble: dark ? "#005C4B" : "#D9FDD3"
     readonly property color bubbleBorder: dark ? "#00000000" : "#14000000"
     readonly property color replyBackground: dark ? "#111B21" : "#F0EFED"
-    readonly property color readReceipt: "#53BDEB"
+    // WhatsApp Web's `--icon-ack`, measured from the live client. It carries the
+    // same value in both themes, which is why this one is not a light/dark pair.
+    readonly property color readReceipt: "#007BFC"
+    // A link inside a bubble is drawn a shade deeper than the accent green so it
+    // stays legible on the outgoing bubble's pale fill.
+    readonly property color link: dark ? "#53BDEB" : "#1B8755"
+    // Chat-filter pills. The live client draws one hairline for every state and
+    // marks the selected filter with the fill and a darker green label.
+    readonly property color filterChipBorder: dark ? "#3B4A54" : "#33000000"
+    readonly property color filterChipSelectedText: dark ? "#E9EDEF" : "#15603E"
     readonly property color selectedRow: dark ? "#2A3942" : "#F6F5F4"
     readonly property color hoverRow: dark ? "#26343C" : "#F7F5F3"
     readonly property color pressedRow: dark ? "#31414A" : "#EEECE9"
@@ -118,7 +138,7 @@ QtObject {
                 url = url.slice(0, -1)
             }
             rendered += richTextSegment(source.slice(cursor, match.index))
-            rendered += "<a href=\"" + escapeHtml(url) + "\" style=\"color:" + primary + ";text-decoration:none\">" + richTextSegment(url) + "</a>"
+            rendered += "<a href=\"" + escapeHtml(url) + "\" style=\"color:" + link + ";text-decoration:none\">" + richTextSegment(url) + "</a>"
             rendered += richTextSegment(suffix)
             cursor = match.index + match[0].length
         }

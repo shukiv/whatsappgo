@@ -33,6 +33,13 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
     Q_PROPERTY(QVariantMap selectedPresence READ selectedPresence NOTIFY selectedPresenceChanged)
     Q_PROPERTY(QVariantMap chatInfo READ chatInfo NOTIFY chatInfoChanged)
+    Q_PROPERTY(QStringList blockedContacts READ blockedContacts NOTIFY blockedContactsChanged)
+    Q_PROPERTY(QVariantMap privacySettings READ privacySettings NOTIFY privacySettingsChanged)
+    Q_PROPERTY(QVariantList chatLabels READ chatLabels NOTIFY chatLabelsChanged)
+    Q_PROPERTY(QVariantList mediaLibrary READ mediaLibrary NOTIFY mediaLibraryChanged)
+    Q_PROPERTY(bool mediaLibraryHasMore READ mediaLibraryHasMore NOTIFY mediaLibraryChanged)
+    Q_PROPERTY(QString mediaLibraryCategory READ mediaLibraryCategory NOTIFY mediaLibraryChanged)
+    Q_PROPERTY(bool mediaLibraryLoading READ mediaLibraryLoading NOTIFY mediaLibraryChanged)
     Q_PROPERTY(QVariantList sharedContent READ sharedContent NOTIFY sharedContentChanged)
     Q_PROPERTY(bool sharedContentHasMore READ sharedContentHasMore NOTIFY sharedContentChanged)
     Q_PROPERTY(QString sharedContentCategory READ sharedContentCategory NOTIFY sharedContentChanged)
@@ -45,6 +52,12 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap profileDisplayNames READ profileDisplayNames NOTIFY profileDisplayNamesChanged)
     Q_PROPERTY(QVariantMap profileUnreadCounts READ profileUnreadCounts NOTIFY profileUnreadCountsChanged)
     Q_PROPERTY(QVariantList searchResults READ searchResults NOTIFY searchResultsChanged)
+    Q_PROPERTY(QString chatQuery READ chatQuery NOTIFY chatQueryChanged)
+    Q_PROPERTY(QString conversationQuery READ conversationQuery NOTIFY searchResultsChanged)
+    Q_PROPERTY(QVariantList chatSearchHits READ chatSearchHits NOTIFY chatSearchHitsChanged)
+    Q_PROPERTY(QVariantList contactSearchHits READ contactSearchHits NOTIFY contactSearchHitsChanged)
+    Q_PROPERTY(QVariantList messageSearchHits READ messageSearchHits NOTIFY messageSearchHitsChanged)
+    Q_PROPERTY(QVariantList starredMessages READ starredMessages NOTIFY starredMessagesChanged)
     Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
     Q_PROPERTY(QVariantList callLogs READ callLogs NOTIFY callLogsChanged)
     Q_PROPERTY(QVariantList channels READ channels NOTIFY channelsChanged)
@@ -55,6 +68,16 @@ class RpcClient final : public QObject
 public:
     explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
     ~RpcClient() override;
+
+    // True when something is accepting connections on socketPath right now.
+    // A refused connection is not proof that the daemon is gone - a full listen
+    // backlog refuses too - so this answers the question the reconnect path
+    // actually needs before it deletes a socket and starts a second daemon.
+    static bool backendIsListening(const QString &socketPath);
+
+    // The address the daemon for this account listens on: a socket path on
+    // Unix, a named pipe name on Windows. Mirrors config.SocketAddress.
+    static QString socketPathForProfile(const QString &profile);
 
     bool daemonConnected() const;
     bool loggedIn() const;
@@ -68,6 +91,13 @@ public:
     QVariantMap selectedChat() const { return m_selectedChat; }
     QVariantMap selectedPresence() const { return m_selectedPresence; }
     QVariantMap chatInfo() const { return m_chatInfo; }
+    QStringList blockedContacts() const { return m_blockedContacts; }
+    QVariantMap privacySettings() const { return m_privacySettings; }
+    QVariantList chatLabels() const { return m_chatLabels; }
+    QVariantList mediaLibrary() const { return m_mediaLibrary; }
+    bool mediaLibraryHasMore() const { return m_mediaLibraryHasMore; }
+    QString mediaLibraryCategory() const { return m_mediaLibraryCategory; }
+    bool mediaLibraryLoading() const { return m_mediaLibraryLoading; }
     QVariantList sharedContent() const { return m_sharedContent; }
     bool sharedContentHasMore() const { return m_sharedContentHasMore; }
     QString sharedContentCategory() const { return m_sharedContentCategory; }
@@ -80,6 +110,12 @@ public:
     QVariantMap profileDisplayNames() const { return m_profileDisplayNames; }
     QVariantMap profileUnreadCounts() const { return m_profileUnreadCounts; }
     QVariantList searchResults() const { return m_searchResults; }
+    QString chatQuery() const { return m_chatQuery; }
+    QString conversationQuery() const { return m_conversationQuery; }
+    QVariantList chatSearchHits() const { return m_chatSearchHits; }
+    QVariantList contactSearchHits() const { return m_contactSearchHits; }
+    QVariantList messageSearchHits() const { return m_messageSearchHits; }
+    QVariantList starredMessages() const { return m_starredMessages; }
     QVariantList statusUpdates() const { return m_statusUpdates; }
     QVariantList callLogs() const { return m_callLogs; }
     QVariantList channels() const { return m_channels; }
@@ -89,17 +125,44 @@ public:
 
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void refreshStatus();
-    Q_INVOKABLE void refreshChats(const QString &query = {});
+    Q_INVOKABLE void refreshChats();
+    // The sidebar query is remembered here rather than in QML: every event
+    // that refreshes the chat list would otherwise drop it.
+    Q_INVOKABLE void searchChats(const QString &query);
     Q_INVOKABLE void setChatListFilter(const QString &filter);
     Q_INVOKABLE void refreshArchived();
     Q_INVOKABLE void setChatPinned(const QString &jid, bool pinned);
-    Q_INVOKABLE void setChatMuted(const QString &jid, bool muted);
+    Q_INVOKABLE void setChatMuted(const QString &jid, bool muted, int durationSeconds = 0);
     Q_INVOKABLE void setChatArchived(const QString &jid, bool archived);
+    Q_INVOKABLE void deleteChat(const QString &jid);
+    Q_INVOKABLE void clearChat(const QString &jid);
+    Q_INVOKABLE void setChatDisappearing(const QString &jid, int seconds);
+    Q_INVOKABLE void exportChat(const QString &jid, const QString &destinationUrl);
+    Q_INVOKABLE void setChatFavorite(const QString &jid, bool favorite);
+    Q_INVOKABLE void markAllChatsRead();
+    Q_INVOKABLE void createGroup(const QString &name, const QStringList &participants);
     Q_INVOKABLE void setChatRead(const QString &jid, bool read);
     Q_INVOKABLE void openChat(const QString &jid, const QString &title);
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void refreshChatInfo();
     Q_INVOKABLE void refreshSharedContent(const QString &category, bool append = false);
+    Q_INVOKABLE void refreshMediaLibrary(const QString &category, bool append = false);
+    Q_INVOKABLE void refreshBlockedContacts();
+    Q_INVOKABLE void refreshPrivacySettings();
+    Q_INVOKABLE void setPrivacySetting(const QString &name, const QString &value);
+    Q_INVOKABLE void setAbout(const QString &text);
+    Q_INVOKABLE void setChannelFollowed(const QString &jid, bool followed);
+    Q_INVOKABLE void createChannel(const QString &name, const QString &description);
+    Q_INVOKABLE void followChannelLink(const QString &link);
+    Q_INVOKABLE void createCommunity(const QString &name);
+    Q_INVOKABLE void joinGroupLink(const QString &link);
+    Q_INVOKABLE void setChannelMuted(const QString &jid, bool muted);
+    Q_INVOKABLE void postTextStatus(const QString &text, int background);
+    Q_INVOKABLE void postMediaStatus(const QString &localUrl, const QString &caption);
+    Q_INVOKABLE void refreshChatLabels();
+    Q_INVOKABLE void createChatLabel(const QString &name);
+    Q_INVOKABLE void setChatLabeled(const QString &jid, const QString &labelId, bool labeled);
+    Q_INVOKABLE void setContactBlocked(const QString &jid, bool blocked);
     Q_INVOKABLE void clearChatInfo();
     Q_INVOKABLE void loadOlderMessages();
     Q_INVOKABLE bool canLoadOlderMessages() const;
@@ -113,6 +176,9 @@ public:
     Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
     Q_INVOKABLE void reactMessage(const QString &messageId, const QString &senderJid, const QString &reaction);
     Q_INVOKABLE void pinMessage(const QString &messageId, const QString &senderJid, int durationSeconds);
+    Q_INVOKABLE void starMessage(const QString &messageId, const QString &senderJid, bool fromMe, bool starred);
+    Q_INVOKABLE void forwardMessage(const QString &messageId, const QString &toChatJid);
+    Q_INVOKABLE void forwardMessageFrom(const QString &fromChatJid, const QString &messageId, const QString &toChatJid);
     Q_INVOKABLE void unpinMessage(const QString &messageId, const QString &senderJid = {});
     Q_INVOKABLE int messageIndex(const QString &messageId) const;
     Q_INVOKABLE QVariantMap messageById(const QString &messageId) const;
@@ -125,7 +191,12 @@ public:
     Q_INVOKABLE void switchProfile(const QString &profile);
     Q_INVOKABLE void addProfile(const QString &name);
     Q_INVOKABLE void renameProfile(const QString &profile, const QString &displayName);
+    Q_INVOKABLE void removeProfile(const QString &profile);
+    Q_INVOKABLE bool profileRemovable(const QString &profile) const;
+    // Searches inside the open conversation, which is what the panel in the
+    // chat header does; the sidebar keeps its own results elsewhere.
     Q_INVOKABLE void searchMessages(const QString &query);
+    Q_INVOKABLE void loadStarredMessages();
     Q_INVOKABLE void openFile(const QString &path);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
     // Fetches a picture that has no preview, a few at a time.
@@ -156,6 +227,10 @@ signals:
     void selectedPresenceChanged();
     void chatInfoChanged();
     void sharedContentChanged();
+    void mediaLibraryChanged();
+    void blockedContactsChanged();
+    void privacySettingsChanged();
+    void chatLabelsChanged();
     void pairingQrChanged();
     void pairingCodeChanged();
     void busyChanged();
@@ -167,6 +242,11 @@ signals:
     void profileDisplayNamesChanged();
     void profileUnreadCountsChanged();
     void searchResultsChanged();
+    void chatQueryChanged();
+    void chatSearchHitsChanged();
+    void contactSearchHitsChanged();
+    void messageSearchHitsChanged();
+    void starredMessagesChanged();
     void statusUpdatesChanged();
     void callLogsChanged();
     void channelsChanged();
@@ -194,6 +274,7 @@ private:
     void refreshOpenMessages();
     void pumpMediaQueue();
     void syncChatListModel();
+    void runSidebarSearch(const QString &query);
     void applyChatAvatar(const QString &jid, const QString &path);
     bool copyImageFile(const QString &path);
     QString clipboardDirectory() const;
@@ -205,6 +286,7 @@ private:
 
     QLocalSocket m_socket;
     QTimer m_reconnectTimer;
+    QTimer m_searchReplayTimer;
     QByteArray m_readBuffer;
     quint64 m_nextId = 0;
     QHash<QString, Callback> m_pending;
@@ -214,6 +296,11 @@ private:
     QVariantList m_archivedChats;
     ChatListModel m_archivedChatList;
     QString m_chatListFilter = QStringLiteral("all");
+    QString m_chatQuery;
+    QString m_conversationQuery;
+    QVariantList m_chatSearchHits;
+    QVariantList m_contactSearchHits;
+    QVariantList m_messageSearchHits;
     int m_archivedCount = 0;
     MessageListModel m_messages;
     QHash<QString, QVariantList> m_messageCache;
@@ -221,11 +308,22 @@ private:
     QVariantMap m_selectedChat;
     QVariantMap m_selectedPresence;
     QVariantMap m_chatInfo;
+    QStringList m_blockedContacts;
+    QVariantMap m_privacySettings;
+    QVariantList m_chatLabels;
+    QVariantList m_mediaLibrary;
+    bool m_mediaLibraryHasMore = false;
+    QString m_mediaLibraryCategory;
+    bool m_mediaLibraryLoading = false;
     QVariantList m_sharedContent;
     bool m_sharedContentHasMore = false;
     QString m_sharedContentCategory;
     bool m_sharedContentLoading = false;
+    // Applies a star to the row already on screen rather than reloading the
+    // conversation, which would move it under the reader.
+    void applyStarToOpenConversation(const QString &messageId, bool starred);
     QVariantList m_searchResults;
+    QVariantList m_starredMessages;
     QVariantList m_statusUpdates;
     QVariantList m_callLogs;
     QVariantList m_channels;
@@ -246,6 +344,9 @@ private:
     bool m_loadingOlder = false;
     bool m_hasMore = false;
     qint64 m_nextBefore = 0;
+    // Paired with m_nextBefore: messages sharing a timestamp are only ordered
+    // by id, so the cursor needs both halves to page past them.
+    QString m_nextBeforeId;
     QSet<QString> m_requestedHistoryBoundaries;
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;

@@ -8,8 +8,15 @@
 
 **Project:** WhatsAppGo
 **Generated:** 2026-08-30 18:28:46
+
+**Desktop override reviewed:** 2026-09-03
 **Category:** AI/Chatbot Platform
 **Design Dials:** Variance 3/10 (Centered / Minimal) | Motion 3/10 (Subtle) | Density 8/10 (Dense / Dashboard)
+
+> The purple/cyan rules below apply to generic product and documentation
+> surfaces. The native Qt application must use
+> [`pages/desktop.md`](pages/desktop.md), including its measured green palette,
+> compact geometry, responsive filter behavior, and popup-boundary rules.
 
 ---
 

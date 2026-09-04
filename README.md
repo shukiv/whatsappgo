@@ -1,7 +1,7 @@
 # WhatsAppGo
 
 WhatsAppGo is an unofficial, native WhatsApp client for Linux. Its interface is
-built with Qt 6, QML, and Kirigami. A bundled Go backend uses
+built with Qt 6 and QML. A bundled Go backend uses
 [whatsmeow](https://github.com/tulir/whatsmeow) to connect through WhatsApp's
 multi-device protocol. There is no Chromium, WebKit, Electron, or WhatsApp Web
 page in the application.
@@ -23,8 +23,7 @@ On Debian 13:
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev qt6-multimedia-dev \
-  libkirigami-dev extra-cmake-modules \
-  qml6-module-org-kde-kirigami qml6-module-org-kde-desktop \
+  qml6-module-org-kde-desktop \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 
 git clone https://github.com/shukiv/whatsappgo.git
@@ -63,11 +62,16 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - attachments fetched automatically for the conversation on screen
 - attachments stored in a database, so clearing the media cache loses nothing
 - image copy/paste, native media preview, downloads, and cached avatars
+- an in-app aspect-fit image viewer with zoom, copy, and save actions; media
+  playback marks supported audio and video as played
 - a WhatsApp-style contact information drawer with phone/avatar details,
   synchronized mute/archive controls, shared-content counts, and separate
   Media, Documents, and Links views backed by SQLite history
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
+- a compact desktop shell measured against the installed WhatsApp Web PWA,
+  including 64 px navigation/header geometry, responsive filter overflow, and
+  menus that reposition inside the window instead of being clipped
 - native system notifications with sender avatars and message sounds, independent of the tray; minimize-to-tray with
   late GNOME AppIndicator discovery, light/dark/system
   appearance, RTL text, selectable message text, clickable links, and
@@ -95,6 +99,10 @@ or video calls is not supported.
   security, and automation examples
 - [Security and privacy](docs/SECURITY.md): local plaintext data, credentials,
   reporting, and account risk
+- [WhatsApp Web PWA control inventory](docs/WHATSAPP_WEB_PWA_CONTROL_INVENTORY.md):
+  traversed controls, menus, state branches, and measured reference geometry
+- [WhatsApp Web PWA gap audit](docs/WHATSAPP_WEB_PWA_GAP_AUDIT.md): implemented
+  parity work, remaining functionality gaps, priorities, and acceptance criteria
 
 ## Requirements
 
@@ -103,7 +111,6 @@ or video calls is not supported.
 - CMake 3.22 or newer and a C++20 compiler
 - Qt 6.5 or newer: Core, Gui, Widgets, Quick, Quick Controls 2, Network, and
   Multimedia
-- KDE Frameworks 6 Kirigami
 
 Check native dependencies without changing the system:
 
@@ -174,7 +181,7 @@ internal/store/     SQLite message index and migrations
 internal/mediastore/ SQLite attachment storage
 internal/rpc/       local JSON-lines RPC transport
 internal/service/   application operations exposed to the desktop
-desktop/            Qt/Kirigami application and UI tests
+desktop/            Qt application and UI tests
 packaging/          Flatpak, Debian, RPM, AppImage, desktop metadata
 docs/               user, developer, architecture, security, troubleshooting
 ```
