@@ -121,7 +121,10 @@ QtObject {
         return richTextSegment(value)
     }
 
-    function linkifiedLine(source) {
+    // linkColor and underlined let a surface that is not the chat background
+    // ask for readable links: a status is drawn on solid teal, where the chat
+    // link green is close to invisible.
+    function linkifiedLine(source, linkColor, underlined) {
         const urlPattern = /https?:\/\/[^\s<>\"']+/gi
         let rendered = ""
         let cursor = 0
@@ -138,27 +141,29 @@ QtObject {
                 url = url.slice(0, -1)
             }
             rendered += richTextSegment(source.slice(cursor, match.index))
-            rendered += "<a href=\"" + escapeHtml(url) + "\" style=\"color:" + link + ";text-decoration:none\">" + richTextSegment(url) + "</a>"
+            const color = linkColor || link
+            const decoration = underlined ? "underline" : "none"
+            rendered += "<a href=\"" + escapeHtml(url) + "\" style=\"color:" + color + ";text-decoration:" + decoration + "\">" + richTextSegment(url) + "</a>"
             rendered += richTextSegment(suffix)
             cursor = match.index + match[0].length
         }
         return rendered + richTextSegment(source.slice(cursor))
     }
 
-    function messageRichText(value) {
+    function messageRichText(value, linkColor, underlined) {
         const lines = String(value || "").split("\n")
         const rendered = []
         for (let i = 0; i < lines.length; ++i) {
             const quoted = lines[i].startsWith("▎") || /^\s*>\s?/.test(lines[i])
             if (!quoted) {
-                rendered.push(linkifiedLine(lines[i]) || "&nbsp;")
+                rendered.push(linkifiedLine(lines[i], linkColor, underlined) || "&nbsp;")
                 continue
             }
             const content = lines[i].startsWith("▎")
                 ? lines[i].slice(1).replace(/^\s/, "")
                 : lines[i].replace(/^\s*>\s?/, "")
             rendered.push("<span style=\"color:" + primary + "\">▎</span>&nbsp;"
-                + (linkifiedLine(content) || "&nbsp;"))
+                + (linkifiedLine(content, linkColor, underlined) || "&nbsp;"))
         }
         return rendered.join("<br>")
     }

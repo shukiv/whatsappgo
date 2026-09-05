@@ -307,9 +307,15 @@ Item {
             visible: root.currentItem.kind === "text" || (!storyImage.visible && !root.videoReady)
             color: root.currentItem.kind === "text" ? "#236B63" : "#202124"
             Label {
+                id: statusBody
+                objectName: "statusBodyText"
                 anchors.centerIn: parent
                 width: parent.width - 80
-                text: Theme.emojiRichText(root.currentItem.body || qsTr("Status unavailable"))
+                // A link in a text status opens, the way it does in a message.
+                // White and underlined rather than the chat's link green, which
+                // all but disappears against this teal.
+                text: Theme.messageRichText(root.currentItem.body || qsTr("Status unavailable"),
+                                            "#FFFFFF", true)
                 textFormat: Text.RichText
                 color: "#FFFFFF"
                 font.pixelSize: 25
@@ -327,9 +333,28 @@ Item {
         }
 
         MouseArea {
+            id: storyTapArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
-            onClicked: mouse => mouse.x < width / 3 ? root.previous() : root.advance()
+            hoverEnabled: true
+            // The tap area covers the whole story so a click anywhere steps
+            // through it. That also puts it over the text, so the link under
+            // the pointer is resolved here rather than by the label itself.
+            function linkUnder(x, y) {
+                if (!statusBody.visible)
+                    return ""
+                const point = statusBody.mapFromItem(storyTapArea, x, y)
+                return statusBody.linkAt(point.x, point.y)
+            }
+            cursorShape: linkUnder(mouseX, mouseY) ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: mouse => {
+                const link = linkUnder(mouse.x, mouse.y)
+                if (link) {
+                    Qt.openUrlExternally(link)
+                    return
+                }
+                mouse.x < width / 3 ? root.previous() : root.advance()
+            }
         }
     }
 

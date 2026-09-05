@@ -610,7 +610,7 @@ int main(int argc, char *argv[])
                         {QStringLiteral("items"), QVariantList{
                             QVariantMap{{QStringLiteral("id"), QStringLiteral("bob-1")},
                                         {QStringLiteral("kind"), QStringLiteral("text")},
-                                        {QStringLiteral("body"), QStringLiteral("second person")},
+                                        {QStringLiteral("body"), QStringLiteral("look at this https://example.com/watch")},
                                         {QStringLiteral("timestamp"), 3}},
                         }}},
         };
@@ -658,6 +658,15 @@ int main(int argc, char *argv[])
         viewer->setProperty("replyText", QStringLiteral("Looks great"));
         const bool submittedReply = QMetaObject::invokeMethod(viewer.get(), "submitReply");
         QCoreApplication::processEvents();
+        // A status is often just a link. Rendering it as plain text leaves the
+        // reader retyping a URL by hand off the screen.
+        auto *statusBody = viewer->findChild<QObject *>(QStringLiteral("statusBodyText"));
+        const auto renderedStatus = statusBody == nullptr ? QString() : statusBody->property("text").toString();
+        const bool statusLinkIsClickable =
+            renderedStatus.contains(QStringLiteral("<a href=\"https://example.com/watch\""))
+            // White and underlined: the chat's link green is unreadable on the
+            // status background.
+            && renderedStatus.contains(QStringLiteral("color:#FFFFFF;text-decoration:underline"));
         const bool replyTargetsCurrentStatus = viewer->property("lastReplyRecipient").toString() == QStringLiteral("bob@lid")
             && viewer->property("lastReplyStatusId").toString() == QStringLiteral("bob-1")
             && viewer->property("lastReplyText").toString() == QStringLiteral("Looks great");
@@ -668,6 +677,7 @@ int main(int argc, char *argv[])
                 && statusAvatar && statusAvatar->isVisible()
                 && statusButton->width() >= 44 && statusButton->height() >= 44
                 && openedStatusFromChat && chatStatus->property("statusGroupIndex").toInt() == 1
+                && statusLinkIsClickable
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (resizeRenderingTest) {
