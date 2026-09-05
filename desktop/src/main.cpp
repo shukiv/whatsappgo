@@ -2733,6 +2733,37 @@ QtObject {
             qWarning().noquote() << QStringLiteral("the prepared image outlived the paste: %1").arg(path);
             return WHATSAPPGO_TEST_FAILURE();
         }
+
+        // A client that is killed between preparing an image and sending it
+        // leaves the file behind, and every Windows paste did until the
+        // separator above was fixed. The next start clears them.
+        QTemporaryDir leftovers;
+        if (!leftovers.isValid())
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto stale = QDir(leftovers.path()).filePath(QStringLiteral("paste-old.png"));
+        const auto fresh = QDir(leftovers.path()).filePath(QStringLiteral("paste-new.png"));
+        const auto keep = QDir(leftovers.path()).filePath(QStringLiteral("notes.txt"));
+        for (const auto &file : {stale, fresh, keep}) {
+            QFile written(file);
+            if (!written.open(QIODevice::WriteOnly))
+                return WHATSAPPGO_TEST_FAILURE();
+            written.write("x");
+        }
+        RpcClient::sweepClipboardDirectory(leftovers.path(), 0);
+        if (QFileInfo::exists(stale) || QFileInfo::exists(fresh))
+            return WHATSAPPGO_TEST_FAILURE();
+        // Only this application's own pasted images, and only when they are
+        // old enough to belong to a session that is over.
+        if (!QFileInfo::exists(keep))
+            return WHATSAPPGO_TEST_FAILURE();
+        QFile rewritten(stale);
+        if (!rewritten.open(QIODevice::WriteOnly))
+            return WHATSAPPGO_TEST_FAILURE();
+        rewritten.write("x");
+        rewritten.close();
+        RpcClient::sweepClipboardDirectory(leftovers.path(), 24 * 60 * 60);
+        if (!QFileInfo::exists(stale))
+            return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
     }
     if (fileDropTest) {

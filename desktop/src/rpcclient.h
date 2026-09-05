@@ -74,6 +74,9 @@ public:
     // A refused connection is not proof that the daemon is gone - a full listen
     // backlog refuses too - so this answers the question the reconnect path
     // actually needs before it deletes a socket and starts a second daemon.
+    // Deletes leftover pasted images. Static and parameterised so the test can
+    // point it at a directory of its own.
+    static void sweepClipboardDirectory(const QString &directory, qint64 maxAgeSeconds);
     static bool backendIsListening(const QString &socketPath);
 
     // The address the daemon for this account listens on: a socket path on

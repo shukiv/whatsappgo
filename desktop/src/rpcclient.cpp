@@ -180,6 +180,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     : QObject(parent)
 {
     m_initialChat = initialChat;
+    sweepClipboardDirectory(clipboardDirectory(), 24 * 60 * 60);
     QSettings settings;
     const QRegularExpression validProfile(QStringLiteral("^[a-z0-9][a-z0-9_-]{0,31}$"));
     const auto savedProfiles = settings.value(QStringLiteral("accounts/profiles")).toStringList();
@@ -2244,6 +2245,21 @@ void RpcClient::downloadMedia(const QString &messageId)
 			if (!path.isEmpty())
 				emit mediaReady(message.value(QStringLiteral("id")).toString(), path);
 		});
+}
+
+void RpcClient::sweepClipboardDirectory(const QString &directory, qint64 maxAgeSeconds)
+{
+	// A pasted image is written to disk, sent, and deleted. Anything still
+	// here at startup belongs to a session that is over: a client that was
+	// killed between the two, or - until the separator was fixed above - every
+	// paste ever made on Windows.
+	const auto now = QDateTime::currentDateTimeUtc();
+	const QDir folder(directory);
+	const auto entries = folder.entryInfoList({QStringLiteral("paste-*")}, QDir::Files);
+	for (const auto &entry : entries) {
+		if (entry.lastModified().toUTC().secsTo(now) >= maxAgeSeconds)
+			QFile::remove(entry.absoluteFilePath());
+	}
 }
 
 QString RpcClient::clipboardDirectory() const
