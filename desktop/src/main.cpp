@@ -84,6 +84,18 @@ void installResizeRepaintGuard(QQuickWindow *window)
 
 } // namespace
 
+// A --*-test run that returns EXIT_FAILURE without saying anything leaves a red
+// CI job with nothing in it. That is bearable on a machine you can rerun by
+// hand and useless for Windows or macOS, so every failing assertion names the
+// line it came from.
+static int testFailure(const char *file, int line)
+{
+    qWarning("FAILED at %s:%d", file, line);
+    return EXIT_FAILURE;
+}
+#define WHATSAPPGO_TEST_FAILURE() testFailure(__FILE__, __LINE__)
+
+
 int main(int argc, char *argv[])
 {
     // The client is a mostly static, low-memory UI. Qt's software scene graph
@@ -742,7 +754,7 @@ int main(int argc, char *argv[])
             imageFixture.fill(QColor(0, 160, 120));
             if (!imageFixture.save(imageFixturePath, "JPEG")) {
                 qWarning().noquote() << QStringLiteral("could not write %1").arg(imageFixturePath);
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             }
         }
         QQmlComponent component(&engine);
@@ -838,14 +850,14 @@ int main(int argc, char *argv[])
             }},
         }));
         if (!harness)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *delegate = harness->findChild<QObject *>(QStringLiteral("messageInteractionDelegate"));
         if (!delegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         auto *body = delegate->findChild<QObject *>(QStringLiteral("messageBody"));
         if (!body)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         auto *menuButton = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageMenuButton")));
         auto *reactionButton = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionButton")));
         auto *menuIcon = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageMenuIcon")));
@@ -1125,12 +1137,12 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), longMessage},
         }));
         if (!longDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *longBubble = qobject_cast<QQuickItem *>(longDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *longBody = qobject_cast<QQuickItem *>(longDelegate->findChild<QObject *>(QStringLiteral("messageBody")));
         if (!longBubble || !longBody)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         qInfo().noquote() << QStringLiteral("long-line bubble width=%1 pane=%2 ratio=%3")
                                  .arg(longBubble->width()).arg(paneWidth).arg(longBubble->width() / paneWidth);
         require(longBubble->width() <= paneWidth * 0.70,
@@ -1158,12 +1170,12 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), rtlMessage},
         }));
         if (!rtlDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *rtlBubble = qobject_cast<QQuickItem *>(rtlDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *rtlBody = qobject_cast<QQuickItem *>(rtlDelegate->findChild<QObject *>(QStringLiteral("messageBody")));
         if (!rtlBubble || !rtlBody)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto rtlRight = rtlBody->mapToItem(rtlBubble, QPointF(rtlBody->width(), 0)).x();
         qInfo().noquote() << QStringLiteral("rtl bubble width=%1 body right=%2").arg(rtlBubble->width()).arg(rtlRight);
         require(rtlBubble->width() <= paneWidth * 0.70,
@@ -1202,11 +1214,11 @@ int main(int argc, char *argv[])
                 {QStringLiteral("modelData"), payload},
             }));
             if (!shapeDelegate)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             QCoreApplication::processEvents();
             auto *shapeBubble = qobject_cast<QQuickItem *>(shapeDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
             if (shapeBubble == nullptr)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             qInfo().noquote() << QStringLiteral("shape %1 bubble=%2").arg(QString::fromLatin1(shape.name)).arg(shapeBubble->width());
             require(shapeBubble->width() <= 460.0,
                     QStringLiteral("%1 bubble is %2 px wide; it should hug its text")
@@ -1225,11 +1237,11 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), outgoing},
         }));
         if (!reused)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *reusedBubble = qobject_cast<QQuickItem *>(reused->findChild<QObject *>(QStringLiteral("messageBubble")));
         if (reusedBubble == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto outgoingWidth = reusedBubble->width();
         for (int round = 0; round < 4; ++round) {
             QVariantMap rebound{
@@ -1256,7 +1268,7 @@ int main(int argc, char *argv[])
         thumbnail.fill(QColor(QStringLiteral("#25D366")));
         const auto thumbnailPath = QDir(QDir::tempPath()).filePath(QStringLiteral("whatsappgo-layout-thumb.jpg"));
         if (!thumbnail.save(thumbnailPath, "JPG"))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const QVariantMap photo{
             {QStringLiteral("id"), QStringLiteral("photo-1")},
             {QStringLiteral("kind"), QStringLiteral("image")},
@@ -1272,7 +1284,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), photo},
         }));
         if (!photoDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *photoImage = qobject_cast<QQuickItem *>(photoDelegate->findChild<QObject *>(QStringLiteral("messageMedia")));
         auto *photoBubble = qobject_cast<QQuickItem *>(photoDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
@@ -1291,7 +1303,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), video},
         }));
         if (!videoDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *videoImage = qobject_cast<QQuickItem *>(videoDelegate->findChild<QObject *>(QStringLiteral("messageMedia")));
         auto *playBadge = qobject_cast<QQuickItem *>(videoDelegate->findChild<QObject *>(QStringLiteral("mediaPlayBadge")));
@@ -1337,7 +1349,7 @@ int main(int argc, char *argv[])
                 {QStringLiteral("modelData"), incoming},
             }));
             if (!senderDelegate)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             QCoreApplication::processEvents();
             bool shown = false;
             for (auto *label : senderDelegate->findChildren<QQuickItem *>()) {
@@ -1367,7 +1379,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), sharedContact},
         }));
         if (!contactDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *sharedCard = qobject_cast<QQuickItem *>(contactDelegate->findChild<QObject *>(QStringLiteral("contactCard")));
         auto *sharedCardAction = qobject_cast<QQuickItem *>(contactDelegate->findChild<QObject *>(QStringLiteral("contactAction")));
@@ -1383,7 +1395,7 @@ int main(int argc, char *argv[])
         mapThumb.fill(QColor(QStringLiteral("#8FBF7F")));
         const auto mapPath = QDir(QDir::tempPath()).filePath(QStringLiteral("whatsappgo-map.jpg"));
         if (!mapThumb.save(mapPath, "JPG"))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const QVariantMap sharedPlace{
             {QStringLiteral("id"), QStringLiteral("place-1")},
             {QStringLiteral("kind"), QStringLiteral("location")},
@@ -1400,7 +1412,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), sharedPlace},
         }));
         if (!placeDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *placeCard = qobject_cast<QQuickItem *>(placeDelegate->findChild<QObject *>(QStringLiteral("locationCard")));
         auto *placeMap = qobject_cast<QQuickItem *>(placeDelegate->findChild<QObject *>(QStringLiteral("locationMap")));
@@ -1423,7 +1435,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), shortMessage},
         }));
         if (!shortDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *shortBubble = qobject_cast<QQuickItem *>(shortDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *shortBody = qobject_cast<QQuickItem *>(shortDelegate->findChild<QObject *>(QStringLiteral("messageBody")));
@@ -1456,7 +1468,7 @@ int main(int argc, char *argv[])
                 {QStringLiteral("modelData"), sent},
             }));
             if (!receiptDelegate)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             QCoreApplication::processEvents();
             auto *mark = qobject_cast<QQuickItem *>(receiptDelegate->findChild<QObject *>(QStringLiteral("readReceipt")));
             if (mark == nullptr) {
@@ -1485,7 +1497,7 @@ int main(int argc, char *argv[])
         linkThumb.fill(QColor(QStringLiteral("#1DAA61")));
         const auto linkThumbPath = QDir(QDir::tempPath()).filePath(QStringLiteral("whatsappgo-link.jpg"));
         if (!linkThumb.save(linkThumbPath, "JPG"))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const QVariantMap linkMessage{
             {QStringLiteral("id"), QStringLiteral("link-1")},
             {QStringLiteral("kind"), QStringLiteral("text")},
@@ -1503,7 +1515,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), linkMessage},
         }));
         if (!linkDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *card = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("linkPreview")));
         auto *cardImage = qobject_cast<QQuickItem *>(linkDelegate->findChild<QObject *>(QStringLiteral("linkPreviewImage")));
@@ -1568,7 +1580,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), voice},
         }));
         if (!voiceDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *voiceRow = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceRow")));
         auto *voicePlay = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voicePlayButton")));
@@ -1626,7 +1638,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("modelData"), document},
         }));
         if (!documentDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *documentAction = qobject_cast<QQuickItem *>(documentDelegate->findChild<QObject *>(QStringLiteral("mediaAction")));
         require(documentAction != nullptr && documentAction->isVisible(),
@@ -1852,7 +1864,7 @@ int main(int argc, char *argv[])
     }
     if (mediaPreviewTest) {
         if (engine.rootObjects().isEmpty())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // Match the dimensions of the image that exposed the software-layer
         // crop without depending on a user's media cache.
         QImage source(1204, 1091, QImage::Format_ARGB32_Premultiplied);
@@ -1871,16 +1883,16 @@ int main(int argc, char *argv[])
         auto *attachmentMenu = root->findChild<QObject *>(QStringLiteral("attachmentMenu"));
         if (!attachmentButton || !attachmentMenu) {
             qWarning() << "attachment chooser missing" << attachmentButton << attachmentMenu;
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         if (!QMetaObject::invokeMethod(root, "toggleAttachmentMenu")) {
             qWarning() << "attachment menu could not be toggled";
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         QCoreApplication::processEvents();
         if (!attachmentMenu->property("visible").toBool()) {
             qWarning() << "attachment chooser did not become visible";
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         const QStringList attachmentActions{
             QStringLiteral("attachmentDocument"),
@@ -1898,7 +1910,7 @@ int main(int argc, char *argv[])
                 qWarning() << "attachment action invalid" << name << action
                            << (action ? action->isVisible() : false)
                            << (action ? action->height() : 0);
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             }
         }
         QMetaObject::invokeMethod(attachmentMenu, "close");
@@ -1907,18 +1919,18 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
         auto *preview = root->findChild<QObject *>(QStringLiteral("mediaPreviewOverlay"));
         if (!invoked || !preview || !preview->property("previewActive").toBool())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         const auto receivedImagePath = QDir(QDir::tempPath()).filePath(
             QStringLiteral("whatsappgo-native-viewer-test.jpg"));
         if (!source.save(receivedImagePath, "JPG"))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QImage thumbnail(40, 40, QImage::Format_ARGB32_Premultiplied);
         thumbnail.fill(QColor(QStringLiteral("#EA0038")));
         const auto thumbnailPath = QDir(QDir::tempPath()).filePath(
             QStringLiteral("whatsappgo-native-viewer-thumbnail.jpg"));
         if (!thumbnail.save(thumbnailPath, "JPG"))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const QVariant imageMessage = QVariantMap{
             {QStringLiteral("id"), QStringLiteral("received-image-test")},
             {QStringLiteral("kind"), QStringLiteral("image")},
@@ -2038,7 +2050,7 @@ int main(int argc, char *argv[])
                 || !imageActionsReady || !viewerCopyWorked || !viewerSaveWorked
                 || !nativeZoomReady || !nativeViewerClosed
                 || nativeViewer->property("previewActive").toBool())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         if (screenshotPath.isEmpty())
             return EXIT_SUCCESS;
     }
@@ -2267,7 +2279,7 @@ int main(int argc, char *argv[])
         auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
         auto *mainWindow = qobject_cast<QQuickWindow *>(mainRoot);
         if (mainWindow == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // `visible` on an item is parent-aware, so the sidebar reports nothing
         // at all until the window it lives in is up.
         mainWindow->show();
@@ -2285,7 +2297,7 @@ int main(int argc, char *argv[])
         auto *chatList = mainRoot->findChild<QObject *>(QStringLiteral("chatList"));
         auto *pane = mainRoot->findChild<QObject *>(QStringLiteral("searchResultsPane"));
         if (archivedRow == nullptr || chatList == nullptr || pane == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         require(!pane->property("visible").toBool(),
                 QStringLiteral("the results pane is on screen before anything is typed"));
@@ -2344,17 +2356,17 @@ int main(int argc, char *argv[])
         }));
         if (!standalone) {
             qInfo().noquote() << component.errorString();
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         auto *standaloneItem = qobject_cast<QQuickItem *>(standalone.get());
         if (standaloneItem == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         standaloneItem->setParentItem(mainWindow->contentItem());
         QCoreApplication::processEvents();
 
         auto *empty = standalone->findChild<QObject *>(QStringLiteral("searchResultsEmpty"));
         if (empty == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         require(empty->property("visible").toBool(),
                 QStringLiteral("a query with no hits does not say so"));
 
@@ -2406,11 +2418,11 @@ int main(int argc, char *argv[])
         source.fill(QColor(QStringLiteral("#25D366")));
         QGuiApplication::clipboard()->setImage(source);
         if (!backend.clipboardHasImage())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto localUrl = backend.prepareClipboardImage();
         const auto path = QUrl(localUrl).toLocalFile();
         if (path.isEmpty() || QImage(path).size() != source.size())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QGuiApplication::clipboard()->clear();
         backend.copyImage(QString(), path);
         const bool copied = QGuiApplication::clipboard()->image().size() == source.size();

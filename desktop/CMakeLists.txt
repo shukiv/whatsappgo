@@ -185,18 +185,11 @@ else()
     set(WHATSAPPGO_DAEMON_SUFFIX "")
 endif()
 
-# A Windows GUI subsystem binary has no console, so anything it writes to
-# stdout or stderr is discarded - including the reason a --*-test run failed,
-# which makes a red CI job unreadable. The release scripts configure with
-# BUILD_TESTING=OFF and get the GUI subsystem; a testing tree keeps its console.
-if(BUILD_TESTING)
-    set(WHATSAPPGO_WIN32_EXECUTABLE OFF)
-else()
-    set(WHATSAPPGO_WIN32_EXECUTABLE ON)
-endif()
-
 set_target_properties(whatsappgo PROPERTIES
-    WIN32_EXECUTABLE ${WHATSAPPGO_WIN32_EXECUTABLE}
+    # No console window behind the application on Windows. include(CTest)
+    # below turns this off again for a testing tree, where the tests' own
+    # output has to reach ctest.
+    WIN32_EXECUTABLE ON
     # A .app bundle on macOS: the platform will not show a notification, a dock
     # icon or a menu bar for a bare executable.
     MACOSX_BUNDLE ON
@@ -239,6 +232,25 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    # A Windows GUI subsystem binary has no console, so everything a --*-test
+    # run writes to stdout or stderr is discarded and a failure reports nothing
+    # at all. The release scripts configure with BUILD_TESTING=OFF and still
+    # get a windowless binary.
+    set_target_properties(whatsappgo PROPERTIES WIN32_EXECUTABLE OFF)
+
+    # desktop-backend-lifecycle starts the real daemon, which the client looks
+    # for beside itself. `make desktop` copies it there; a bare cmake build
+    # never did, so the test could only pass in a tree built through the
+    # Makefile. Copy it here too when it has been built.
+    set(WHATSAPPGO_BUILT_DAEMON "${CMAKE_CURRENT_SOURCE_DIR}/../bin/whatsappd${CMAKE_EXECUTABLE_SUFFIX}")
+    if(EXISTS "${WHATSAPPGO_BUILT_DAEMON}")
+        add_custom_command(TARGET whatsappgo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${WHATSAPPGO_BUILT_DAEMON}"
+                    "$<TARGET_FILE_DIR:whatsappgo>/whatsappd${CMAKE_EXECUTABLE_SUFFIX}"
+            VERBATIM
+        )
+    endif()
     qt_add_executable(profile-monitor-test
         tests/ProfileMonitor.cpp
         src/profilemonitor.cpp

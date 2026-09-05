@@ -49,10 +49,22 @@ jobs:
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
-      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel
+      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtquickcontrols2
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+      # desktop-backend-lifecycle starts the real daemon, so it has to exist
+      # before the desktop build copies it beside the application.
+      - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
+      - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
       - run: cmake -S desktop -B desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build desktop/build --parallel
+      # This job built the desktop application for months without ever running
+      # its tests, which is how a Linux-only assumption reached the Windows and
+      # macOS jobs unnoticed.
+      - run: ctest --test-dir desktop/build --output-on-failure
 
   desktop-windows:
     runs-on: windows-latest
@@ -64,7 +76,7 @@ jobs:
           cache: true
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.2'
+          version: '6.9.3'
           modules: 'qtmultimedia'
       - run: go build -trimpath -o bin/whatsappd.exe ./cmd/whatsappd
         env:
@@ -84,11 +96,12 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: true
-      # Qt before 6.8.4 links the AGL framework, which Apple removed from the
+      # Qt before 6.9.2 links the AGL framework, which Apple removed from the
       # macOS SDK: every link fails with "ld: framework 'AGL' not found".
+      # 6.8.4 carries the same fix but was never published to the mirrors.
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.4'
+          version: '6.9.3'
           modules: 'qtmultimedia'
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
