@@ -29,6 +29,7 @@ type Release struct {
 	URL         string    `json:"url"`
 	Notes       string    `json:"notes"`
 	PublishedAt time.Time `json:"published_at"`
+	Assets      []Asset   `json:"assets,omitempty"`
 }
 
 // Latest returns the newest published release of repo ("owner/name").
@@ -73,6 +74,11 @@ func Latest(ctx context.Context, client *http.Client, baseURL, repo string) (Rel
 		Draft       bool      `json:"draft"`
 		Prerelease  bool      `json:"prerelease"`
 		PublishedAt time.Time `json:"published_at"`
+		Assets      []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+			Size int64  `json:"size"`
+		} `json:"assets"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		return Release{}, err
@@ -80,12 +86,20 @@ func Latest(ctx context.Context, client *http.Client, baseURL, repo string) (Rel
 	if payload.Draft || payload.Prerelease {
 		return Release{}, nil
 	}
-	return Release{
+	release := Release{
 		Version:     strings.TrimSpace(payload.TagName),
 		URL:         strings.TrimSpace(payload.HTMLURL),
 		Notes:       strings.TrimSpace(payload.Body),
 		PublishedAt: payload.PublishedAt,
-	}, nil
+	}
+	for _, asset := range payload.Assets {
+		release.Assets = append(release.Assets, Asset{
+			Name: strings.TrimSpace(asset.Name),
+			URL:  strings.TrimSpace(asset.URL),
+			Size: asset.Size,
+		})
+	}
+	return release, nil
 }
 
 // Newer reports whether candidate is a later version than current.

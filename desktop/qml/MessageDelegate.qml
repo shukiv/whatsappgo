@@ -661,7 +661,7 @@ Item {
                     Layout.preferredWidth: 30
                     Layout.preferredHeight: 30
                     text: root.playingThis && Playback.playing ? "❚❚" : "▶"
-                    font.pixelSize: 12
+                    font.pixelSize: 15
                     padding: 0
                     Accessible.name: root.playingThis && Playback.playing
                         ? qsTr("Pause voice message")
@@ -673,10 +673,10 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
-                    background: Rectangle {
-                        radius: width / 2
-                        color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : Theme.surfaceMuted
-                    }
+                    // WhatsApp Web draws the play control as a bare glyph on the
+                    // bubble. A filled circle behind it read as a button pasted
+                    // onto the message.
+                    background: null
                     onClicked: Playback.start(root.modelData.id, root.modelData.media_path || "", false)
                 }
 
