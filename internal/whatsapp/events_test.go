@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1098,5 +1099,52 @@ func TestReactionBackfillRefreshesTheBusiestChatsOnce(t *testing.T) {
 	c.backfillReactionsWith(ctx, refresh, 2, 0)
 	if len(refreshed) != 0 {
 		t.Fatalf("the backfill ran a second time: %v", refreshed)
+	}
+}
+
+func TestReactionBackfillDoesNotRunBesideItself(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const jid = "busy@s.whatsapp.net"
+	if err := st.UpsertChat(ctx, model.Chat{JID: jid, LastMessageAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertMessage(ctx, model.Message{ID: "m1", ChatJID: jid, SenderJID: jid,
+		Kind: "text", Body: "hello", Timestamp: 1000}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+
+	// The backfill outlives the connection sweep that started it. A reconnect
+	// while it is still running must not ask for the same pages again: the
+	// metadata that stops it is only written once it is finished.
+	var mu sync.Mutex
+	var requests int
+	started := make(chan struct{})
+	release := make(chan struct{})
+	refresh := func(context.Context, string, int) error {
+		mu.Lock()
+		requests++
+		first := requests == 1
+		mu.Unlock()
+		if first {
+			close(started)
+			<-release
+		}
+		return nil
+	}
+	go c.backfillReactionsWith(ctx, refresh, 5, 0)
+	<-started
+	c.backfillReactionsWith(ctx, refresh, 5, 0)
+	close(release)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 1 {
+		t.Fatalf("a second backfill asked for %d pages while the first was running", requests)
 	}
 }

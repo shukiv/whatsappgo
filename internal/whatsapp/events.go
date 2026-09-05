@@ -251,6 +251,10 @@ func (c *Client) backfillReactions() {
 
 func (c *Client) backfillReactionsWith(ctx context.Context,
 	refresh func(context.Context, string, int) error, chats int, pause time.Duration) {
+	if !c.reactionBackfilling.CompareAndSwap(false, true) {
+		return
+	}
+	defer c.reactionBackfilling.Store(false)
 	if _, done, err := c.store.Metadata(ctx, reactionBackfillMetadataKey); err != nil || done {
 		return
 	}

@@ -44,6 +44,13 @@ Item {
         const jid = String(backend.status.user_jid || "")
         return jid === "" ? "" : jid.split("@")[0].split(":")[0]
     }
+    // WhatsApp Web counts a thumb as a thumb whoever left it: the skin tone
+    // somebody chose is theirs, not a reaction of its own. The tone modifiers
+    // and the emoji presentation selector are dropped for grouping, so 👍 and
+    // 👍🏻 land under one heading, the way the group panel shows them.
+    function reactionKey(emoji) {
+        return String(emoji).replace(/[\u{1F3FB}-\u{1F3FF}\uFE0F]/gu, "")
+    }
     readonly property var reactionSummary: {
         const summary = []
         const indexes = ({})
@@ -52,17 +59,50 @@ Item {
             const emoji = String(reactions[i].emoji || "")
             if (!emoji)
                 continue
+            const key = root.reactionKey(emoji) || emoji
             const sender = String(reactions[i].sender_jid || "").split("@")[0].split(":")[0]
             const mine = root.selfUserPart !== "" && sender === root.selfUserPart
-            if (indexes[emoji] === undefined) {
-                indexes[emoji] = summary.length
-                summary.push({ emoji: emoji, count: 1, mine: mine })
+            if (indexes[key] === undefined) {
+                indexes[key] = summary.length
+                summary.push({ emoji: key, count: 1, mine: mine })
             } else {
-                summary[indexes[emoji]].count += 1
-                summary[indexes[emoji]].mine = summary[indexes[emoji]].mine || mine
+                summary[indexes[key]].count += 1
+                summary[indexes[key]].mine = summary[indexes[key]].mine || mine
             }
         }
         return summary
+    }
+    // One row per person for the panel: who they are, what they left, and
+    // whether it is the reader's own, which is the one that can be taken back.
+    readonly property var reactionPeople: {
+        const people = []
+        const reactions = modelData.reactions || []
+        for (let i = 0; i < reactions.length; ++i) {
+            const emoji = String(reactions[i].emoji || "")
+            if (!emoji)
+                continue
+            const jid = String(reactions[i].sender_jid || "")
+            const user = jid.split("@")[0].split(":")[0]
+            const name = String(reactions[i].sender_name || "")
+            people.push({
+                emoji: emoji,
+                key: root.reactionKey(emoji) || emoji,
+                jid: jid,
+                name: name,
+                // Only a phone JID carries a number anybody can read; the
+                // identifier of a group-only member is not one.
+                number: jid.indexOf("@s.whatsapp.net") > 0 ? "+" + user : "",
+                avatar: String(reactions[i].sender_avatar_path || ""),
+                mine: root.selfUserPart !== "" && user === root.selfUserPart
+            })
+        }
+        return people
+    }
+    readonly property int reactionTotal: {
+        let total = 0
+        for (let i = 0; i < root.reactionSummary.length; ++i)
+            total += root.reactionSummary[i].count
+        return total
     }
     readonly property bool reactedByMe: {
         for (let i = 0; i < root.reactionSummary.length; ++i) {
@@ -71,9 +111,12 @@ Item {
         }
         return false
     }
-    readonly property string reactionSummaryText: reactionSummary.map(function(reaction) {
-        return reaction.emoji + (reaction.count > 1 ? " " + reaction.count : "")
-    }).join("  ")
+    // The badge is the emoji themselves and, once more than one person has
+    // reacted, how many there were in total. WhatsApp Web shows at most three
+    // faces before it lets the number speak for the rest.
+    readonly property string reactionSummaryText: reactionSummary.slice(0, 3).map(function(reaction) {
+        return reaction.emoji
+    }).join("")
 
     // The local file when it has been downloaded, otherwise the inline
     // thumbnail WhatsApp delivers with the message itself. Showing the
@@ -295,6 +338,22 @@ Item {
         fullReactionPicker.open()
     }
 
+    // WhatsApp Web opens the badge into a list of who reacted and with what,
+    // grouped by emoji, with the reader's own reaction offered for removal.
+    function openReactionDetails() {
+        if (root.reactionSummary.length === 0)
+            return
+        closeActionPopups()
+        reactionDetailsPopup.shownEmoji = ""
+        const mapped = reactionsFlow.mapToItem(
+            reactionDetailsPopup.parent, 0, reactionsFlow.height)
+        const preferredX = root.modelData.from_me
+            ? mapped.x + reactionsFlow.width - reactionDetailsPopup.width : mapped.x
+        reactionDetailsPopup.x = clampPopupX(reactionDetailsPopup, preferredX)
+        reactionDetailsPopup.y = clampPopupY(reactionDetailsPopup, mapped.y + 6)
+        reactionDetailsPopup.open()
+    }
+
     function reactWith(emoji) {
         backend.reactMessage(root.modelData.id, root.modelData.sender_jid || "", emoji)
         contextMenu.close()
@@ -306,6 +365,7 @@ Item {
         contextMenu.close()
         quickReactionPopup.close()
         fullReactionPicker.close()
+        reactionDetailsPopup.close()
     }
 
     width: ListView.view ? ListView.view.width : 640
@@ -1137,7 +1197,7 @@ Item {
         id: reactionsFlow
         objectName: "messageReactionBadge"
         visible: root.reactionSummary.length > 0
-        implicitWidth: reactionSummaryLabel.implicitWidth + 12
+        implicitWidth: reactionBadgeRow.implicitWidth + 12
         width: implicitWidth
         height: 22
         x: root.modelData.from_me
@@ -1149,18 +1209,35 @@ Item {
         border.color: root.reactedByMe ? Theme.primary : Theme.border
         border.width: 1
 
-        Label {
-            id: reactionSummaryLabel
-            objectName: "messageReactionSummary"
+        Row {
+            id: reactionBadgeRow
             anchors.centerIn: parent
-            text: root.reactionSummaryText
-            font.family: Theme.emojiFontFamily
-            font.pixelSize: 14
-            Accessible.name: qsTr("Reactions: %1").arg(text)
+            spacing: 3
+
+            Label {
+                id: reactionSummaryLabel
+                objectName: "messageReactionSummary"
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.reactionSummaryText
+                font.family: Theme.emojiFontFamily
+                font.pixelSize: 14
+                Accessible.name: qsTr("Reactions: %1").arg(text)
+            }
+            Label {
+                objectName: "messageReactionCount"
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.reactionTotal > 1
+                text: root.reactionTotal
+                color: Theme.textMuted
+                font.pixelSize: 12
+            }
         }
 
         TapHandler {
-            onTapped: root.openReactionTray(reactionsFlow)
+            // WhatsApp Web opens the list of who reacted with what. Adding a
+            // reaction of one's own is the hover control and the menu, not
+            // this badge.
+            onTapped: root.openReactionDetails()
         }
     }
 
@@ -1170,6 +1247,165 @@ Item {
         onTapped: (eventPoint, button) => {
             const mapped = root.mapToItem(contextMenu.parent, eventPoint.position.x, eventPoint.position.y)
             root.openMessageMenuAt(mapped.x, mapped.y)
+        }
+    }
+
+    Popup {
+        id: reactionDetailsPopup
+        objectName: "reactionDetailsPopup"
+        parent: Overlay.overlay
+        // Empty means everybody; otherwise only the people who left this
+        // emoji, which is what the headings along the top switch between.
+        property string shownEmoji: ""
+        readonly property var shownPeople: root.reactionPeople.filter(function(person) {
+            return reactionDetailsPopup.shownEmoji === "" || person.key === reactionDetailsPopup.shownEmoji
+        })
+        width: 320
+        implicitHeight: Math.min(384, reactionDetailsColumn.implicitHeight + 24)
+        padding: 12
+        modal: false
+        focus: true
+        // See quickReactionPopup: this is positioned inside the application
+        // window, so it has to be an item in that window's overlay.
+        Component.onCompleted: {
+            if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
+                popupType = Popup.Item
+        }
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            radius: 12
+            color: Theme.surfaceRaised
+            border.color: Theme.border
+        }
+
+        contentItem: Column {
+            id: reactionDetailsColumn
+            spacing: 8
+
+            Label {
+                objectName: "reactionDetailsTitle"
+                text: qsTr("%1 emoji reactions").arg(root.reactionTotal)
+                color: Theme.text
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+
+            Row {
+                spacing: 6
+
+                Repeater {
+                    model: [{ emoji: "", count: root.reactionTotal }].concat(root.reactionSummary)
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool current: reactionDetailsPopup.shownEmoji === String(modelData.emoji)
+                        width: headingRow.implicitWidth + 18
+                        height: 28
+                        radius: 14
+                        color: current ? Theme.selectedRow : "transparent"
+                        border.color: current ? Theme.primary : Theme.border
+                        border.width: 1
+
+                        Row {
+                            id: headingRow
+                            anchors.centerIn: parent
+                            spacing: 4
+                            Label {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: String(parent.parent.modelData.emoji) === ""
+                                    ? qsTr("All") : String(parent.parent.modelData.emoji)
+                                font.family: Theme.emojiFontFamily
+                                font.pixelSize: 14
+                                color: Theme.text
+                            }
+                            Label {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: Number(parent.parent.modelData.count)
+                                font.pixelSize: 12
+                                color: Theme.textMuted
+                            }
+                        }
+
+                        TapHandler {
+                            onTapped: reactionDetailsPopup.shownEmoji = String(parent.modelData.emoji)
+                        }
+                    }
+                }
+            }
+
+            ListView {
+                objectName: "reactionDetailsList"
+                width: parent.width
+                height: Math.min(288, Math.max(48, contentHeight))
+                clip: true
+                model: reactionDetailsPopup.shownPeople
+                boundsBehavior: Flickable.StopAtBounds
+                delegate: Item {
+                    required property var modelData
+                    width: ListView.view.width
+                    height: 48
+
+                    Avatar {
+                        id: reactorAvatar
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        diameter: 36
+                        title: String(parent.modelData.name || parent.modelData.number)
+                        source: parent.modelData.avatar ? Theme.fileUrl(String(parent.modelData.avatar)) : ""
+                        fallbackIdentity: source.toString() === ""
+                    }
+
+                    Column {
+                        anchors.left: reactorAvatar.right
+                        anchors.leftMargin: 10
+                        anchors.right: reactorEmoji.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Label {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            text: parent.parent.modelData.mine
+                                ? qsTr("You")
+                                : (String(parent.parent.modelData.name)
+                                    || String(parent.parent.modelData.number)
+                                    || qsTr("Unknown"))
+                            color: Theme.text
+                            font.pixelSize: 14
+                        }
+                        Label {
+                            width: parent.width
+                            elide: Text.ElideRight
+                            // WhatsApp Web puts the number under a saved name,
+                            // and tells the reader their own can be taken back.
+                            visible: text !== ""
+                            text: parent.parent.modelData.mine
+                                ? qsTr("Click to remove")
+                                : (String(parent.parent.modelData.name) !== ""
+                                    ? String(parent.parent.modelData.number) : "")
+                            color: Theme.textMuted
+                            font.pixelSize: 12
+                        }
+                    }
+
+                    Label {
+                        id: reactorEmoji
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: String(parent.modelData.emoji)
+                        font.family: Theme.emojiFontFamily
+                        font.pixelSize: 18
+                    }
+
+                    TapHandler {
+                        enabled: parent.modelData !== undefined && parent.modelData.mine
+                        onTapped: {
+                            root.reactWith("")
+                            reactionDetailsPopup.close()
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -1767,3 +1767,61 @@ func TestReplyPreviewDescribesTheQuotedMessage(t *testing.T) {
 		t.Fatal("a message that is not in the database reported a preview")
 	}
 }
+
+func TestReactionsCarryTheNameOfWhoLeftThem(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const chat = "group@g.us"
+	if err := s.UpsertChat(ctx, model.Chat{JID: chat, Title: "Family", IsGroup: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Bob is in the address book, so his own conversation names him. Alice is
+	// only ever seen inside the group, where her messages carry her name.
+	if err := s.UpsertChat(ctx, model.Chat{JID: "bob@s.whatsapp.net", Title: "Bob Levy", AvatarPath: "/tmp/bob.jpg"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []model.Message{
+		{ID: "m1", ChatJID: chat, SenderJID: "alice@s.whatsapp.net", SenderName: "Alice Cohen", Kind: "text", Body: "morning", Timestamp: 10},
+		{ID: "m2", ChatJID: chat, SenderJID: "dave@s.whatsapp.net", Kind: "text", Body: "hi", Timestamp: 20},
+	} {
+		if err := s.UpsertMessage(ctx, message, "", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, reaction := range []model.Reaction{
+		{ChatJID: chat, MessageID: "m1", SenderJID: "bob@s.whatsapp.net", Emoji: "👍", Timestamp: 30},
+		{ChatJID: chat, MessageID: "m1", SenderJID: "alice@s.whatsapp.net", Emoji: "❤️", Timestamp: 40},
+		{ChatJID: chat, MessageID: "m1", SenderJID: "dave@s.whatsapp.net", Emoji: "😂", Timestamp: 50},
+	} {
+		if err := s.UpsertReaction(ctx, reaction); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, err := s.ListMessages(ctx, chat, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{}
+	avatars := map[string]string{}
+	for _, message := range page.Messages {
+		for _, reaction := range message.Reactions {
+			names[reaction.SenderJID] = reaction.SenderName
+			avatars[reaction.SenderJID] = reaction.SenderAvatarPath
+		}
+	}
+	if names["bob@s.whatsapp.net"] != "Bob Levy" {
+		t.Fatalf("a saved contact reacted and came back as %q", names["bob@s.whatsapp.net"])
+	}
+	if names["alice@s.whatsapp.net"] != "Alice Cohen" {
+		t.Fatalf("a group member reacted and came back as %q", names["alice@s.whatsapp.net"])
+	}
+	// Nobody knows Dave's name. The panel falls back to his number rather than
+	// being handed something invented here.
+	if names["dave@s.whatsapp.net"] != "" {
+		t.Fatalf("an unknown number came back named %q", names["dave@s.whatsapp.net"])
+	}
+	if avatars["bob@s.whatsapp.net"] != "/tmp/bob.jpg" {
+		t.Fatalf("the reaction did not carry the picture of who left it: %q", avatars["bob@s.whatsapp.net"])
+	}
+}

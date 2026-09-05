@@ -128,6 +128,11 @@ type Reaction struct {
 	SenderJID string `json:"sender_jid"`
 	Emoji     string `json:"emoji"`
 	Timestamp int64  `json:"timestamp"`
+	// Who left it, for the panel that lists them. Filled in when a stored
+	// message is read; a reaction arriving as an event carries only the JID,
+	// which the window already knows how to name.
+	SenderName       string `json:"sender_name,omitempty"`
+	SenderAvatarPath string `json:"sender_avatar_path,omitempty"`
 }
 
 type MessagePage struct {

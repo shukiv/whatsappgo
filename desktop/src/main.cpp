@@ -1062,6 +1062,7 @@ QtObject {
         auto *menuBackground = delegate->findChild<QObject *>(QStringLiteral("messageMenuBackground"));
         auto *reactionBadge = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageReactionBadge")));
         auto *reactionSummary = delegate->findChild<QObject *>(QStringLiteral("messageReactionSummary"));
+        auto *reactionCount = delegate->findChild<QObject *>(QStringLiteral("messageReactionCount"));
         auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
         auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
@@ -1118,6 +1119,24 @@ QtObject {
         const bool quoteClicked = quotedMessagePreview
             && QMetaObject::invokeMethod(quotedMessagePreview, "click");
         QCoreApplication::processEvents();
+
+        // WhatsApp Web opens the badge into the list of who reacted, with a
+        // heading per emoji that narrows the list to the people who left it.
+        const bool detailsOpened = QMetaObject::invokeMethod(delegate, "openReactionDetails");
+        QCoreApplication::processEvents();
+        auto *reactionDetails = delegate->findChild<QObject *>(QStringLiteral("reactionDetailsPopup"));
+        auto *reactionDetailsList = delegate->findChild<QObject *>(QStringLiteral("reactionDetailsList"));
+        auto *reactionDetailsTitle = delegate->findChild<QObject *>(QStringLiteral("reactionDetailsTitle"));
+        const int listedEverybody = reactionDetailsList ? reactionDetailsList->property("count").toInt() : -1;
+        if (reactionDetails != nullptr)
+            reactionDetails->setProperty("shownEmoji", QStringLiteral("👍"));
+        QCoreApplication::processEvents();
+        const int listedThumbs = reactionDetailsList ? reactionDetailsList->property("count").toInt() : -1;
+        qInfo().noquote() << QStringLiteral("reaction details: opened=%1 visible=%2 title=%3 everybody=%4 thumbs=%5")
+                                 .arg(detailsOpened)
+                                 .arg(reactionDetails && reactionDetails->property("visible").toBool())
+                                 .arg(reactionDetailsTitle ? reactionDetailsTitle->property("text").toString() : QStringLiteral("missing"))
+                                 .arg(listedEverybody).arg(listedThumbs);
         qInfo().noquote() << QStringLiteral("message interaction: selected=%1 link=%2 menuButton=%3 reactionButton=%4 badge=%5 summary=%6 badgeY=%7 bubbleH=%8 implicitH=%9 invoked=%10 menu=%11 reactions=%12")
                                  .arg(selected).arg(rendered.contains(QStringLiteral("href=\"https://example.com/path?q=1\"")))
                                  .arg(menuButton != nullptr).arg(reactionButton != nullptr)
@@ -1157,7 +1176,14 @@ QtObject {
                 && reactionIcon && reactionIcon->width() <= 22 && reactionIcon->height() <= 22
                 && menuBackground && menuBackground->property("color").value<QColor>().alpha() == 0
                 && reactionBadge && reactionBadge->isVisible() && bubble
-                && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏  👍 2")
+                // The badge is the faces plus how many people there were, the
+                // way WhatsApp Web writes it, not a count beside each emoji.
+                && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏👍")
+                && reactionCount && reactionCount->property("text").toString() == QStringLiteral("3")
+                && detailsOpened && reactionDetails && reactionDetails->property("visible").toBool()
+                && reactionDetailsTitle
+                && reactionDetailsTitle->property("text").toString() == QStringLiteral("3 emoji reactions")
+                && listedEverybody == 3 && listedThumbs == 2
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
                 && menuOpened && menuShown
 				&& qAbs(menu->property("width").toReal() - 196.0) < 0.01

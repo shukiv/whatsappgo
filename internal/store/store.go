@@ -1705,15 +1705,27 @@ func (s *Store) attachReactions(ctx context.Context, chatJID string, messages []
 		args = append(args, message.ID)
 		index[message.ID] = i
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT chat_jid,message_id,sender_jid,emoji,timestamp FROM reactions
- WHERE chat_jid=? AND message_id IN (`+placeholders+`) ORDER BY timestamp,sender_jid`, args...)
+	// Who reacted is shown by name in the panel that lists them. A saved
+	// contact has a conversation of their own that names them; somebody known
+	// only from inside a group is named by the messages they sent there.
+	rows, err := s.db.QueryContext(ctx, `SELECT r.chat_jid,r.message_id,r.sender_jid,r.emoji,r.timestamp,
+ COALESCE(CASE WHEN TRIM(c.local_title)<>'' THEN TRIM(c.local_title)
+               WHEN TRIM(c.title)<>'' AND c.title<>substr(c.jid,1,instr(c.jid,'@')-1) THEN TRIM(c.title) END,
+          (SELECT TRIM(s.sender_name) FROM messages s
+            WHERE s.sender_jid=r.sender_jid AND TRIM(COALESCE(s.sender_name,''))<>''
+            ORDER BY s.timestamp DESC LIMIT 1),
+          ''),
+ COALESCE(c.avatar_path,'')
+ FROM reactions r LEFT JOIN chats c ON c.jid=r.sender_jid
+ WHERE r.chat_jid=? AND r.message_id IN (`+placeholders+`) ORDER BY r.timestamp,r.sender_jid`, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var r model.Reaction
-		if err := rows.Scan(&r.ChatJID, &r.MessageID, &r.SenderJID, &r.Emoji, &r.Timestamp); err != nil {
+		if err := rows.Scan(&r.ChatJID, &r.MessageID, &r.SenderJID, &r.Emoji, &r.Timestamp,
+			&r.SenderName, &r.SenderAvatarPath); err != nil {
 			return err
 		}
 		if i, ok := index[r.MessageID]; ok {

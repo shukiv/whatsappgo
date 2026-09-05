@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/skip2/go-qrcode"
@@ -56,6 +57,10 @@ type Client struct {
 	// Set while the post-connection sweep is running, so a reconnect does not
 	// start a second one beside it.
 	connectSweepRunning bool
+	// The reaction backfill outlives the sweep that started it, so a
+	// reconnect must not set a second one going beside it: it would ask
+	// WhatsApp for the same twenty-five pages again.
+	reactionBackfilling atomic.Bool
 	resolveLinkPreview  func(context.Context, string) (model.LinkPreview, error)
 	mediaRetries        map[types.MessageID]*mediaRetryWaiter
 
