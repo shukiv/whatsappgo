@@ -573,7 +573,7 @@ Item {
                     objectName: "messageMedia"
                     anchors.fill: parent
                     visible: mediaFrame.previewReady
-                    source: root.hasPreview ? "file://" + root.previewPath : ""
+                    source: root.hasPreview ? Theme.fileUrl(root.previewPath) : ""
                     fillMode: root.modelData.kind === "sticker" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
@@ -817,7 +817,7 @@ Item {
                     id: locationMap
                     objectName: "locationMap"
                     visible: Boolean(root.modelData.media_thumbnail) && status !== Image.Error
-                    source: visible ? "file://" + root.modelData.media_thumbnail : ""
+                    source: visible ? Theme.fileUrl(root.modelData.media_thumbnail) : ""
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
@@ -942,7 +942,7 @@ Item {
                     id: linkImage
                     objectName: "linkPreviewImage"
                     visible: Boolean(root.modelData.link_thumbnail) && status !== Image.Error
-                    source: visible ? "file://" + root.modelData.link_thumbnail : ""
+                    source: visible ? Theme.fileUrl(root.modelData.link_thumbnail) : ""
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top

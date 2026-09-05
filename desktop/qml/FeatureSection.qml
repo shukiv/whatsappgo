@@ -172,7 +172,7 @@ RowLayout {
 								if (root.section === "calls") return modelData.peer_name || root.jidLabel(modelData.peer_jid)
                                 return modelData.name || "?"
                             }
-						source: root.section === "calls" && modelData.peer_avatar_path ? "file://" + modelData.peer_avatar_path : ""
+						source: root.section === "calls" ? Theme.fileUrl(modelData.peer_avatar_path) : ""
                         }
                         ColumnLayout {
                             Layout.fillWidth: true

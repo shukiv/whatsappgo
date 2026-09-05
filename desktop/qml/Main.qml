@@ -306,11 +306,7 @@ ApplicationWindow {
     }
 
     function localMediaUrl(path) {
-        const value = String(path || "")
-        if (!value)
-            return ""
-        return value.indexOf("file:") === 0 || value.indexOf("data:") === 0 || value.indexOf("qrc:") === 0
-            ? value : "file://" + value
+        return Theme.fileUrl(path)
     }
 
     function formatMessageDate(value) {
@@ -1498,7 +1494,7 @@ ApplicationWindow {
                                     diameter: 48
                                     title: window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid)
                                     fallbackIdentity: title.startsWith("+") || title.startsWith(qsTr("Contact ·"))
-                                    source: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
+                                    source: Theme.fileUrl(backend.selectedChat.avatar_path)
                                     Accessible.ignored: true
                                 }
                                 ColumnLayout {
@@ -1804,7 +1800,7 @@ ApplicationWindow {
                             selected: window.messageSelectionActive && window.isMessageSelected(modelData.id)
                             onSelectionToggled: message => window.toggleMessageSelection(message)
                             chatTitle: backend.selectedChat.title || ""
-                            chatAvatarSource: backend.selectedChat.avatar_path ? "file://" + backend.selectedChat.avatar_path : ""
+                            chatAvatarSource: Theme.fileUrl(backend.selectedChat.avatar_path)
                             ownTitle: backend.status.user_name || ""
                             onEditRequested: (messageId, body) => {
                                 editDialog.messageId = messageId
@@ -2581,7 +2577,7 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         nameFilters: [qsTr("Text files (*.txt)"), qsTr("All files (*)")]
         // Named after the conversation, the way WhatsApp names its own exports.
-        currentFile: "file://" + StandardPaths.writableLocation(StandardPaths.DocumentsLocation).toString().replace("file://", "")
+        currentFile: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
             + "/WhatsApp Chat - " + String(backend.selectedChat.title || backend.selectedChat.jid || "chat").replace(/[\/]/g, " ") + ".txt"
         onAccepted: backend.exportChat(backend.selectedChat.jid, selectedFile)
     }
@@ -3577,11 +3573,11 @@ ApplicationWindow {
         objectName: "dropSendDialog"
         property var files: []
         readonly property string firstFile: files.length > 0 ? String(files[0]) : ""
-        readonly property string firstPath: decodeURIComponent(firstFile.replace("file://", ""))
+        readonly property string firstPath: Theme.localPath(firstFile)
         readonly property bool firstIsImage: /\.(png|jpe?g|gif|webp|bmp)$/i.test(firstPath)
 
         function fileName(url) {
-            const path = decodeURIComponent(String(url).replace("file://", ""))
+            const path = Theme.localPath(url)
             const at = path.lastIndexOf("/")
             return at >= 0 ? path.substring(at + 1) : path
         }

@@ -61,7 +61,7 @@ ColumnLayout {
         const value = String(path || "")
         if (value === "")
             return ""
-        return value.startsWith("file://") ? value : "file://" + value
+        return Theme.fileUrl(value)
     }
 
     function itemLabel(item) {

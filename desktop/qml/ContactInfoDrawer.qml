@@ -54,7 +54,7 @@ Rectangle {
 
     function localUrl(path) {
         const value = String(path || "")
-        return value ? (value.indexOf("file:") === 0 || value.indexOf("data:") === 0 || value.indexOf("qrc:") === 0 ? value : "file://" + value) : ""
+        return Theme.fileUrl(value)
     }
 
     function messageUrl(message) {

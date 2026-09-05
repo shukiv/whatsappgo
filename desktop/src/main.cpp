@@ -266,6 +266,8 @@ int main(int argc, char *argv[])
     parser.addOption(bugReportTestOption);
     QCommandLineOption styleDetectionTestOption(QStringLiteral("style-detection-test"), QStringLiteral("Verify the Qt Quick Controls style is only chosen when its module is installed"));
     parser.addOption(styleDetectionTestOption);
+    QCommandLineOption fileUrlTestOption(QStringLiteral("file-url-test"), QStringLiteral("Verify local paths and file URLs convert both ways, including Windows drive letters"));
+    parser.addOption(fileUrlTestOption);
     QCommandLineOption backendLifecycleTestOption(QStringLiteral("backend-lifecycle-test"), QStringLiteral("Verify that the desktop owns its bundled backend process"));
     parser.addOption(backendLifecycleTestOption);
     QCommandLineOption resizeRenderingTestOption(QStringLiteral("resize-rendering-test"), QStringLiteral("Verify that resizing schedules a complete scene repaint"));
@@ -298,6 +300,7 @@ int main(int argc, char *argv[])
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
     const bool styleDetectionTest = parser.isSet(styleDetectionTestOption);
+    const bool fileUrlTest = parser.isSet(fileUrlTestOption);
     const bool clipboardImageTest = parser.isSet(clipboardImageTestOption);
     const bool layoutRegressionTest = parser.isSet(layoutRegressionTestOption);
     const bool mediaPreviewTest = parser.isSet(mediaPreviewTestOption);
@@ -324,7 +327,7 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || styleDetectionTest
+        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || styleDetectionTest || fileUrlTest
         || !screenshotPath.isEmpty();
 
     // Automated runs keep the per-account monitors off, because each one opens
@@ -749,6 +752,55 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (fileUrlTest) {
+        // Every image in the interface is addressed by building a URL out of a
+        // path the daemon cached. "file://" + path is right on Unix and wrong
+        // on Windows, where it yields file://C:/... - C parsed as a host name -
+        // and the Windows CI job showed the result: 'QML QQuickImage: Cannot
+        // open: file://c/Users/runneradmin/...' for thumbnails and avatars.
+        QQmlEngine probeEngine;
+        QQmlComponent probeComponent(&probeEngine);
+        probeComponent.setData(R"(import QtQuick
+import org.whatsappgo
+QtObject {
+    property string posix: Theme.fileUrl("/home/user/a b.png")
+    property string windows: Theme.fileUrl("C:\\Users\\user\\a.png")
+    property string scheme: Theme.fileUrl("qrc:/x.png")
+    property string already: Theme.fileUrl("file:///home/user/a.png")
+    property string blank: Theme.fileUrl("")
+    property string windowsBack: Theme.localPath("file:///C:/Users/user/a%20b.png")
+    property string posixBack: Theme.localPath("file:///home/user/a%20b.png")
+})", QUrl());
+        const QScopedPointer<QObject> probe(probeComponent.create());
+        if (probe.isNull()) {
+            qWarning() << "file url probe failed:" << probeComponent.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        const auto expectations = QList<QPair<const char *, QString>>{
+            {"posix", QStringLiteral("file:///home/user/a b.png")},
+            {"windows", QStringLiteral("file:///C:/Users/user/a.png")},
+            {"scheme", QStringLiteral("qrc:/x.png")},
+            {"already", QStringLiteral("file:///home/user/a.png")},
+            {"blank", QString()},
+            {"windowsBack", QStringLiteral("C:/Users/user/a b.png")},
+            {"posixBack", QStringLiteral("/home/user/a b.png")},
+        };
+        for (const auto &expectation : expectations) {
+            const auto actual = probe->property(expectation.first).toString();
+            if (actual != expectation.second) {
+                qWarning("%s: expected %s, got %s", expectation.first,
+                         qPrintable(expectation.second), qPrintable(actual));
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+            // Qt has to agree that the URL names the path it was built from.
+            if (expectation.second.startsWith(QLatin1String("file://"))
+                && QUrl(expectation.second).toLocalFile().isEmpty()) {
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+        }
+        return EXIT_SUCCESS;
+    }
+
     if (styleDetectionTest) {
         // The Fedora CI container has no qqc2-desktop-style, which is how the
         // unconditional setStyle call was found: every window-opening test

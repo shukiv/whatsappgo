@@ -97,6 +97,33 @@ QtObject {
     readonly property int spacing: 8
     readonly property int spacingLarge: 16
 
+    // Qt spells a local file as file:///path: three slashes, forward slashes
+    // throughout, and the leading slash kept in front of a Windows drive
+    // letter. Concatenating "file://" with a path produced file://C:\Users\...
+    // on Windows, where C reads as a host name, so every cached image, avatar
+    // and video failed to open.
+    function fileUrl(path) {
+        const value = String(path || "")
+        if (!value)
+            return ""
+        // Two characters at least, so a "C:" drive letter is not read as a
+        // URL scheme.
+        if (/^[a-z][a-z0-9+.-]+:/i.test(value))
+            return value
+        const slashed = value.replace(/\\/g, "/")
+        return slashed.charAt(0) === "/" ? "file://" + slashed : "file:///" + slashed
+    }
+
+    // The inverse: a dropped or chosen file arrives as a URL and the daemon
+    // wants a path.
+    function localPath(url) {
+        const value = String(url || "")
+        if (value.indexOf("file://") !== 0)
+            return decodeURIComponent(value)
+        const path = decodeURIComponent(value.substring("file://".length))
+        return /^\/[A-Za-z]:/.test(path) ? path.substring(1) : path
+    }
+
     function escapeHtml(value) {
         return String(value || "")
             .replace(/&/g, "&amp;")

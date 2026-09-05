@@ -54,7 +54,7 @@ Item {
             return
         if (isVideo && !videoSurface)
             return
-        loader.item.source = "file://" + currentPath
+        loader.item.source = Theme.fileUrl(currentPath)
         loader.item.play()
         startPending = false
     }

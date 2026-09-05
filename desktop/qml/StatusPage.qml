@@ -171,7 +171,7 @@ RowLayout {
                             Layout.preferredHeight: 60
                             diameter: 60
                             title: modelData.sender_name || "?"
-                            source: modelData.avatar_path ? "file://" + modelData.avatar_path : ""
+                            source: Theme.fileUrl(modelData.avatar_path)
                             itemCount: modelData.items ? modelData.items.length : 1
                         }
                         ColumnLayout {

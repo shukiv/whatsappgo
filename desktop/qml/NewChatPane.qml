@@ -280,7 +280,7 @@ Rectangle {
                         Layout.preferredHeight: 52
                         diameter: 52
                         title: root.displayTitle(modelData)
-                        source: modelData.avatar_path ? "file://" + modelData.avatar_path : ""
+                        source: Theme.fileUrl(modelData.avatar_path)
                     }
                     ColumnLayout {
                         Layout.fillWidth: true

@@ -142,7 +142,7 @@ Item {
                     Layout.preferredHeight: 49
                     diameter: 49
                     title: contactRow.contactName
-                    source: item.avatar_path ? "file://" + item.avatar_path : ""
+                    source: Theme.fileUrl(item.avatar_path)
                 }
                 Label {
                     Layout.fillWidth: true

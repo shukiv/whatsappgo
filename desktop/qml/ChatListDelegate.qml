@@ -168,7 +168,7 @@ ItemDelegate {
                     diameter: 56
                     itemCount: Math.max(1, root.statusItemCount)
                     title: root.displayTitle
-                    source: root.modelData.avatar_path ? "file://" + root.modelData.avatar_path : ""
+                    source: Theme.fileUrl(root.modelData.avatar_path)
                 }
                 Avatar {
                     objectName: "chatAvatar"
@@ -177,7 +177,7 @@ ItemDelegate {
                     diameter: 49
                     title: root.displayTitle
                     fallbackIdentity: root.fallbackIdentity
-                    source: root.modelData.avatar_path ? "file://" + root.modelData.avatar_path : ""
+                    source: Theme.fileUrl(root.modelData.avatar_path)
                 }
             }
             HoverHandler { cursorShape: Qt.PointingHandCursor }

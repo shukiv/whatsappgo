@@ -34,9 +34,7 @@ Item {
         const source = String(value || "")
         if (!source)
             return ""
-        if (source.indexOf("://") >= 0 || source.indexOf("qrc:") === 0)
-            return source
-        return "file://" + source
+        return Theme.fileUrl(source)
     }
 
     function openAt(index) {
@@ -405,7 +403,7 @@ Item {
                 Layout.preferredHeight: 44
                 diameter: 44
                 title: root.currentGroup.sender_name || "?"
-                source: root.currentGroup.avatar_path ? "file://" + root.currentGroup.avatar_path : ""
+                source: Theme.fileUrl(root.currentGroup.avatar_path)
             }
             ColumnLayout {
                 Layout.fillWidth: true
