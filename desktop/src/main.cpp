@@ -3060,6 +3060,7 @@ QtObject {
             QStringLiteral("conversationDeleteDialog"),
             QStringLiteral("pairingAccountSwitcher"),
             QStringLiteral("pairingBackButton"),
+            QStringLiteral("navigationUpdateButton"),
             QStringLiteral("navigationMediaButton"),
             QStringLiteral("mediaLibraryPane"),
             QStringLiteral("mediaLibraryList"),

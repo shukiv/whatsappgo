@@ -63,6 +63,42 @@ ApplicationWindow {
     // the one that was open before it.
     property string previousProfile: ""
 
+    // The rail carries the update control as well as the settings page does:
+    // an update nobody sees is an update nobody installs. What pressing it
+    // means depends on how far along the update is - see SettingsPane, which
+    // spells the same three steps out in words.
+    readonly property bool updateDownloading: backend.updateStatus.downloading === true
+    readonly property bool updateDownloaded: String(backend.updateStatus.downloaded || "") !== ""
+    readonly property bool updateOffered: backend.updateStatus.available === true
+    readonly property string updateActionText: {
+        if (window.updateDownloading)
+            return qsTr("Downloading version %1…").arg(String(backend.updateStatus.latest || ""))
+        if (window.updateDownloaded)
+            return qsTr("Install version %1 and restart").arg(String(backend.updateStatus.latest || ""))
+        if (window.updateOffered)
+            return backend.updateInstallable()
+                ? qsTr("Download version %1").arg(String(backend.updateStatus.latest || ""))
+                : qsTr("Open the release page for version %1").arg(String(backend.updateStatus.latest || ""))
+        return qsTr("Update WhatsAppGo")
+    }
+
+    function applyUpdateAction() {
+        if (window.updateDownloading)
+            return
+        if (window.updateDownloaded) {
+            backend.installUpdate()
+            return
+        }
+        if (window.updateOffered) {
+            if (backend.updateInstallable())
+                backend.downloadUpdate()
+            else
+                backend.openReleasePage()
+            return
+        }
+        backend.checkForUpdates()
+    }
+
     function switchProfile(profile) {
         if (String(profile) === backend.profile)
             return
@@ -742,6 +778,41 @@ ApplicationWindow {
                 }
 
                 Item { Layout.fillHeight: true }
+
+                ThemedToolButton {
+                    objectName: "navigationUpdateButton"
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    iconSource: Qt.resolvedUrl("icons/reconnect.svg")
+                    iconTint: window.updateOffered || window.updateDownloaded ? Theme.brand : Theme.icon
+                    enabled: !window.updateDownloading
+                    Accessible.name: window.updateActionText
+                    onClicked: window.applyUpdateAction()
+                    background: Rectangle {
+                        radius: 12
+                        color: parent.down ? Theme.navigationPressed
+                            : parent.hovered || parent.activeFocus ? Theme.navigationHover : "transparent"
+                    }
+                    // A release waiting to be installed is worth noticing from
+                    // the rail, the way an unread conversation is.
+                    Rectangle {
+                        objectName: "navigationUpdateDot"
+                        visible: window.updateOffered || window.updateDownloaded
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.rightMargin: 4
+                        anchors.topMargin: 4
+                        width: 9
+                        height: 9
+                        radius: 4.5
+                        color: Theme.brand
+                        border.color: Theme.navigation
+                        border.width: 2
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: Accessible.name
+                }
 
                 ThemedToolButton {
                     objectName: "navigationMediaButton"
