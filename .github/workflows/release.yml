@@ -46,6 +46,10 @@ jobs:
   linux:
     needs: draft
     runs-on: ubuntu-latest
+    # The tag is the version the binaries call themselves. Without it they are
+    # "dev" builds, which are never behind a release and never offer an update.
+    env:
+      WHATSAPPGO_VERSION: ${{ needs.draft.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -65,6 +69,8 @@ jobs:
   windows:
     needs: draft
     runs-on: windows-latest
+    env:
+      WHATSAPPGO_VERSION: ${{ needs.draft.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -93,6 +99,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
+      WHATSAPPGO_VERSION: ${{ needs.draft.outputs.tag }}
       # Unix Makefiles plus "cmake --build --parallel" means a bare make -j on
       # a three-core runner, which turns a few minutes of work into most of an
       # hour. cmake picks the generator up from this variable.
@@ -110,5 +117,23 @@ jobs:
           modules: 'qtmultimedia'
       - run: packaging/macos/build.sh
       - run: gh release upload "${{ needs.draft.outputs.tag }}" build/macos/*.dmg --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  # The updater downloads an asset and refuses to install one whose checksum is
+  # not in this file, so the file has to exist before anybody can update with a
+  # click. It is written after the three builds have uploaded, from the assets
+  # the release actually carries.
+  checksums:
+    needs: [draft, linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          mkdir -p dist
+          gh release download "${{ needs.draft.outputs.tag }}" --repo "${{ github.repository }}" --dir dist --pattern '*' --clobber
+          rm -f dist/SHA256SUMS
+          cd dist && sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "${{ needs.draft.outputs.tag }}" SHA256SUMS --repo "${{ github.repository }}" --clobber
         env:
           GH_TOKEN: ${{ github.token }}

@@ -27,9 +27,11 @@ case "${arch}" in
 esac
 
 mkdir -p "${project_root}/bin" "${stage_dir}"
+# Stamped, or the built bundle calls itself "dev" and never offers an update.
+version="$("${project_root}/scripts/version.sh")"
 # The daemon is pure Go, so it cross-builds without a C toolchain.
-CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsappd" ./cmd/whatsappd
-CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsappctl" ./cmd/whatsappctl
+CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappd" ./cmd/whatsappd
+CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappctl" ./cmd/whatsappctl
 
 cmake -S "${project_root}/desktop" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="${stage_dir}" -DBUILD_TESTING=OFF

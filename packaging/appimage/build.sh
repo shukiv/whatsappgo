@@ -8,8 +8,10 @@ tools_dir="${project_root}/build/appimage-tools"
 cd "${project_root}"
 
 mkdir -p "${appdir}/usr/bin" "${tools_dir}" "${project_root}/bin"
-CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsappd" "${project_root}/cmd/whatsappd"
-CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsappctl" "${project_root}/cmd/whatsappctl"
+# Stamped, or the built AppImage calls itself "dev" and never offers an update.
+version="$("${project_root}/scripts/version.sh")"
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappd" "${project_root}/cmd/whatsappd"
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappctl" "${project_root}/cmd/whatsappctl"
 # Its own build directory, the way packaging/macos/build.sh has one: this
 # configures with an install prefix of /usr and without the tests, neither of
 # which belongs in the tree a developer builds in.

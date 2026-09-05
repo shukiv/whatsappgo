@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shukiv/whatsappgo/internal/bugreport"
 	"github.com/shukiv/whatsappgo/internal/config"
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/mediastore"
@@ -19,6 +20,7 @@ import (
 	"github.com/shukiv/whatsappgo/internal/rpc"
 	"github.com/shukiv/whatsappgo/internal/service"
 	"github.com/shukiv/whatsappgo/internal/store"
+	"github.com/shukiv/whatsappgo/internal/updates"
 	"github.com/shukiv/whatsappgo/internal/whatsapp"
 )
 
@@ -137,6 +139,11 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 	broker := events.New()
 	app := service.New(messageStore, wa, broker)
 	app.Describe(version, countProfiles())
+	// Look for a newer release now and every few hours after that. Nothing is
+	// downloaded here: the desktop is told what exists and the reader decides.
+	app.WatchForUpdates(ctx, updates.Interval, func(ctx context.Context) (updates.Release, error) {
+		return updates.Latest(ctx, nil, "", bugreport.Repository)
+	})
 	defer app.Close()
 	server := rpc.NewServer(paths.Socket, app, broker)
 	if err := server.Listen(); err != nil {

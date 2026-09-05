@@ -29,6 +29,7 @@ type Service struct {
 	accounts int
 	started  time.Time
 	reporter bugreport.Submitter
+	updates  updateState
 }
 
 func New(st *store.Store, gw gateway.Gateway, broker *events.Broker) *Service {
@@ -234,6 +235,14 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		return discoveryResult(), nil
 	case "status.get":
 		return s.gateway.Status(), nil
+	case "update.status":
+		return s.updateStatus(), nil
+	case "update.check":
+		// The settings page asks for this when the reader presses the button,
+		// so the answer is the fresh one rather than whatever the last tick
+		// found.
+		s.checkForUpdate(ctx)
+		return s.updateStatus(), nil
 	case "bugreport.environment":
 		// The desktop shows this to the reader before anything is sent, so
 		// nobody files a report without seeing what travels with it.

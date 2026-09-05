@@ -2,11 +2,17 @@
 
 all: tools
 
+# The binaries carry the version the update check compares against. Without
+# the stamp every build calls itself "dev" and is never behind a release, so
+# an unstamped release would silently never offer an update.
+VERSION ?= $(shell ./scripts/version.sh)
+GO_LDFLAGS ?= -X main.version=$(VERSION)
+
 daemon:
-	CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/whatsappd ./cmd/whatsappd
 
 cli:
-	CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/whatsappctl ./cmd/whatsappctl
 
 tools: daemon cli
 

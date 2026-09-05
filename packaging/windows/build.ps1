@@ -23,11 +23,18 @@ Push-Location $projectRoot
 try {
     New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot "bin"), $stageDir | Out-Null
 
+    # Stamped, or the installed build calls itself "dev" and never offers an
+    # update. This is scripts/version.sh in PowerShell; keep the two in step.
+    $version = $env:WHATSAPPGO_VERSION
+    if (-not $version) { $version = (& git describe --tags --always --dirty 2>$null) }
+    if (-not $version) { $version = "dev" }
+    $ldflags = "-s -w -X main.version=$version"
+
     # The daemon is pure Go: no cgo, no C toolchain, no SQLite DLL to ship.
     $env:CGO_ENABLED = "0"
-    & go build -trimpath -ldflags "-s -w" -o (Join-Path $projectRoot "bin\whatsappd.exe") ./cmd/whatsappd
+    & go build -trimpath -ldflags $ldflags -o (Join-Path $projectRoot "bin\whatsappd.exe") ./cmd/whatsappd
     if ($LASTEXITCODE -ne 0) { throw "building whatsappd failed" }
-    & go build -trimpath -ldflags "-s -w" -o (Join-Path $projectRoot "bin\whatsappctl.exe") ./cmd/whatsappctl
+    & go build -trimpath -ldflags $ldflags -o (Join-Path $projectRoot "bin\whatsappctl.exe") ./cmd/whatsappctl
     if ($LASTEXITCODE -ne 0) { throw "building whatsappctl failed" }
 
     $cmakeArgs = @("-S", (Join-Path $projectRoot "desktop"), "-B", $buildDir,
