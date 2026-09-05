@@ -80,6 +80,9 @@ qt_add_qml_module(whatsappgo
     URI org.whatsappgo
     VERSION 1.0
     NO_IMPORT_SCAN
+    SOURCES
+        src/videosurface.cpp
+        src/videosurface.h
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -167,6 +170,9 @@ qt_add_qml_module(whatsappgo
         qml/icons/plus.svg
         qml/assets/chat-background.png
 )
+
+# The generated QML type registration includes <videosurface.h> by name.
+target_include_directories(whatsappgo PRIVATE src)
 
 target_link_libraries(whatsappgo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia
@@ -297,6 +303,14 @@ if(BUILD_TESTING)
     target_include_directories(chat-list-updates-test PRIVATE src)
     target_link_libraries(chat-list-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
+    qt_add_executable(video-surface-test
+        tests/VideoSurface.cpp
+        src/videosurface.cpp
+        src/videosurface.h
+    )
+    target_include_directories(video-surface-test PRIVATE src)
+    target_link_libraries(video-surface-test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Multimedia)
+
     qt_add_executable(notification-routing-test
         tests/NotificationRouting.cpp
         src/messagemodel.cpp
@@ -345,6 +359,8 @@ if(BUILD_TESTING)
     target_include_directories(profile-display-names-test PRIVATE src)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME desktop-profile-display-names COMMAND profile-display-names-test)
+    add_test(NAME desktop-video-surface COMMAND video-surface-test)
+    set_tests_properties(desktop-video-surface PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-notification-routing COMMAND notification-routing-test)
     add_test(NAME desktop-backend-probe COMMAND backend-probe-test)
     set_tests_properties(desktop-profile-display-names PROPERTIES TIMEOUT 5)

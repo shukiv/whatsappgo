@@ -55,6 +55,10 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: true
+      # The container checks the repository out under a different owner than
+      # the build user, so git refuses to describe it and `go build` stops with
+      # "error obtaining VCS status: exit status 128".
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # desktop-backend-lifecycle starts the real daemon, so it has to exist
       # before the desktop build copies it beside the application.
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
@@ -68,6 +72,12 @@ jobs:
 
   desktop-windows:
     runs-on: windows-latest
+    env:
+      # Qt's default message handler on Windows sends output to the debugger
+      # unless it is certain a console is attached, which is why a failing test
+      # printed nothing at all under ctest.
+      QT_FORCE_STDERR_LOGGING: '1'
+      QT_ASSUME_STDERR_HAS_CONSOLE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6

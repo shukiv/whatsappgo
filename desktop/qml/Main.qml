@@ -2389,12 +2389,14 @@ ApplicationWindow {
                 onClicked: Playback.toggle()
             }
 
-            VideoOutput {
+            // VideoSurface rather than VideoOutput: the software scene graph
+            // this application runs on cannot draw a VideoOutput, so every
+            // video played to a black screen. See src/videosurface.h.
+            VideoSurface {
                 id: videoSurface
                 anchors.fill: parent
                 anchors.margins: 24
                 anchors.bottomMargin: 84
-                fillMode: VideoOutput.PreserveAspectFit
             }
 
             ThemedToolButton {

@@ -325,10 +325,12 @@ Item {
             }
         }
 
-        VideoOutput {
+        // VideoSurface rather than VideoOutput: the software scene graph this
+        // application runs on cannot draw a VideoOutput, so the story played
+        // its audio against a black rectangle. See src/videosurface.h.
+        VideoSurface {
             id: statusVideo
             anchors.fill: parent
-            fillMode: VideoOutput.PreserveAspectFit
             visible: root.videoReady
         }
 
