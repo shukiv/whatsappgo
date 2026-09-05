@@ -1,9 +1,13 @@
 # Installing WhatsAppGo
 
-WhatsAppGo is currently distributed as source. The repository contains Debian,
-RPM, Flatpak and AppImage definitions for Linux, an Inno Setup installer for
-Windows and a bundle-and-notarise script for macOS, but no signed binary release
-is published yet.
+WhatsAppGo is built from source, and tagged versions are also published as
+binaries on the [releases page](https://github.com/shukiv/whatsappgo/releases):
+an AppImage for Linux, a ZIP and an installer for Windows, and a DMG for each
+macOS architecture.
+
+Those binaries are **unsigned**. macOS refuses an unsigned bundle that came from
+another machine until it is allowed in System Settings, and Windows SmartScreen
+warns about an unsigned installer. Building from source avoids both.
 
 The desktop application and its Go backend are installed together. Start only
 `whatsappgo`; it starts and stops its private `whatsappd` helper automatically.

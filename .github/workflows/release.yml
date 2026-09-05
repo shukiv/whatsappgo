@@ -1,0 +1,107 @@
+name: Release
+
+# Publishing is deliberately manual: pushing a v* tag, or running the workflow
+# by hand. Nothing here fires on an ordinary push.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (created if it does not exist)'
+        required: true
+
+permissions:
+  contents: write
+
+# This workflow does not run the test suite. CI runs it on every push, and a
+# release is cut from a commit that has already been through it - gating here
+# as well would only mean discovering a red suite after the tag exists.
+
+env:
+  QT_VERSION: '6.9.3'
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      # The release starts as a draft and stays one. Nothing is published to
+      # people until a human looks at the binaries and presses the button:
+      # these builds are unsigned, so they are worth a second look.
+      - run: |
+          gh release view "${{ steps.resolve.outputs.tag }}" >/dev/null 2>&1 && exit 0
+          gh release create "${{ steps.resolve.outputs.tag }}" \
+            --draft \
+            --title "WhatsAppGo ${{ steps.resolve.outputs.tag }}" \
+            --notes "Unsigned builds. macOS refuses an unsigned bundle from another machine until you allow it in System Settings, and Windows SmartScreen warns about an unsigned installer."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  linux:
+    needs: draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qtmultimedia'
+      - run: sudo apt-get update && sudo apt-get install -y libfuse2 libxcb-cursor0
+      - run: packaging/appimage/build.sh
+      - run: gh release upload "${{ needs.draft.outputs.tag }}" build/WhatsAppGo-*.AppImage --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  windows:
+    needs: draft
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qtmultimedia'
+      - run: choco install innosetup --no-progress -y
+      - run: powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
+      - run: gh release upload "${{ needs.draft.outputs.tag }}" build/WhatsAppGo-windows-x64.zip build/WhatsAppGo-Setup.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  macos:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest is Apple silicon; macos-13 is the last Intel image.
+          - runner: macos-latest
+          - runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: 'qtmultimedia'
+      - run: packaging/macos/build.sh
+      - run: gh release upload "${{ needs.draft.outputs.tag }}" build/macos/*.dmg --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
