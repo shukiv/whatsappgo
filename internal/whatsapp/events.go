@@ -17,6 +17,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
@@ -664,6 +665,8 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 				if historyMessage.GetMessage().GetStarred() {
 					_ = c.store.SetMessageStarred(context.Background(), msg.ChatJID, msg.ID, true)
 				}
+				c.recordHistoryReactions(context.Background(), chatJID, msg,
+					historyMessage.GetMessage().GetReactions())
 				total++
 			}
 		}
@@ -675,6 +678,55 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 	}
 	_ = c.store.RecalculateUnreadCounts(context.Background())
 	c.emit(gateway.Event{Name: "history.synced", Data: map[string]any{"messages": total, "chat_jids": chatJIDs}})
+}
+
+// recordHistoryReactions saves the reactions a synced message already carried.
+//
+// A reaction is a message of its own, so one left before this device was
+// linked is never delivered as an event: it arrives only here, attached to the
+// message it was left on. Without this a conversation everybody replied to
+// with an emoji comes back looking untouched.
+func (c *Client) recordHistoryReactions(ctx context.Context, chatJID types.JID,
+	msg model.Message, reactions []*waWeb.Reaction) {
+	for _, reaction := range reactions {
+		emoji := reaction.GetText()
+		if emoji == "" {
+			continue
+		}
+		sender := c.historyReactionSender(chatJID, reaction.GetKey())
+		if sender == "" {
+			continue
+		}
+		_ = c.store.UpsertReaction(ctx, model.Reaction{
+			ChatJID:   chatJID.String(),
+			MessageID: msg.ID,
+			SenderJID: sender,
+			Emoji:     emoji,
+			Timestamp: reaction.GetSenderTimestampMS(),
+		})
+	}
+}
+
+// historyReactionSender works out who left a reaction that came with history.
+// Its key describes the reaction message, not the message reacted to: in a
+// group the participant is the reader who left it, and in a direct chat the
+// only two candidates are this account and the person on the other end.
+func (c *Client) historyReactionSender(chatJID types.JID, key *waCommon.MessageKey) string {
+	if key.GetFromMe() {
+		return c.reactionSenderJID(types.EmptyJID, true)
+	}
+	if participant := key.GetParticipant(); participant != "" {
+		sender, err := types.ParseJID(participant)
+		if err != nil {
+			return ""
+		}
+		return sender.ToNonAD().String()
+	}
+	if chatJID.Server == types.GroupServer {
+		// Somebody in the group left it and the history did not say who.
+		return ""
+	}
+	return chatJID.ToNonAD().String()
 }
 
 func historySyncCarriesChatSettings(syncType waHistorySync.HistorySync_HistorySyncType) bool {

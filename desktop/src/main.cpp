@@ -1531,6 +1531,39 @@ QtObject {
         require(playBadge != nullptr && playBadge->isVisible(),
                 QStringLiteral("video play badge is missing"));
 
+        // WhatsApp Web draws a sticker straight onto the conversation: no
+        // panel behind it, no border, and no tail. Ours arrived in a bubble,
+        // which framed a transparent image in a white box.
+        QVariantMap stickerMessage = photo;
+        stickerMessage[QStringLiteral("id")] = QStringLiteral("sticker-1");
+        stickerMessage[QStringLiteral("kind")] = QStringLiteral("sticker");
+        stickerMessage[QStringLiteral("body")] = QString();
+        stickerMessage[QStringLiteral("from_me")] = false;
+        std::unique_ptr<QObject> stickerDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), stickerMessage},
+        }));
+        if (!stickerDelegate)
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        auto *stickerBubble = qobject_cast<QQuickItem *>(stickerDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
+        auto *stickerTail = qobject_cast<QQuickItem *>(stickerDelegate->findChild<QObject *>(QStringLiteral("messageTail")));
+        auto *stickerImage = qobject_cast<QQuickItem *>(stickerDelegate->findChild<QObject *>(QStringLiteral("messageMedia")));
+        if (stickerBubble == nullptr || stickerTail == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto stickerBackground = qvariant_cast<QColor>(stickerBubble->property("color"));
+        const auto stickerBorder = QQmlProperty(stickerBubble, QStringLiteral("border.width")).read().toReal();
+        qInfo().noquote() << QStringLiteral("sticker background alpha=%1 border=%2 tail=%3")
+                                 .arg(stickerBackground.alpha()).arg(stickerBorder).arg(stickerTail->isVisible());
+        require(stickerBackground.alpha() == 0, QStringLiteral("a sticker is drawn on a bubble"));
+        require(stickerBorder == 0.0, QStringLiteral("a sticker has a bubble border"));
+        require(!stickerTail->isVisible(), QStringLiteral("a sticker has a bubble tail"));
+        require(stickerImage != nullptr && stickerImage->isVisible(),
+                QStringLiteral("the sticker image is not displayed"));
+        // A photo keeps its bubble; only stickers lose it.
+        require(qvariant_cast<QColor>(photoBubble->property("color")).alpha() > 0,
+                QStringLiteral("a photo lost its bubble as well"));
+
         // Playback is a lazy singleton. A video must wait until Main's overlay
         // has supplied its VideoOutput; starting the decoder against a null
         // surface produces audio with a permanently blank video pane.

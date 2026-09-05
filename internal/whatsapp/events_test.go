@@ -985,3 +985,76 @@ func TestMessageFromEventDescribesTheQuotedMessageItCarries(t *testing.T) {
 		t.Fatalf("a quoted image should say so: %q", m.ReplyPreview)
 	}
 }
+
+func TestHistorySyncKeepsTheReactionsAMessageAlreadyHad(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const chat = "972500000000-1600000000@g.us"
+	c := &Client{store: st}
+
+	// A reaction is its own message, so one left before this device was linked
+	// arrives only here, attached to the message it was left on.
+	c.handleHistorySync(&waEvents.HistorySync{Data: &waHistorySync.HistorySync{
+		SyncType: waHistorySync.HistorySync_INITIAL_BOOTSTRAP.Enum(),
+		Conversations: []*waHistorySync.Conversation{{
+			ID: proto.String(chat),
+			Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{
+				Key: &waCommon.MessageKey{
+					ID:          proto.String("MSG1"),
+					RemoteJID:   proto.String(chat),
+					FromMe:      proto.Bool(false),
+					Participant: proto.String("alice@s.whatsapp.net"),
+				},
+				MessageTimestamp: proto.Uint64(1_700_000_000),
+				PushName:         proto.String("Alice"),
+				Message:          &waE2E.Message{Conversation: proto.String("good morning")},
+				Reactions: []*waWeb.Reaction{
+					{
+						Key: &waCommon.MessageKey{
+							ID:          proto.String("REACT1"),
+							RemoteJID:   proto.String(chat),
+							Participant: proto.String("bob@s.whatsapp.net"),
+						},
+						Text:              proto.String("👍"),
+						SenderTimestampMS: proto.Int64(1_700_000_005_000),
+					},
+					{
+						Key: &waCommon.MessageKey{
+							ID:          proto.String("REACT2"),
+							RemoteJID:   proto.String(chat),
+							Participant: proto.String("carol@s.whatsapp.net"),
+						},
+						Text:              proto.String("❤️"),
+						SenderTimestampMS: proto.Int64(1_700_000_006_000),
+					},
+				},
+			}}},
+		}},
+	}})
+
+	page, err := st.ListMessages(ctx, chat, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 {
+		t.Fatalf("the history message was not stored: %#v", page.Messages)
+	}
+	reactions := page.Messages[0].Reactions
+	if len(reactions) != 2 {
+		t.Fatalf("a message everybody reacted to came back with %d reactions", len(reactions))
+	}
+	byEmoji := map[string]string{}
+	for _, reaction := range reactions {
+		byEmoji[reaction.Emoji] = reaction.SenderJID
+	}
+	if byEmoji["👍"] != "bob@s.whatsapp.net" || byEmoji["❤️"] != "carol@s.whatsapp.net" {
+		t.Fatalf("the reactions came back from the wrong people: %#v", reactions)
+	}
+	if reactions[0].Timestamp == 0 {
+		t.Fatalf("a reaction came back without the time it was left: %#v", reactions[0])
+	}
+}

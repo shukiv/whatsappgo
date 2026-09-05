@@ -29,6 +29,11 @@ Item {
     readonly property bool hasReply: Boolean(modelData.reply_to)
     readonly property bool hasMedia: Boolean(modelData.media_path)
     readonly property bool mediaKind: ["image", "video", "audio", "document", "sticker"].indexOf(modelData.kind) >= 0
+    // WhatsApp Web puts a sticker on the conversation itself. It is drawn to
+    // be seen against the wallpaper, so a panel behind it is wrong twice: it
+    // fills in the transparency the sticker was drawn around, and it frames a
+    // picture that is meant to be loose on the page.
+    readonly property bool stickerKind: modelData.kind === "sticker"
     readonly property bool visualKind: ["image", "video", "sticker"].indexOf(modelData.kind) >= 0
     readonly property bool audioKind: modelData.kind === "audio"
     // WhatsApp Web marks the reaction the reader themselves left, so it can be
@@ -344,10 +349,12 @@ Item {
         // anchors are set for an instant. That stretches the bubble across the
         // conversation and discards its width binding for good.
         x: root.modelData.from_me ? Math.max(0, root.width - width - 40) : 40
-        color: root.modelData.from_me ? Theme.outgoingBubble : Theme.incomingBubble
+        color: root.stickerKind
+            ? "transparent"
+            : (root.modelData.from_me ? Theme.outgoingBubble : Theme.incomingBubble)
         radius: Theme.radiusLarge
         border.color: root.navigationHighlighted ? Theme.primary : Theme.bubbleBorder
-        border.width: root.navigationHighlighted ? 2 : (root.modelData.from_me ? 0 : 1)
+        border.width: root.navigationHighlighted ? 2 : ((root.modelData.from_me || root.stickerKind) ? 0 : 1)
 
         HoverHandler { id: bubbleHover }
 
@@ -359,7 +366,7 @@ Item {
             y: 0
             x: root.modelData.from_me ? bubble.width + 8 - width : -8
             property color fillColor: bubble.color
-            visible: root.modelData.kind !== "system"
+            visible: root.modelData.kind !== "system" && !root.stickerKind
 
             renderStrategy: Canvas.Immediate
             antialiasing: true
