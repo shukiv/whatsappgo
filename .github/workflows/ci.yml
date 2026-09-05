@@ -71,8 +71,9 @@ jobs:
       # before the desktop build copies it beside the application.
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
+      - run: ./scripts/build-jobs-test.sh
       - run: cmake -S desktop -B desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build desktop/build --parallel
+      - run: cmake --build desktop/build --parallel "$(./scripts/build-jobs.sh)"
       # This job built the desktop application for months without ever running
       # its tests, which is how a Linux-only assumption reached the Windows and
       # macOS jobs unnoticed.

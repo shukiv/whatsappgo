@@ -33,7 +33,8 @@ CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags '-s -w'
 
 cmake -S "${project_root}/desktop" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="${stage_dir}" -DBUILD_TESTING=OFF
-cmake --build "${build_dir}" --parallel
+# Bounded by memory as well as cores; see scripts/build-jobs.sh.
+cmake --build "${build_dir}" --parallel "$("${project_root}/scripts/build-jobs.sh")"
 rm -rf "${app}"
 cmake --install "${build_dir}"
 

@@ -16,7 +16,9 @@ CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsa
 build_dir="${project_root}/desktop/build-appimage"
 cmake -S "${project_root}/desktop" -B "${build_dir}" -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF
-cmake --build "${build_dir}" --parallel
+# Bounded by memory as well as cores: an unbounded -j starts one compiler
+# per ready target and takes a 16 GB machine into swap.
+cmake --build "${build_dir}" --parallel "$("${project_root}/scripts/build-jobs.sh")"
 DESTDIR="${appdir}" cmake --install "${build_dir}"
 install -Dm644 "${project_root}/packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml" "${appdir}/usr/share/metainfo/org.whatsappgo.Desktop.metainfo.xml"
 
