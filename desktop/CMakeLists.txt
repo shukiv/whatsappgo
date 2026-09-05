@@ -441,6 +441,12 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )
+    # The menus are measured on a window that has been laid out, so this one
+    # shows a window. There is no display on CI, hence the offscreen platform.
+    set_tests_properties(desktop-menu-placement PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 20
+    )
     add_test(NAME desktop-clean-startup
         COMMAND ${CMAKE_COMMAND}
             -DAPP=$<TARGET_FILE:whatsappgo>
