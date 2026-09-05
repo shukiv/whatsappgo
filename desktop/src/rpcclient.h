@@ -300,8 +300,16 @@ signals:
 private:
     using Callback = std::function<void(const QJsonValue &, const QJsonObject &)>;
 
+    // Whether a failed request is worth interrupting the reader over. A
+    // picture that did not download because the network blinked is not.
+    enum class OnFailure {
+        Report,
+        StayQuiet,
+    };
+
     void connectSocket();
-    void sendRequest(const QString &method, const QJsonObject &params, Callback callback = {});
+    void sendRequest(const QString &method, const QJsonObject &params, Callback callback = {},
+                     OnFailure onFailure = OnFailure::Report);
     void processLine(const QByteArray &line);
     void processEvent(const QString &name, const QJsonValue &data);
     void setBusy(bool value);
@@ -330,6 +338,8 @@ private:
     quint64 m_nextId = 0;
     QHash<QString, Callback> m_pending;
     QString m_bugReportEnvironment;
+    // Requests whose failure is not shown to the reader.
+    QSet<QString> m_quietRequests;
     QVariantMap m_updateStatus;
     bool m_checkingForUpdates = false;
     void startUpdateCheck(bool announce);

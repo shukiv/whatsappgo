@@ -44,6 +44,28 @@ int main(int argc, char **argv)
                 input.remove(0, newline + 1);
                 const auto method = request.value(QStringLiteral("method")).toString();
                 const auto params = request.value(QStringLiteral("params")).toObject();
+                // A picture that cannot be fetched, and a group that cannot be
+                // created: the first is work the window started on its own,
+                // the second is something the reader asked for.
+                if (method == QStringLiteral("chat.avatar")
+                        && params.value(QStringLiteral("chat_jid")).toString() == QStringLiteral("ghost@lid")) {
+                    socket->write(QJsonDocument(QJsonObject{
+                        {QStringLiteral("version"), 1},
+                        {QStringLiteral("id"), request.value(QStringLiteral("id"))},
+                        {QStringLiteral("error"), QJsonObject{
+                            {QStringLiteral("message"), QStringLiteral("lookup pps.whatsapp.net: i/o timeout")}}},
+                    }).toJson(QJsonDocument::Compact) + '\n');
+                    continue;
+                }
+                if (method == QStringLiteral("group.create")) {
+                    socket->write(QJsonDocument(QJsonObject{
+                        {QStringLiteral("version"), 1},
+                        {QStringLiteral("id"), request.value(QStringLiteral("id"))},
+                        {QStringLiteral("error"), QJsonObject{
+                            {QStringLiteral("message"), QStringLiteral("group could not be created")}}},
+                    }).toJson(QJsonDocument::Compact) + '\n');
+                    continue;
+                }
                 QJsonValue result = QJsonObject{};
                 if (method == QStringLiteral("status.get")) {
                     result = QJsonObject{{QStringLiteral("state"), QStringLiteral("connected")},
@@ -90,6 +112,9 @@ int main(int argc, char **argv)
     int resets = 0;
     QObject::connect(model, &QAbstractItemModel::modelReset, &app, [&resets] { ++resets; });
 
+    QStringList reportedErrors;
+    QObject::connect(&client, &RpcClient::errorOccurred, &app,
+                     [&](const QString &message) { reportedErrors.append(message); });
     bool avatarRequested = false;
     bool avatarApplied = false;
     QTimer poll;
@@ -111,6 +136,21 @@ int main(int argc, char **argv)
     poll.start();
     QTimer::singleShot(3000, &app, &QCoreApplication::quit);
     app.exec();
+
+    // A picture the window went and fetched by itself failed. That belongs in
+    // the caller, not across the bottom of the conversation.
+    client.refreshChatAvatar(QStringLiteral("ghost@lid"));
+    QTimer::singleShot(300, &app, &QCoreApplication::quit);
+    app.exec();
+    if (!reportedErrors.isEmpty())
+        return testFatal("a background picture fetch interrupted the reader", reportedErrors.join(QStringLiteral("; ")));
+
+    // Something the reader asked for still says when it fails.
+    client.createGroup(QStringLiteral("Test group"), {QStringLiteral("alice@lid")});
+    QTimer::singleShot(300, &app, &QCoreApplication::quit);
+    app.exec();
+    if (reportedErrors.isEmpty())
+        return testFatal("a failure the reader asked for was swallowed");
 
     return avatarApplied && avatarRequests == 1 && chatListRequests == 1 && resets == 0
         ? EXIT_SUCCESS : EXIT_FAILURE;

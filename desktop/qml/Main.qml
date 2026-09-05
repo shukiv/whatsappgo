@@ -2640,12 +2640,21 @@ ApplicationWindow {
         z: 100
         Label {
             id: errorLabel
+            objectName: "errorBannerLabel"
             anchors.centerIn: parent
             width: parent.width - 24
             text: window.transientError
             color: Theme.dangerText
             wrapMode: Text.Wrap
+            // A failure from the daemon can carry a whole download address.
+            // Three lines is enough to say what went wrong; the rest would
+            // paint a wall across the conversation.
+            maximumLineCount: 3
+            elide: Text.ElideRight
             horizontalAlignment: Text.AlignHCenter
+            ToolTip.visible: bannerHover.hovered && truncated
+            ToolTip.text: window.transientError
+            HoverHandler { id: bannerHover }
         }
     }
 

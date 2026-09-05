@@ -488,14 +488,20 @@ void RpcClient::reconnect()
     connectSocket();
 }
 
-void RpcClient::sendRequest(const QString &method, const QJsonObject &params, Callback callback)
+void RpcClient::sendRequest(const QString &method, const QJsonObject &params, Callback callback,
+                            OnFailure onFailure)
 {
     if (!daemonConnected()) {
-        emit errorOccurred(tr("The background service is not connected yet."));
+        if (onFailure == OnFailure::Report) {
+            emit errorOccurred(tr("The background service is not connected yet."));
+        }
         reconnect();
         return;
     }
     const auto id = QString::number(++m_nextId);
+    if (onFailure == OnFailure::StayQuiet) {
+        m_quietRequests.insert(id);
+    }
     QJsonObject request{
         {QStringLiteral("version"), protocolVersion},
         {QStringLiteral("id"), id},
@@ -524,7 +530,11 @@ void RpcClient::processLine(const QByteArray &line)
     }
     const auto id = object.value(QStringLiteral("id")).toString();
     const auto error = object.value(QStringLiteral("error")).toObject();
-    if (!error.isEmpty())
+    // Work the window started on its own - fetching a picture, resolving a
+    // link - fails all the time on a network that blinks. Its failure belongs
+    // in the caller that asked for it, not across the bottom of the screen.
+    const bool quiet = m_quietRequests.remove(id);
+    if (!error.isEmpty() && !quiet)
         emit errorOccurred(error.value(QStringLiteral("message")).toString(tr("Request failed.")));
     if (auto it = m_pending.find(id); it != m_pending.end()) {
         const auto callback = std::move(it.value());
@@ -940,7 +950,8 @@ void RpcClient::upgradeSmallLinkPreviews(const QVariantList &messages)
                         const auto refreshed = result.toObject().toVariantMap();
                         if (!refreshed.isEmpty())
                             upsertMessage(refreshed);
-                    });
+                    },
+                    OnFailure::StayQuiet);
     }
 }
 
@@ -966,7 +977,8 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     emit selectedChatChanged();
     emit selectedPresenceChanged();
     if (!jid.endsWith(QStringLiteral("@g.us")) && !jid.endsWith(QStringLiteral("@broadcast")))
-        sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}});
+        sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}},
+                    {}, OnFailure::StayQuiet);
     refreshChatInfo();
     // The daemon serves requests sequentially per connection. Read its local
     // database before asking WhatsApp for a remote refresh so opening a chat
@@ -1014,7 +1026,8 @@ void RpcClient::openChat(const QString &jid, const QString &title)
                         emit selectedChatChanged();
                         refreshChats();
                     }
-                });
+                },
+                OnFailure::StayQuiet);
 }
 
 void RpcClient::createGroup(const QString &name, const QStringList &participants)
@@ -1678,7 +1691,8 @@ void RpcClient::requestLinkPreview(const QString &text)
                         return;
                     m_composerLinkPreview = preview;
                     emit composerLinkPreviewChanged();
-                });
+                },
+                OnFailure::StayQuiet);
 }
 
 void RpcClient::clearComposerLinkPreview()
@@ -2372,7 +2386,8 @@ void RpcClient::pumpMediaQueue()
                         emit mediaReady(message.value(QStringLiteral("id")).toString(), path);
                 }
                 pumpMediaQueue();
-            });
+            },
+            OnFailure::StayQuiet);
     }
 }
 
@@ -2593,7 +2608,8 @@ void RpcClient::refreshChatAvatar(const QString &jid)
                     if (!error.isEmpty())
                         return;
                     applyChatAvatar(jid, result.toObject().value(QStringLiteral("path")).toString());
-                });
+                },
+                OnFailure::StayQuiet);
 }
 
 void RpcClient::applyChatAvatar(const QString &jid, const QString &path)
