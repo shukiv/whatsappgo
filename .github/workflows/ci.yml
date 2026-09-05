@@ -48,8 +48,16 @@ jobs:
   desktop:
     runs-on: ubuntu-latest
     container: fedora:latest
+    timeout-minutes: 45
+    env:
+      # Fedora builds Qt with the journald logging backend, so qWarning output
+      # goes to a journal this container does not have: 21 of 35 tests failed
+      # here with completely empty output.
+      QT_FORCE_STDERR_LOGGING: '1'
     steps:
-      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtquickcontrols2
+      # fontconfig on a bare container has no fonts to hand Qt, and the tests
+      # that measure text are the ones that fail.
+      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtquickcontrols2 fontconfig google-noto-sans-fonts dejavu-sans-fonts
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
         with:
