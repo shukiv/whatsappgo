@@ -2253,7 +2253,12 @@ QString RpcClient::clipboardDirectory() const
 
 bool RpcClient::isClipboardFile(const QString &path) const
 {
-	const auto directory = QDir(clipboardDirectory()).absolutePath() + QDir::separator();
+	// Qt spells every path with a forward slash, on Windows as much as
+	// anywhere else, so QDir::separator - a backslash there - never matched
+	// what absoluteFilePath returns. Nothing pasted on Windows was recognised
+	// as this application's own file, so the temporary copies were never
+	// deleted and collected in the cache directory.
+	const auto directory = QDir(clipboardDirectory()).absolutePath() + QLatin1Char('/');
 	return QFileInfo(path).absoluteFilePath().startsWith(directory);
 }
 
