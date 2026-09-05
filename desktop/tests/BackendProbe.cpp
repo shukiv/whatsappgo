@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -28,16 +29,16 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir runtime;
     if (!runtime.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     const auto socketDir = QDir(runtime.path()).filePath(QStringLiteral("whatsappgo"));
     if (!QDir().mkpath(socketDir))
-        return EXIT_FAILURE;
+        return testFatal("could not create the socket directory", socketDir);
 
     const auto served = RpcClient::socketPathForProfile(QStringLiteral("live"));
     QLocalServer server;
     if (!server.listen(served))
-        return EXIT_FAILURE;
+        return testFatal("could not listen on the socket", served + QStringLiteral(": ") + server.errorString());
     check(RpcClient::backendIsListening(served), "a served socket is reported as live");
 
     const auto missing = RpcClient::socketPathForProfile(QStringLiteral("absent"));
@@ -49,7 +50,7 @@ int main(int argc, char **argv)
     const auto stale = RpcClient::socketPathForProfile(QStringLiteral("stale"));
     QFile leftover(stale);
     if (!leftover.open(QIODevice::WriteOnly))
-        return EXIT_FAILURE;
+        return testFatal("could not leave a stale socket path behind", stale);
     leftover.close();
     check(!RpcClient::backendIsListening(stale), "a path nobody serves is not live");
 #endif

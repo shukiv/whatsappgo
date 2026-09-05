@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QSettings>
@@ -14,7 +15,7 @@ int main(int argc, char **argv)
 
     QTemporaryDir temporary;
     if (!temporary.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary directory");
     qputenv("XDG_RUNTIME_DIR", temporary.path().toUtf8());
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
@@ -30,11 +31,11 @@ int main(int argc, char **argv)
         client.renameProfile(QStringLiteral("israeli"), QStringLiteral("  Israeli support  "));
         if (client.profileDisplayNames().value(QStringLiteral("israeli")).toString()
             != QStringLiteral("Israeli support")) {
-            return EXIT_FAILURE;
+            return testFatal("a renamed account did not keep its trimmed display name");
         }
         client.renameProfile(QStringLiteral("missing"), QStringLiteral("Must not be stored"));
         if (client.profileDisplayNames().contains(QStringLiteral("missing")))
-            return EXIT_FAILURE;
+            return testFatal("renaming an account that does not exist stored a name");
     }
 
     RpcClient reloaded(QStringLiteral("default"));

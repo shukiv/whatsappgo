@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QJsonArray>
@@ -15,17 +16,17 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir runtime;
     if (!runtime.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", QDir(runtime.path()).filePath(QStringLiteral("config")).toUtf8());
     const auto socketDir = QDir(runtime.path()).filePath(QStringLiteral("whatsappgo"));
     if (!QDir().mkpath(socketDir))
-        return EXIT_FAILURE;
+        return testFatal("could not create the socket directory", socketDir);
 
     QLocalServer server;
     const auto socketPath = RpcClient::socketPathForProfile(QStringLiteral("autopair"));
     if (!server.listen(socketPath))
-        return EXIT_FAILURE;
+        return testFatal("could not listen on the socket", socketPath + QStringLiteral(": ") + server.errorString());
 
     bool pairingStarted = false;
     QByteArray input;

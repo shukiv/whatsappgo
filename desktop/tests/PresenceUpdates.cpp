@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QJsonArray>
@@ -25,17 +26,18 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir runtime;
     if (!runtime.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", QDir(runtime.path()).filePath(QStringLiteral("config")).toUtf8());
     qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
     const auto socketDir = QDir(runtime.path()).filePath(QStringLiteral("whatsappgo"));
     if (!QDir().mkpath(socketDir))
-        return EXIT_FAILURE;
+        return testFatal("could not create the socket directory", socketDir);
 
     QLocalServer server;
-    if (!server.listen(RpcClient::socketPathForProfile(QStringLiteral("presence"))))
-        return EXIT_FAILURE;
+    const auto socketPath = RpcClient::socketPathForProfile(QStringLiteral("presence"));
+    if (!server.listen(socketPath))
+        return testFatal("could not listen on the socket", socketPath + QStringLiteral(": ") + server.errorString());
 
     bool subscribed = false;
     bool onlineSeen = false;

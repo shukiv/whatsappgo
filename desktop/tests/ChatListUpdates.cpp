@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QJsonArray>
@@ -15,17 +16,18 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir runtime;
     if (!runtime.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", QDir(runtime.path()).filePath(QStringLiteral("config")).toUtf8());
     qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
     const auto socketDir = QDir(runtime.path()).filePath(QStringLiteral("whatsappgo"));
     if (!QDir().mkpath(socketDir))
-        return EXIT_FAILURE;
+        return testFatal("could not create the socket directory", socketDir);
 
     QLocalServer server;
-    if (!server.listen(RpcClient::socketPathForProfile(QStringLiteral("chatlist"))))
-        return EXIT_FAILURE;
+    const auto socketPath = RpcClient::socketPathForProfile(QStringLiteral("chatlist"));
+    if (!server.listen(socketPath))
+        return testFatal("could not listen on the socket", socketPath + QStringLiteral(": ") + server.errorString());
 
     int chatListRequests = 0;
     int avatarRequests = 0;
@@ -84,7 +86,7 @@ int main(int argc, char **argv)
     RpcClient client(QStringLiteral("chatlist"), QString{});
     auto *model = qobject_cast<ChatListModel *>(client.chatListModel());
     if (model == nullptr)
-        return EXIT_FAILURE;
+        return testFatal("the client did not expose a chat list model");
     int resets = 0;
     QObject::connect(model, &QAbstractItemModel::modelReset, &app, [&resets] { ++resets; });
 

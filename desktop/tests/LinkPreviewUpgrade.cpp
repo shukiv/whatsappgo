@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QImage>
@@ -16,21 +17,22 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir runtime;
     if (!runtime.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", QDir(runtime.path()).filePath(QStringLiteral("config")).toUtf8());
     qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
     const auto socketDir = QDir(runtime.path()).filePath(QStringLiteral("whatsappgo"));
     if (!QDir().mkpath(socketDir))
-        return EXIT_FAILURE;
+        return testFatal("could not create the socket directory", socketDir);
 
     const auto thumbnail = QDir(runtime.path()).filePath(QStringLiteral("tiny.jpg"));
     if (!QImage(80, 80, QImage::Format_RGB32).save(thumbnail, "JPEG"))
-        return EXIT_FAILURE;
+        return testFatal("could not write the test thumbnail", thumbnail);
 
     QLocalServer server;
-    if (!server.listen(RpcClient::socketPathForProfile(QStringLiteral("linkupgrade"))))
-        return EXIT_FAILURE;
+    const auto socketPath = RpcClient::socketPathForProfile(QStringLiteral("linkupgrade"));
+    if (!server.listen(socketPath))
+        return testFatal("could not listen on the socket", socketPath + QStringLiteral(": ") + server.errorString());
 
     bool refreshRequested = false;
     QByteArray input;

@@ -1,5 +1,6 @@
 #include "profilemonitor.h"
 
+#include "TestSupport.h"
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -13,11 +14,11 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QTemporaryDir directory;
     if (!directory.isValid())
-        return EXIT_FAILURE;
+        return testFatal("could not create a temporary directory");
     const auto path = directory.filePath(QStringLiteral("profile.sock"));
     QLocalServer server;
     if (!server.listen(path))
-        return EXIT_FAILURE;
+        return testFatal("could not listen on the socket", path + QStringLiteral(": ") + server.errorString());
 
     int requests = 0;
     QObject::connect(&server, &QLocalServer::newConnection, &app, [&] {

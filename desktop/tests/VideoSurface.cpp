@@ -1,5 +1,6 @@
 #include "videosurface.h"
 
+#include "TestSupport.h"
 #include <QGuiApplication>
 #include <QImage>
 #include <QPainter>
@@ -35,7 +36,7 @@ int main(int argc, char **argv)
     source.fill(QColor(0, 200, 100));
     QVideoFrame frame(QVideoFrameFormat(source.size(), QVideoFrameFormat::Format_RGBX8888));
     if (!frame.map(QVideoFrame::WriteOnly))
-        return EXIT_FAILURE;
+        return testFatal("could not map a video frame for writing");
     for (int y = 0; y < source.height(); ++y)
         memcpy(frame.bits(0) + y * frame.bytesPerLine(0), source.constScanLine(y), source.bytesPerLine());
     frame.unmap();
