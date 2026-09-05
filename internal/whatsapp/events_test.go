@@ -198,6 +198,31 @@ func TestMessageFromEventDropsTransportOnlyEnvelope(t *testing.T) {
 	}
 }
 
+func TestProtocolMessageWithNothingToShowIsNotStored(t *testing.T) {
+	chat := types.NewJID("123", types.DefaultUserServer)
+	settings := &waEvents.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat}, ID: "ephemeral", Timestamp: time.Now()},
+		Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_EPHEMERAL_SETTING.Enum(),
+		}},
+	}
+	if m := messageFromEvent(settings); m.ID != "" || m.Kind != "" {
+		t.Fatalf("a protocol message with nothing to read drew an empty bubble: %#v", m)
+	}
+
+	revoke := &waEvents.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: chat}, ID: "revoke", Timestamp: time.Now()},
+		Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_REVOKE.Enum(),
+			Key:  &waCommon.MessageKey{ID: proto.String("target")},
+		}},
+	}
+	m := messageFromEvent(revoke)
+	if m.Kind != "system" || !m.Revoked || m.ReplyTo != "target" {
+		t.Fatalf("a revocation still has to be recognised: %#v", m)
+	}
+}
+
 func TestCallLogFromRecordMapsAppStateRecord(t *testing.T) {
 	record := &waSyncAction.CallLogRecord{
 		CallID:         proto.String("call-1"),

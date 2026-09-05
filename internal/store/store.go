@@ -886,7 +886,8 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
  m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,m.starred,m.forwarding_score,
  COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0)
  FROM messages m LEFT JOIN messages q ON q.chat_jid=m.chat_jid AND q.id=m.reply_to
- WHERE m.chat_jid=? AND (m.timestamp,m.id)<(?,?) AND m.kind NOT IN ('unknown','') ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, beforeID, limit+1)
+ WHERE m.chat_jid=? AND (m.timestamp,m.id)<(?,?) AND m.kind NOT IN ('unknown','')
+ AND NOT (m.kind='system' AND m.body='' AND m.revoked=0) ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, beforeID, limit+1)
 	if err != nil {
 		return model.MessagePage{}, err
 	}

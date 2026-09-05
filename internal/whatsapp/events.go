@@ -1171,8 +1171,12 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		m.Body = v.GetText()
 		m.ReplyTo = v.GetKey().GetID()
 	case msg.GetProtocolMessage() != nil:
-		m.Kind = "system"
+		// A protocol message is machinery: an ephemeral-timer change, a history
+		// notification, a key share. Only a revocation is something a reader
+		// sees. The rest used to be stored as an empty "system" message, which
+		// drew a bubble with nothing in it but a clock.
 		if msg.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_REVOKE {
+			m.Kind = "system"
 			m.Revoked = true
 			m.ReplyTo = msg.GetProtocolMessage().GetKey().GetID()
 		}

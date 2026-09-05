@@ -92,6 +92,33 @@ func TestListMessagesHidesLegacyUnknownEnvelopes(t *testing.T) {
 	}
 }
 
+func TestListMessagesHidesEmptySystemMessagesAlreadyStored(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, message := range []model.Message{
+		// Written by a version that stored every protocol envelope. They have
+		// no text, so they drew a bubble containing only a clock.
+		{ID: "machinery", ChatJID: "c@s.whatsapp.net", Timestamp: 1, Kind: "system", Status: "received"},
+		{ID: "gone", ChatJID: "c@s.whatsapp.net", Timestamp: 2, Kind: "system", Revoked: true, Status: "received"},
+		{ID: "visible", ChatJID: "c@s.whatsapp.net", Timestamp: 3, Kind: "text", Body: "hello", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, message, "Contact", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ListMessages(ctx, "c@s.whatsapp.net", 4, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, message := range page.Messages {
+		ids = append(ids, message.ID)
+	}
+	if len(ids) != 2 || ids[0] != "gone" || ids[1] != "visible" {
+		t.Fatalf("an empty protocol envelope is still on screen: %v", ids)
+	}
+}
+
 func TestListChatsHidesUnknownOnlyChatsAndUsesLatestVisibleMessage(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
