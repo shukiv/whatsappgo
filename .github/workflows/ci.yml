@@ -72,6 +72,7 @@ jobs:
 
   desktop-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       # Qt's default message handler on Windows sends output to the debugger
       # unless it is certain a console is attached, which is why a failing test
@@ -101,9 +102,9 @@ jobs:
       # also the only thing that proves the application ships with the Qt DLLs
       # and QML plugins it needs. Build it even when a test failed: a red suite
       # is still worth a binary someone can try.
-      - if: always()
+      - if: ${{ !cancelled() }}
         run: powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
-      - if: always()
+      - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: whatsappgo-windows-x64
@@ -112,8 +113,17 @@ jobs:
 
   desktop-macos:
     runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      # cmake reads this, so it also reaches the cmake calls inside
+      # packaging/macos/build.sh. Without it the generator is Unix Makefiles,
+      # and "cmake --build --parallel" passes make a bare -j: unlimited jobs on
+      # a three-core runner, which took 30-50 minutes to build what ninja
+      # builds in a few.
+      CMAKE_GENERATOR: Ninja
     steps:
       - uses: actions/checkout@v4
+      - run: command -v ninja >/dev/null || brew install ninja
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'
@@ -134,9 +144,9 @@ jobs:
       # nothing else proves the bundle carries its frameworks and QML plugins.
       # The build is unsigned here - no Developer ID is available to CI - so
       # Gatekeeper will refuse it on a machine that did not build it.
-      - if: always()
+      - if: ${{ !cancelled() }}
         run: packaging/macos/build.sh
-      - if: always()
+      - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: whatsappgo-macos

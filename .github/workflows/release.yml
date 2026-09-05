@@ -91,8 +91,15 @@ jobs:
           - runner: macos-latest
           - runner: macos-13
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      # Unix Makefiles plus "cmake --build --parallel" means a bare make -j on
+      # a three-core runner, which turns a few minutes of work into most of an
+      # hour. cmake picks the generator up from this variable.
+      CMAKE_GENERATOR: Ninja
     steps:
       - uses: actions/checkout@v4
+      - run: command -v ninja >/dev/null || brew install ninja
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'
