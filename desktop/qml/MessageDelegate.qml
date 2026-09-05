@@ -253,10 +253,16 @@ Item {
             if (reactionY < 8)
                 reactionY = contextMenu.y + contextMenu.implicitHeight + 6
             quickReactionPopup.y = clampPopupY(quickReactionPopup, reactionY)
+            // console.warn rather than console.log: a distribution can ship a
+            // qtlogging.ini that turns debug output off, and Fedora's does -
+            // the log line this replaces never reached the CI output at all.
+            console.warn("message popups: menu", contextMenu.visible,
+                         "reactions before open", quickReactionPopup.visible)
             quickReactionPopup.open()
-            console.log("message popups:",
-                        "menu", contextMenu.visible, "reactions", quickReactionPopup.visible,
-                        "reactionType", quickReactionPopup.popupType)
+            console.warn("message popups: reactions after open", quickReactionPopup.visible,
+                         "opened", quickReactionPopup.opened,
+                         "window", String(quickReactionPopup.Window.window),
+                         "overlay", String(Overlay.overlay))
         }
     }
 
