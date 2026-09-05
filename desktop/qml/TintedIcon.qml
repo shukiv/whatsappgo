@@ -196,18 +196,25 @@ Item {
                 ctx.lineTo(16.5, 15.5)
                 ctx.stroke()
             } else if (root.kind === "pin") {
-                // Measured off WhatsApp Web at 1:1: a drawing pin seen from
-                // the side, 13 wide and 21 tall in hairlines - a flat cap, two
-                // straight sides that flare into the base plate, and a needle.
-                // The old glyph was a filled wedge half this size, which read
-                // as a nail rather than as a pin.
-                ctx.fillRect(6.5, 1.5, 11, 2)
-                ctx.fillRect(7.5, 3.5, 1.2, 8)
-                ctx.fillRect(15.3, 3.5, 1.2, 8)
-                ctx.fillRect(6.3, 11.5, 1.2, 2)
-                ctx.fillRect(16.5, 11.5, 1.2, 2)
-                ctx.fillRect(5.5, 13.5, 13, 2)
-                ctx.fillRect(11.4, 15.5, 1.2, 7)
+                // Traced row by row off WhatsApp Web at the same scale, where
+                // the mark is 13 by 21 device pixels. One unit here is one of
+                // those pixels. What makes it read as a drawing pin rather
+                // than as a little table is the barrel: walls two pixels
+                // thick around a five pixel gap, so it looks solid, with the
+                // cap and the base plate standing out past it on both sides.
+                ctx.fillRect(8, 1, 9, 1)      // cap, rounded by one pixel
+                ctx.fillRect(7, 2, 11, 1)
+                ctx.fillRect(8, 3, 3, 1)      // shoulders under the cap
+                ctx.fillRect(14, 3, 3, 1)
+                ctx.fillRect(8, 4, 2, 7)      // barrel walls
+                ctx.fillRect(15, 4, 2, 7)
+                ctx.fillRect(7, 11, 3, 1)     // flaring into the plate
+                ctx.fillRect(15, 11, 3, 1)
+                ctx.fillRect(6, 12, 4, 1)
+                ctx.fillRect(15, 12, 4, 1)
+                ctx.fillRect(6, 13, 13, 1)    // base plate
+                ctx.fillRect(7, 14, 11, 1)
+                ctx.fillRect(12, 15, 1, 7)    // needle
             } else if (root.kind === "logout") {
                 ctx.beginPath()
                 ctx.moveTo(10, 5)

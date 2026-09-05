@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import org.whatsappgo
 
 ItemDelegate {
@@ -311,11 +312,13 @@ ItemDelegate {
                 TintedIcon {
                     objectName: "pinnedMark"
                     visible: Boolean(root.modelData.pinned) && !root.selectionActive && !root.showRowMenu
-                    // The glyph spans 21 of the 24 units it is drawn in, so
-                    // this box is what makes it the size WhatsApp Web draws
-                    // the mark at: 13 by 21 device pixels beside the clock.
-                    Layout.preferredWidth: visible ? 20 : 0
-                    Layout.preferredHeight: 20
+                    // The glyph is traced in device pixels, so the box is
+                    // sized to put one of its units on one screen pixel at
+                    // this display's scale: 24 units at 1.25 is 19.2. Off that
+                    // grid every hairline is drawn across two pixels at half
+                    // strength and the mark turns pale and blurry.
+                    Layout.preferredWidth: visible ? Math.round(24 / Screen.devicePixelRatio * 100) / 100 : 0
+                    Layout.preferredHeight: Math.round(24 / Screen.devicePixelRatio * 100) / 100
                     source: Qt.resolvedUrl("icons/pin.svg")
                     tint: Theme.iconMuted
                     Accessible.name: qsTr("Pinned")
