@@ -374,7 +374,7 @@ Item {
     readonly property real daySeparatorHeight: startsDay ? 42 : 0
 
     width: ListView.view ? ListView.view.width : 640
-    implicitHeight: root.daySeparatorHeight + bubble.implicitHeight + (reactionsFlow.visible ? 22 : 4)
+    implicitHeight: root.daySeparatorHeight + bubble.implicitHeight + (reactionsFlow.visible ? 24 : 4)
 
     Rectangle {
         id: daySeparator
@@ -1224,12 +1224,15 @@ Item {
         id: reactionsFlow
         objectName: "messageReactionBadge"
         visible: root.reactionSummary.length > 0
+        // Measured against WhatsApp Web: the badge is 30 device pixels tall
+        // with the emoji filling 20 of them, and it sits below the bubble with
+        // only its top edge under the corner.
         implicitWidth: reactionBadgeRow.implicitWidth + 12
         width: implicitWidth
-        height: 22
+        height: 24
         x: root.modelData.from_me
             ? bubble.x + bubble.width - width - 7 : bubble.x + 7
-        y: bubble.y + bubble.height - 4
+        y: bubble.y + bubble.height - 2
         z: 4
         radius: height / 2
         color: root.reactedByMe ? Theme.selectedRow : Theme.surfaceRaised
@@ -1247,7 +1250,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.reactionSummaryText
                 font.family: Theme.emojiFontFamily
-                font.pixelSize: 14
+                font.pixelSize: 16
                 Accessible.name: qsTr("Reactions: %1").arg(text)
             }
             Label {
@@ -1703,7 +1706,7 @@ Item {
             anchors.rightMargin: 10
             anchors.verticalCenter: parent.verticalCenter
             width: 22
-            height: 22
+            height: 24
             radius: 11
             color: root.selected ? Theme.primary : "transparent"
             border.width: root.selected ? 0 : 2

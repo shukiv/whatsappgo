@@ -1188,6 +1188,11 @@ QtObject {
                 && reactionDetailsTitle->property("text").toString() == QStringLiteral("3 emoji reactions")
                 && listedEverybody == 3 && listedThumbs == 2
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
+                // Measured off WhatsApp Web: a 30 device-pixel badge carrying a
+                // 20 device-pixel emoji. Ours read as a smaller ring with a
+                // shrunken face inside it.
+                && qAbs(reactionBadge->height() - 24.0) < 0.01
+                && reactionSummary->property("font").value<QFont>().pixelSize() == 16
                 && menuOpened && menuShown
 				&& qAbs(menu->property("width").toReal() - 196.0) < 0.01
 				&& menuFitsWindow && reactionsFitWindow
