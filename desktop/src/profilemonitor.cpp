@@ -45,6 +45,11 @@ ProfileMonitor::ProfileMonitor(const QString &profile, const QString &socketPath
     QTimer::singleShot(0, this, &ProfileMonitor::connectSocket);
 }
 
+ProfileMonitor::~ProfileMonitor()
+{
+    shutdown();
+}
+
 void ProfileMonitor::shutdown()
 {
     m_reconnectTimer.stop();

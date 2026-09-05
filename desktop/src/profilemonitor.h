@@ -18,6 +18,10 @@ public:
     // keeps the object alive until the event loop returns, and the socket and
     // timers below keep reporting on an account that no longer exists.
     void shutdown();
+    // Destruction has to be as quiet as an explicit shutdown: a monitor left
+    // connected tears its socket down inside ~QLocalSocket, and the handlers
+    // above would run against half-destroyed members.
+    ~ProfileMonitor() override;
 
 signals:
     void countChanged(const QString &profile, int count);
