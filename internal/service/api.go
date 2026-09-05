@@ -19,6 +19,9 @@ func method(name, summary string, mutating bool, params map[string]any) MethodDe
 var apiMethods = []MethodDescription{
 	method("rpc.discover", "List protocol methods and event names", false, nil),
 	method("status.get", "Get connection and login state", false, nil),
+	method("update.status", "Report the installed version and any newer release", false, nil),
+	method("update.check", "Ask GitHub now whether a newer release exists", false, nil),
+	method("update.download", "Download and check this platform's artifact for the newer release", true, nil),
 	method("bugreport.environment", "Describe what a bug report would disclose", false, nil),
 	method("bugreport.submit", "File a bug report as a GitHub issue", true,
 		map[string]any{"subject": "Videos play as a black screen", "body": "Steps to reproduce..."}),
@@ -96,7 +99,8 @@ var apiEvents = []string{
 	"history.collected", "history.synced", "media.collected", "message.edited",
 	"message.pinned", "message.reaction", "message.receipt", "message.revoked", "message.upsert",
 	"notification.received", "pairing.error", "pairing.qr", "pairing.state",
-	"pairing.success",
+	"pairing.success", "update.available", "update.progress", "update.ready",
+	"update.failed",
 }
 
 func discoveryResult() map[string]any {

@@ -243,6 +243,10 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		// found.
 		s.checkForUpdate(ctx)
 		return s.updateStatus(), nil
+	case "update.download":
+		// The download runs in the background and reports itself with
+		// update.progress, update.ready and update.failed.
+		return s.startUpdateDownload()
 	case "bugreport.environment":
 		// The desktop shows this to the reader before anything is sent, so
 		// nobody files a report without seeing what travels with it.

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -143,6 +144,14 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 	// downloaded here: the desktop is told what exists and the reader decides.
 	app.WatchForUpdates(ctx, updates.Interval, func(ctx context.Context) (updates.Release, error) {
 		return updates.Latest(ctx, nil, "", bugreport.Repository)
+	})
+	// Downloading is a separate decision, taken by the reader. The artifact
+	// lands in the cache directory, which is the right place for a file that
+	// can be fetched again.
+	app.AllowUpdateDownloads(func(ctx context.Context, release updates.Release,
+		progress func(received, total int64)) (string, error) {
+		downloader := updates.Downloader{Dir: filepath.Join(paths.CacheDir, "updates")}
+		return downloader.Fetch(ctx, release, runtime.GOOS, runtime.GOARCH, progress)
 	})
 	defer app.Close()
 	server := rpc.NewServer(paths.Socket, app, broker)

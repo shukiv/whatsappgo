@@ -28,9 +28,9 @@ func updateService(t *testing.T, version string) (*Service, <-chan events.Event)
 	return svc, stream
 }
 
-// nextAnnouncement waits for the next update.available event, ignoring
-// whatever else the service happens to publish.
-func nextAnnouncement(stream <-chan events.Event, wait time.Duration) (events.Event, bool) {
+// awaitEvent waits for one named event, ignoring whatever else the service
+// happens to publish.
+func awaitEvent(stream <-chan events.Event, name string, wait time.Duration) (events.Event, bool) {
 	deadline := time.After(wait)
 	for {
 		select {
@@ -38,13 +38,18 @@ func nextAnnouncement(stream <-chan events.Event, wait time.Duration) (events.Ev
 			if !open {
 				return events.Event{}, false
 			}
-			if event.Name == "update.available" {
+			if event.Name == name {
 				return event, true
 			}
 		case <-deadline:
 			return events.Event{}, false
 		}
 	}
+}
+
+// nextAnnouncement waits for the next update.available event.
+func nextAnnouncement(stream <-chan events.Event, wait time.Duration) (events.Event, bool) {
+	return awaitEvent(stream, "update.available", wait)
 }
 
 func TestUpdateCheckAnnouncesANewerRelease(t *testing.T) {
@@ -138,5 +143,110 @@ func TestUpdateWatchStopsWithItsContext(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	if len(checks) != 0 {
 		t.Fatal("checks continued after the context was cancelled")
+	}
+}
+
+func TestUpdateDownloadRefusesWhenThereIsNothingToInstall(t *testing.T) {
+	svc, _ := updateService(t, "v1.0.0")
+	svc.AllowUpdateDownloads(func(context.Context, updates.Release, func(int64, int64)) (string, error) {
+		t.Fatal("nothing should have been downloaded")
+		return "", nil
+	})
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("a download started with no newer release to install")
+	}
+}
+
+func TestUpdateDownloadAnnouncesProgressAndThenTheFile(t *testing.T) {
+	svc, stream := updateService(t, "v1.0.0")
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		return updates.Release{Version: "v1.1.0", URL: "https://example.test/v1.1.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+	svc.AllowUpdateDownloads(func(_ context.Context, release updates.Release, progress func(int64, int64)) (string, error) {
+		if release.Version != "v1.1.0" {
+			t.Errorf("downloaded %q", release.Version)
+		}
+		progress(50, 100)
+		return "/tmp/WhatsAppGo.AppImage", nil
+	})
+
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	progress, saw := awaitEvent(stream, "update.progress", time.Second)
+	if !saw {
+		t.Fatal("no progress was reported")
+	}
+	if fields, _ := progress.Data.(map[string]any); fields["received"] != int64(50) || fields["total"] != int64(100) {
+		t.Fatalf("unexpected progress: %#v", progress.Data)
+	}
+	ready, saw := awaitEvent(stream, "update.ready", time.Second)
+	if !saw {
+		t.Fatal("the finished download was not announced")
+	}
+	fields, _ := ready.Data.(map[string]any)
+	if fields["path"] != "/tmp/WhatsAppGo.AppImage" || fields["version"] != "v1.1.0" {
+		t.Fatalf("unexpected announcement: %#v", fields)
+	}
+}
+
+func TestUpdateDownloadReportsWhatWentWrong(t *testing.T) {
+	svc, stream := updateService(t, "v1.0.0")
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		return updates.Release{Version: "v1.1.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+	svc.AllowUpdateDownloads(func(context.Context, updates.Release, func(int64, int64)) (string, error) {
+		return "", errors.New("does not match the checksum the release published")
+	})
+
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	failed, saw := awaitEvent(stream, "update.failed", time.Second)
+	if !saw {
+		t.Fatal("a failed download was never reported")
+	}
+	fields, _ := failed.Data.(map[string]any)
+	if fields["error"] != "does not match the checksum the release published" {
+		t.Fatalf("unexpected failure: %#v", fields)
+	}
+	// The failure is part of the status, so a reader who missed the event
+	// still sees why the update did not happen.
+	status, err := svc.Handle(context.Background(), "update.status", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields, _ := status.(map[string]any); fields["error"] == "" {
+		t.Fatal("the status forgot the failure")
+	}
+}
+
+func TestUpdateDownloadDoesNotStartTwice(t *testing.T) {
+	svc, _ := updateService(t, "v1.0.0")
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		return updates.Release{Version: "v1.1.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+	release := make(chan struct{})
+	starts := make(chan struct{}, 4)
+	svc.AllowUpdateDownloads(func(context.Context, updates.Release, func(int64, int64)) (string, error) {
+		starts <- struct{}{}
+		<-release
+		return "/tmp/WhatsAppGo.AppImage", nil
+	})
+
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	<-starts
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	time.Sleep(100 * time.Millisecond)
+	if len(starts) != 0 {
+		t.Fatal("a second download ran while the first was still going")
 	}
 }

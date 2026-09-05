@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"runtime"
 	"sync"
 	"time"
 
@@ -9,13 +11,23 @@ import (
 	"github.com/shukiv/whatsappgo/internal/updates"
 )
 
+// UpdateDownloader fetches the artifact for the running platform and returns
+// where it was written. The service does not install anything itself: the
+// desktop knows what it is running from and can restart itself, and this
+// process cannot.
+type UpdateDownloader func(ctx context.Context, release updates.Release,
+	progress func(received, total int64)) (string, error)
+
 // updateState is what the desktop is told about a newer version.
 type updateState struct {
-	mu        sync.Mutex
-	latest    updates.Release
-	checkedAt time.Time
-	lastError string
-	check     func(context.Context) (updates.Release, error)
+	mu          sync.Mutex
+	latest      updates.Release
+	checkedAt   time.Time
+	lastError   string
+	check       func(context.Context) (updates.Release, error)
+	download    UpdateDownloader
+	downloading bool
+	downloaded  string
 }
 
 // WatchForUpdates looks for a newer release now and every interval after that,
@@ -80,6 +92,77 @@ func (s *Service) checkForUpdate(ctx context.Context) updates.Release {
 	return release
 }
 
+// AllowUpdateDownloads lets update.download fetch an artifact. A daemon that
+// was never given a downloader answers that it cannot install anything, which
+// is the honest answer for a build that was not packaged.
+func (s *Service) AllowUpdateDownloads(download UpdateDownloader) {
+	s.updates.mu.Lock()
+	defer s.updates.mu.Unlock()
+	s.updates.download = download
+}
+
+// startUpdateDownload fetches the release that was found, in the background.
+// The transfer is minutes of work on a slow line, so the request returns as
+// soon as it has started and the progress arrives as events.
+func (s *Service) startUpdateDownload() (map[string]any, error) {
+	s.updates.mu.Lock()
+	release := s.updates.latest
+	download := s.updates.download
+	running := s.updates.downloading
+	s.updates.mu.Unlock()
+
+	if download == nil {
+		return nil, errors.New("this build cannot install updates by itself - open the release page")
+	}
+	if release.Version == "" || !updates.Newer(s.version, release.Version) {
+		return nil, errors.New("there is no newer version to install")
+	}
+	if running {
+		// Asking twice is a double click, not a second download.
+		return map[string]any{"started": true, "version": release.Version}, nil
+	}
+
+	s.updates.mu.Lock()
+	s.updates.downloading = true
+	s.updates.mu.Unlock()
+
+	go func() {
+		// The request that started this is long gone, and a download that
+		// outlives it is the point. An hour is far longer than any of these
+		// artifacts needs and short enough that a stalled transfer ends.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+		defer cancel()
+		var lastReported time.Time
+		path, err := download(ctx, release, func(received, total int64) {
+			// One event per received chunk would be thousands of them.
+			if received < total && time.Since(lastReported) < 250*time.Millisecond {
+				return
+			}
+			lastReported = time.Now()
+			s.events.Publish(events.Event{Name: "update.progress", Data: map[string]any{
+				"received": received, "total": total, "version": release.Version,
+			}})
+		})
+		s.updates.mu.Lock()
+		s.updates.downloading = false
+		if err != nil {
+			s.updates.lastError = err.Error()
+		} else {
+			s.updates.lastError = ""
+			s.updates.downloaded = path
+		}
+		s.updates.mu.Unlock()
+		if err != nil {
+			s.events.Publish(events.Event{Name: "update.failed", Data: map[string]any{"error": err.Error()}})
+			return
+		}
+		s.events.Publish(events.Event{Name: "update.ready", Data: map[string]any{
+			"path": path, "version": release.Version, "url": release.URL,
+		}})
+	}()
+	return map[string]any{"started": true, "version": release.Version}, nil
+}
+
 // updateStatus describes what is installed and what is on offer.
 func (s *Service) updateStatus() map[string]any {
 	s.updates.mu.Lock()
@@ -91,6 +174,11 @@ func (s *Service) updateStatus() map[string]any {
 		"url":       s.updates.latest.URL,
 		"notes":     s.updates.latest.Notes,
 		"error":     s.updates.lastError,
+		// What this build can do about it: a packaged build downloads and
+		// installs, anything else can only be pointed at the release page.
+		"installable": s.updates.download != nil && updates.AssetName(runtime.GOOS, runtime.GOARCH) != "",
+		"downloading": s.updates.downloading,
+		"downloaded":  s.updates.downloaded,
 	}
 	if !s.updates.checkedAt.IsZero() {
 		status["checked_at"] = s.updates.checkedAt.UnixMilli()
