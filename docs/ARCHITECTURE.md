@@ -35,6 +35,15 @@ tabs starts that account's helper if necessary. Lightweight monitor connections
 keep every saved account online and its unread total current until the desktop
 closes, including while another account tab is selected.
 
+A helper cannot outlive the client that started it. A clean exit stops the
+helpers it owns, and three mechanisms cover the exits that are not clean - a
+crash, a SIGKILL, a machine that runs out of memory. The client starts every
+helper with `--exit-with-parent`, so the helper watches its own parent process
+id and shuts down once it has been reparented (see `internal/parentwatch`); on
+Linux the child also sets `PR_SET_PDEATHSIG`, which arrives immediately; on
+Windows, where an orphan keeps its parent id, the client puts every helper in a
+job object that terminates its members when the client's handle closes.
+
 An already-running compatible helper can still be used during development,
 but normal packages do not install or require systemd user units.
 

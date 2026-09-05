@@ -1,4 +1,14 @@
 #include "rpcclient.h"
+
+#ifdef Q_OS_LINUX
+#include <sys/prctl.h>
+#include <unistd.h>
+#include <csignal>
+#include <cstdlib>
+#endif
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #include "profilemonitor.h"
 
 #include <QDir>
@@ -59,6 +69,34 @@ QString daemonExecutable()
 // client shows an account whose data the daemon writes somewhere else. The XDG
 // variables win on every platform, exactly as they do in Go, because that is
 // how the tests and sandboxed runs redirect a whole profile.
+#ifdef Q_OS_WIN
+// One job for the whole client. Every daemon joins it, and Windows kills them
+// all when the last handle to the job closes - which happens when this process
+// exits, however it exits.
+void assignToShutdownJob(qint64 pid)
+{
+    static HANDLE job = [] {
+        HANDLE created = CreateJobObjectW(nullptr, nullptr);
+        if (created == nullptr)
+            return created;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(created, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+            CloseHandle(created);
+            return HANDLE(nullptr);
+        }
+        return created;
+    }();
+    if (job == nullptr || pid <= 0)
+        return;
+    HANDLE child = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, DWORD(pid));
+    if (child == nullptr)
+        return;
+    AssignProcessToJobObject(job, child);
+    CloseHandle(child);
+}
+#endif
+
 QString dataBaseDir()
 {
     const auto configured = qEnvironmentVariable("XDG_DATA_HOME");
@@ -319,8 +357,25 @@ void RpcClient::startBackendForProfile(const QString &profile)
     // Native notifications belong to the backend on every desktop. A tray
     // host can appear or disappear while the application is running, and
     // notification delivery must not depend on that startup-time condition.
+    // stopOwnedBackends only runs on a clean exit. A client that is killed or
+    // that crashes used to leave its daemons running - reparented to init,
+    // holding the account databases, connected to WhatsApp, with no window
+    // left to stop them from. Each of the three mechanisms below covers that
+    // on one platform; the flag is the portable one.
     process->setArguments({QStringLiteral("--profile"), profile,
-                           QStringLiteral("--notifications=true")});
+                           QStringLiteral("--notifications=true"),
+                           QStringLiteral("--exit-with-parent")});
+#ifdef Q_OS_LINUX
+    // Immediate rather than within the daemon's polling interval, and it
+    // survives a SIGKILL of the client.
+    process->setChildProcessModifier([] {
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        // The client can already be gone by the time this runs, in which case
+        // the signal above will never arrive.
+        if (getppid() == 1)
+            _exit(EXIT_FAILURE);
+    });
+#endif
     if (qEnvironmentVariableIntValue("WHATSAPPGO_BACKEND_LOGS") > 0) {
         process->setProcessChannelMode(QProcess::ForwardedChannels);
     } else {
@@ -344,6 +399,14 @@ void RpcClient::startBackendForProfile(const QString &profile)
     });
     m_ownedBackends.insert(profile, process);
     process->start();
+#ifdef Q_OS_WIN
+    // Windows does not reparent an orphan, so the daemon cannot notice that
+    // the client has gone. A job object that kills its members when the last
+    // handle closes does it from the other side: the handle is this process's,
+    // so it closes however the client dies.
+    if (process->waitForStarted(2000))
+        assignToShutdownJob(process->processId());
+#endif
 }
 
 void RpcClient::ensureProfileMonitor(const QString &profile)

@@ -15,6 +15,7 @@ import (
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/mediastore"
 	"github.com/shukiv/whatsappgo/internal/notify"
+	"github.com/shukiv/whatsappgo/internal/parentwatch"
 	"github.com/shukiv/whatsappgo/internal/rpc"
 	"github.com/shukiv/whatsappgo/internal/service"
 	"github.com/shukiv/whatsappgo/internal/store"
@@ -28,12 +29,13 @@ func main() {
 	socketOverride := flag.String("socket", "", "override Unix socket path")
 	profile := flag.String("profile", "default", "isolated account profile name")
 	desktopNotifications := flag.Bool("notifications", true, "send native desktop notifications")
+	exitWithParent := flag.Bool("exit-with-parent", false, "shut down when the process that started this one goes away")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
 		return
 	}
-	if err := run(*socketOverride, *profile, *desktopNotifications); err != nil {
+	if err := run(*socketOverride, *profile, *desktopNotifications, *exitWithParent); err != nil {
 		log.Printf("fatal: %v", err)
 		os.Exit(1)
 	}
@@ -77,7 +79,7 @@ func countProfiles() int {
 	return count
 }
 
-func run(socketOverride, profile string, desktopNotifications bool) error {
+func run(socketOverride, profile string, desktopNotifications, exitWithParent bool) error {
 	paths, err := config.ResolveProfile(profile)
 	if err != nil {
 		return err
@@ -120,6 +122,12 @@ func run(socketOverride, profile string, desktopNotifications bool) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// The desktop client stops the daemons it started, but only if it exits
+	// cleanly. Killed or crashed, it used to leave them running for hours with
+	// no window left to stop them from. See internal/parentwatch.
+	if exitWithParent {
+		go parentwatch.Watch(ctx, stop)
+	}
 	wa, err := whatsapp.New(ctx, paths.DeviceDB, paths.MediaDir, messageStore, mediaStore, notifier)
 	if err != nil {
 		return fmt.Errorf("initialize WhatsApp: %w", err)

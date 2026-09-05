@@ -43,6 +43,7 @@
 #include <QTemporaryDir>
 
 #include <cstdlib>
+#include <functional>
 
 // QtTest's wheel helper enters through this QtGui window-system seam. Calling
 // it here keeps the production target free of a QtTest dependency while the
@@ -2303,6 +2304,16 @@ QtObject {
         // than assumed. The test works in its own XDG directories, set by the
         // test definition, and cleans up after itself by construction: the
         // account it makes is the account it removes.
+        // Deleting an account's files waits for its daemon to exit, so the
+        // directory goes a moment after the account does. A single pass of the
+        // event loop only ever caught the case where no daemon was running.
+        const auto settleUntil = [](std::function<bool()> done) {
+            QElapsedTimer waited;
+            waited.start();
+            while (!done() && waited.elapsed() < 8000)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            return done();
+        };
         const auto probe = QStringLiteral("removal-probe");
         backend.addProfile(probe);
         QCoreApplication::processEvents();
@@ -2334,7 +2345,7 @@ QtObject {
         QCoreApplication::processEvents();
         if (backend.profiles().contains(probe))
             return WHATSAPPGO_TEST_FAILURE();
-        if (probeData.exists())
+        if (!settleUntil([&probeData] { return !probeData.exists(); }))
             return WHATSAPPGO_TEST_FAILURE();
 
         // Removing the account that is open is the path the menu actually
@@ -2354,7 +2365,7 @@ QtObject {
         QCoreApplication::processEvents();
         if (backend.profiles().contains(current))
             return WHATSAPPGO_TEST_FAILURE();
-        if (currentData.exists())
+        if (!settleUntil([&currentData] { return !currentData.exists(); }))
             return WHATSAPPGO_TEST_FAILURE();
         if (backend.profile() == current)
             return WHATSAPPGO_TEST_FAILURE();
