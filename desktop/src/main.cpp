@@ -1092,10 +1092,16 @@ QtObject {
                                                  .arg(menu->property("visible").toBool())
                                                  .arg(menu->property("parent").value<QObject *>() != nullptr)
                                            : QStringLiteral("missing"))
-                                 .arg(quickReactions ? QStringLiteral("opened:%1 visible:%2 parent:%3")
+                                 .arg(quickReactions ? QStringLiteral("opened:%1 visible:%2 parent:%3 y:%4 h:%5 implicitH:%6 w:%7 parentH:%8 parentW:%9")
                                                           .arg(quickReactions->property("opened").toBool())
                                                           .arg(quickReactions->property("visible").toBool())
                                                           .arg(quickReactions->property("parent").value<QObject *>() != nullptr)
+                                                          .arg(quickReactions->property("y").toReal())
+                                                          .arg(quickReactions->property("height").toReal())
+                                                          .arg(quickReactions->property("implicitHeight").toReal())
+                                                          .arg(quickReactions->property("width").toReal())
+                                                          .arg(reactionParent ? reactionParent->property("height").toReal() : -1)
+                                                          .arg(reactionParent ? reactionParent->property("width").toReal() : -1)
                                                     : QStringLiteral("missing"));
         return body->property("selectByMouse").toBool()
                 && selected
