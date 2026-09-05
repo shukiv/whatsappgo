@@ -266,6 +266,18 @@ if(BUILD_TESTING)
     )
     target_include_directories(profile-monitor-test PRIVATE src)
     target_link_libraries(profile-monitor-test PRIVATE Qt6::Core Qt6::Network)
+    # A Unix socket path cannot exceed 104 characters on macOS, and a runner's
+    # build directory alone spends most of that: the tests that serve a socket
+    # under one failed with "QLocalServer::listen: Name error". The suffix
+    # keeps two build trees on one machine apart.
+    if(UNIX)
+        string(MD5 whatsappgo_build_hash "${CMAKE_BINARY_DIR}")
+        string(SUBSTRING "${whatsappgo_build_hash}" 0 8 whatsappgo_build_hash)
+        set(WHATSAPPGO_TEST_RUNTIME_BASE "/tmp/wag-${whatsappgo_build_hash}")
+    else()
+        set(WHATSAPPGO_TEST_RUNTIME_BASE "${CMAKE_BINARY_DIR}/rt")
+    endif()
+
     add_test(NAME desktop-profile-monitor COMMAND profile-monitor-test)
     set_tests_properties(desktop-profile-monitor PROPERTIES TIMEOUT 10)
 
@@ -471,7 +483,7 @@ if(BUILD_TESTING)
     # a real one: without its own runtime directory it connected to whatever
     # daemon the developer had running, and passed on their live account.
     set_tests_properties(desktop-search-results PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_RUNTIME_DIR=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/run;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/config"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/sr;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/config"
     )
     set_tests_properties(desktop-layout-regressions desktop-media-preview desktop-chat-filters desktop-chat-row-menu PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
@@ -502,7 +514,7 @@ if(BUILD_TESTING)
         # AF_UNIX paths are limited to roughly 108 bytes on Linux. Keep the
         # runtime root deliberately short so an out-of-tree build directory
         # cannot make the daemon socket invalid.
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/lifecycle-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/lifecycle-cache;XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/lifecycle-config;XDG_RUNTIME_DIR=${CMAKE_BINARY_DIR}/rt"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_DATA_HOME=${CMAKE_BINARY_DIR}/lifecycle-data;XDG_CACHE_HOME=${CMAKE_BINARY_DIR}/lifecycle-cache;XDG_CONFIG_HOME=${CMAKE_BINARY_DIR}/lifecycle-config;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/lc"
         TIMEOUT 10
     )
 endif()
