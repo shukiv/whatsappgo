@@ -46,6 +46,15 @@ WHATSAPPGO_BACKEND_LOGS=1 ./desktop/build/whatsappgo
 If using a nonstandard build, set `WHATSAPPGO_BACKEND` to its absolute helper
 path.
 
+## A `whatsappd` process with no window
+
+There should never be one. The desktop stops the helpers it started when it
+quits, and each helper also ends on its own once the client that started it is
+gone, however it went - see "Overview" in [ARCHITECTURE.md](ARCHITECTURE.md).
+A helper still running with no client is worth reporting through the bug button
+in the sidebar; `ps -o pid,ppid,etimes,args -C whatsappd` names its age and
+parent, which is what the report needs.
+
 ## `failed to create drawable`, VDPAU, NVIDIA, or FFmpeg warnings
 
 The application defaults to Qt Quick's software renderer, which avoids a
