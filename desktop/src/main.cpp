@@ -1112,10 +1112,11 @@ QtObject {
                                  .arg(reactionSummary ? reactionSummary->property("text").toString() : QStringLiteral("missing"))
                                  .arg(reactionBadge ? reactionBadge->y() : -1).arg(bubble ? bubble->height() : -1)
                                  .arg(delegate->property("implicitHeight").toReal()).arg(menuOpened)
-                                 .arg(menu ? QStringLiteral("opened:%1 visible:%2 parent:%3")
+                                 .arg(menu ? QStringLiteral("opened:%1 visible:%2 parent:%3 popupType:%4")
                                                  .arg(menu->property("opened").toBool())
                                                  .arg(menu->property("visible").toBool())
                                                  .arg(menu->property("parent").value<QObject *>() != nullptr)
+                                                 .arg(menu->property("popupType").toInt())
                                            : QStringLiteral("missing"))
                                  .arg(quickReactions ? QStringLiteral("opened:%1 visible:%2 parent:%3 y:%4 h:%5 implicitH:%6 w:%7 parentH:%8 parentW:%9")
                                                           .arg(quickReactions->property("opened").toBool())
@@ -1127,6 +1128,10 @@ QtObject {
                                                           .arg(quickReactions->property("width").toReal())
                                                           .arg(reactionParent ? reactionParent->property("height").toReal() : -1)
                                                           .arg(reactionParent ? reactionParent->property("width").toReal() : -1)
+                                                          + QStringLiteral(" popupType:%1 opacity:%2 enabled:%3")
+                                                                .arg(quickReactions->property("popupType").toInt())
+                                                                .arg(quickReactions->property("opacity").toReal())
+                                                                .arg(quickReactions->property("enabled").toBool())
                                                     : QStringLiteral("missing"));
         return body->property("selectByMouse").toBool()
                 && selected
@@ -2693,9 +2698,19 @@ QtObject {
             return WHATSAPPGO_TEST_FAILURE();
         QGuiApplication::clipboard()->clear();
         backend.copyImage(QString(), path);
-        const bool copied = QGuiApplication::clipboard()->image().size() == source.size();
+        const auto pasted = QGuiApplication::clipboard()->image().size();
         backend.discardClipboardImage(localUrl);
-        return copied && !QFileInfo::exists(path) ? EXIT_SUCCESS : EXIT_FAILURE;
+        if (pasted != source.size()) {
+            qWarning().noquote() << QStringLiteral("copying %1 put a %2x%3 image on the clipboard, expected %4x%5")
+                                        .arg(path).arg(pasted.width()).arg(pasted.height())
+                                        .arg(source.width()).arg(source.height());
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        if (QFileInfo::exists(path)) {
+            qWarning().noquote() << QStringLiteral("the prepared image outlived the paste: %1").arg(path);
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        return EXIT_SUCCESS;
     }
     if (fileDropTest) {
         if (engine.rootObjects().isEmpty())

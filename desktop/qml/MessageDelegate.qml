@@ -229,6 +229,19 @@ Item {
         // those bindings settle before positioning so the bottom clamp uses
         // the complete menu rather than an earlier, shorter action set.
         Qt.callLater(function() {
+            try {
+                openMessagePopups(x, y)
+            } catch (error) {
+                // Both popups open from one callback, so an exception halfway
+                // through leaves the menu up and the reaction row missing -
+                // which is what the interface looks like on CI.
+                console.warn("could not open the message popups:", error)
+            }
+        })
+    }
+
+    function openMessagePopups(x, y) {
+        {
             contextMenu.x = clampPopupX(contextMenu, x)
             contextMenu.y = clampPopupY(contextMenu, y)
             contextMenu.open()
@@ -241,7 +254,10 @@ Item {
                 reactionY = contextMenu.y + contextMenu.implicitHeight + 6
             quickReactionPopup.y = clampPopupY(quickReactionPopup, reactionY)
             quickReactionPopup.open()
-        })
+            console.log("message popups:",
+                        "menu", contextMenu.visible, "reactions", quickReactionPopup.visible,
+                        "reactionType", quickReactionPopup.popupType)
+        }
     }
 
     function openMessageMenuFromButton() {
