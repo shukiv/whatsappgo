@@ -1099,6 +1099,15 @@ QtObject {
 			&& quickReactions->property("y").toReal() >= 8.0
 			&& quickReactions->property("y").toReal() + quickReactions->property("height").toReal()
 				<= reactionParent->property("height").toReal() - 7.5;
+		// Both popups are on screen at this point and the clicks below dismiss
+		// them: choosing an action closes the menu, and a press inside the menu
+		// is a press outside the reaction row, which closes under
+		// CloseOnPressOutside. Record what is on screen now rather than
+		// asserting on it after the popups have done their job. Qt 6.8 happened
+		// to leave the reaction row up, which is the only reason the assertion
+		// at the end used to hold.
+		const bool menuShown = menu && menu->property("visible").toBool();
+		const bool reactionsShown = quickReactions && quickReactions->property("visible").toBool();
 		const bool infoClicked = infoAction && QMetaObject::invokeMethod(infoAction, "click");
 		QCoreApplication::processEvents();
 		auto *infoPreview = infoDrawer ? infoDrawer->findChild<QObject *>(QStringLiteral("messageInfoPreview")) : nullptr;
@@ -1133,6 +1142,8 @@ QtObject {
                                                                 .arg(quickReactions->property("opacity").toReal())
                                                                 .arg(quickReactions->property("enabled").toBool())
                                                     : QStringLiteral("missing"));
+        qInfo().noquote() << QStringLiteral("message interaction: on screen when the menu opened - menu=%1 reactions=%2")
+                                 .arg(menuShown).arg(reactionsShown);
         return body->property("selectByMouse").toBool()
                 && selected
                 && rendered.contains(QStringLiteral("href=\"https://example.com/path?q=1\""))
@@ -1144,12 +1155,12 @@ QtObject {
                 && reactionBadge && reactionBadge->isVisible() && bubble
                 && reactionSummary && reactionSummary->property("text").toString() == QStringLiteral("🙏  👍 2")
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
-                && menuOpened && menu && menu->property("visible").toBool()
+                && menuOpened && menuShown
 				&& qAbs(menu->property("width").toReal() - 196.0) < 0.01
 				&& menuFitsWindow && reactionsFitWindow
 				&& infoClicked && harness->property("infoMessageId").toString() == QStringLiteral("message-test")
 				&& infoDrawer && infoDrawer->isVisible() && infoDrawer->width() <= 540 && infoPreview
-                && quickReactions && quickReactions->property("visible").toBool()
+                && reactionsShown
                 && quotedMessagePreview && quotedMessagePreview->isVisible()
                 && quotedMessagePreview->height() >= 44 && quoteClicked
                 && harness->property("quotedMessageId").toString() == QStringLiteral("quoted-message-test")
