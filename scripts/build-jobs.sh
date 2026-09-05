@@ -31,7 +31,12 @@ fi
 # One GiB per compiler. The largest translation units in this build - the
 # generated QML type registration and the moc output for rpcclient - are the
 # ones that get close to it.
-by_memory="$(( available_kib / 1048576 ))"
+#
+# Three quarters of what is available, not all of it: MemAvailable counts page
+# cache the kernel believes it can reclaim, and a desktop session with a
+# browser open needs room to keep working while the build runs. The machine
+# this was written for froze hard, so the headroom is worth the minute.
+by_memory="$(( available_kib * 3 / 4 / 1048576 ))"
 [ "${by_memory}" -lt 1 ] && by_memory=1
 
 jobs="${cores}"

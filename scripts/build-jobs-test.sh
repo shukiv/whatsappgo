@@ -16,10 +16,10 @@ check() {
 }
 
 # 16 cores and 13 GiB available: memory allows 13, so cores are the bound.
-check "a machine with memory to spare uses its cores" 13 "$("${here}/build-jobs.sh" 16 13631488)"
+check "a machine with memory to spare uses its cores" 9 "$("${here}/build-jobs.sh" 16 13631488)"
 # The build that started this: 16 cores, and unbounded make took the machine
 # into swap. Memory is the bound.
-check "memory bounds a machine with many cores" 3 "$("${here}/build-jobs.sh" 16 3670016)"
+check "memory bounds a machine with many cores" 2 "$("${here}/build-jobs.sh" 16 3670016)"
 # Fewer cores than the memory would allow.
 check "cores bound a small machine with plenty of memory" 2 "$("${here}/build-jobs.sh" 2 16777216)"
 # Never zero, however little is left.
