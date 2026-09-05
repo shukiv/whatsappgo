@@ -2678,8 +2678,20 @@ QtObject {
     }
     if (backendLifecycleTest) {
         auto verifyOwnership = [&backend] {
-            if (backend.daemonConnected() && backend.findChild<QProcess *>() != nullptr)
-                QCoreApplication::exit(EXIT_SUCCESS);
+            auto *daemon = backend.findChild<QProcess *>();
+            if (!backend.daemonConnected() || daemon == nullptr)
+                return;
+            // The daemon has to be told to end with this process. Without the
+            // flag a client that is killed leaves it running for as long as
+            // the machine is up, holding the account open with no window left
+            // to close it from.
+            if (!daemon->arguments().contains(QStringLiteral("--exit-with-parent"))) {
+                qWarning().noquote() << QStringLiteral("the daemon was started as %1")
+                                            .arg(daemon->arguments().join(QLatin1Char(' ')));
+                QCoreApplication::exit(EXIT_FAILURE);
+                return;
+            }
+            QCoreApplication::exit(EXIT_SUCCESS);
         };
         QObject::connect(&backend, &RpcClient::daemonConnectedChanged, &app, verifyOwnership);
         QTimer::singleShot(0, &app, verifyOwnership);
