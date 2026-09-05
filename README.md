@@ -17,6 +17,30 @@ systemd unit to start manually.
 
 ## Quick start
 
+### Download for Linux
+
+Every tagged version publishes an AppImage: one file, no build tools. Put it
+somewhere you can write to, because an update installs itself by replacing that
+file.
+
+```bash
+mkdir -p ~/Applications && cd ~/Applications
+curl -LO https://github.com/shukiv/whatsappgo/releases/latest/download/WhatsAppGo-x86_64.AppImage
+curl -LO https://github.com/shukiv/whatsappgo/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+chmod +x WhatsAppGo-x86_64.AppImage
+./WhatsAppGo-x86_64.AppImage
+```
+
+The checksum line has to print `WhatsAppGo-x86_64.AppImage: OK` before the file
+is worth running. On a system without FUSE, start it with
+`./WhatsAppGo-x86_64.AppImage --appimage-extract-and-run`.
+
+The published binaries are **unsigned**: the checksum confirms that the download
+arrived intact, not who built it. Building from source avoids the question.
+
+### Build from source
+
 On Debian 13:
 
 ```bash
@@ -140,9 +164,10 @@ sudo cmake --install desktop/build
 automation client are installed together. Launch `whatsappgo` first; the CLI
 controls the backend that the desktop owns.
 
-The package definitions under `packaging/` are maintained for release work;
-until signed artifacts are attached to a GitHub release, install from source as
-described in [INSTALL.md](INSTALL.md).
+The package definitions under `packaging/` build the release artifacts: an
+AppImage for Linux, an installer and a ZIP for Windows, and a macOS disk image.
+They are unsigned, and the AppImage is the one described in the quick start
+above; [INSTALL.md](INSTALL.md) covers the rest.
 
 Qt Quick's software renderer is the default because it is reliable and light
 on hybrid-GPU Linux systems. A working GPU stack can opt in with:

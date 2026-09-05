@@ -1,9 +1,11 @@
 # Installing WhatsAppGo
 
-WhatsAppGo is built from source, and tagged versions are also published as
-binaries on the [releases page](https://github.com/shukiv/whatsappgo/releases):
-an AppImage for Linux, a ZIP and an installer for Windows, and a DMG for each
-macOS architecture.
+Tagged versions are published as binaries on the
+[releases page](https://github.com/shukiv/whatsappgo/releases): an AppImage for
+Linux, a ZIP and an installer for Windows, and a macOS disk image. On Linux the
+AppImage is the shortest way in - see
+[Install the AppImage on Linux](#install-the-appimage-on-linux). WhatsAppGo also
+builds from source, which is the only way onto a platform without an artifact.
 
 Those binaries are **unsigned**. macOS refuses an unsigned bundle that came from
 another machine until it is allowed in System Settings, and Windows SmartScreen
@@ -24,7 +26,98 @@ A build made from source is not compared against the releases - it reports
 itself as built from source and offers nothing, because a working copy is not
 behind anything. `git pull` is the update there.
 
+## Install the AppImage on Linux
+
+One file, no build tools, nothing to install as root. Put it in a directory you
+can write to: an update replaces that file in place, so a copy under `/opt` or
+`/usr/local` owned by root can only be replaced by hand.
+
+```bash
+mkdir -p ~/Applications && cd ~/Applications
+curl -LO https://github.com/shukiv/whatsappgo/releases/latest/download/WhatsAppGo-x86_64.AppImage
+curl -LO https://github.com/shukiv/whatsappgo/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+chmod +x WhatsAppGo-x86_64.AppImage
+./WhatsAppGo-x86_64.AppImage
+```
+
+`sha256sum` has to print `WhatsAppGo-x86_64.AppImage: OK`. It confirms the
+download arrived intact; the releases are unsigned, so it says nothing about who
+built the file. `--ignore-missing` is what lets one line be checked out of a
+file that lists every platform's artifact.
+
+The backend travels inside the image; there is nothing else to install and no
+systemd unit to enable. Profiles, history, and cached media live in the same
+places a source build uses, so an AppImage and a build from source share one
+account.
+
+The `whatsappctl` automation client is in the image as well, and scripting with
+it means taking a copy out:
+
+```bash
+./WhatsAppGo-x86_64.AppImage --appimage-extract 'usr/bin/whatsappctl' >/dev/null
+install -D squashfs-root/usr/bin/whatsappctl ~/.local/bin/whatsappctl
+rm -r squashfs-root
+```
+
+### If it will not start
+
+The image mounts itself with FUSE. On a system without it, or where an
+unprivileged mount is refused, run the contents from a temporary directory
+instead:
+
+```bash
+./WhatsAppGo-x86_64.AppImage --appimage-extract-and-run
+```
+
+Debian and Ubuntu install FUSE with `sudo apt install libfuse2t64` (older
+releases call it `libfuse2`); Fedora uses `sudo dnf install fuse-libs`.
+
+### An entry in the application menu
+
+The AppImage does not add itself to the menu. Either install
+[AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher), which
+offers to integrate any image it is asked to open, or write the entry yourself:
+
+```bash
+cd ~/Applications
+./WhatsAppGo-x86_64.AppImage --appimage-extract org.whatsappgo.Desktop.svg >/dev/null
+install -D squashfs-root/org.whatsappgo.Desktop.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/org.whatsappgo.Desktop.svg
+rm -r squashfs-root
+cat > ~/.local/share/applications/org.whatsappgo.Desktop.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=WhatsAppGo
+Comment=Low-memory native WhatsApp client
+Exec=$HOME/Applications/WhatsAppGo-x86_64.AppImage
+Icon=org.whatsappgo.Desktop
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+StartupNotify=true
+EOF
+update-desktop-database ~/.local/share/applications
+```
+
+An `Exec=` line has to name the file where it actually is; the menu entry breaks
+if the image is moved afterwards.
+
+### Updating and removing it
+
+The AppImage checks for a newer release every three hours and on the first start
+of the day, and **Settings → Help** has the same button. Accepting the offer
+downloads the new image, verifies it against the release's SHA256SUMS, replaces
+the file that is running, and reopens the window - the path stays the same, so
+the menu entry keeps working.
+
+Removing it is deleting the file (and the two files above, if the menu entry was
+written by hand). Account data stays in `~/.local/share/whatsappgo` and cached
+media in `~/.cache/whatsappgo`; see [Uninstalling](#uninstalling).
+
 ## Requirements
+
+The requirements below are for building from source. The AppImage needs none of
+them.
 
 - Linux, Windows 10 or newer, or macOS 12 or newer
 - Go 1.26 or newer
