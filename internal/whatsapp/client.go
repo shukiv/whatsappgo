@@ -24,6 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -70,6 +71,8 @@ type Client struct {
 	requestMediaRetryPath  func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error)
 	downloadWithPathToFile func(context.Context, string, whatsmeow.DownloadableMessage, whatsmeow.File) error
 	sendReactionMessage    func(context.Context, types.JID, types.JID, types.MessageID, string) (whatsmeow.SendResponse, error)
+	sendPeerMessage        func(context.Context, *waE2E.Message) (whatsmeow.SendResponse, error)
+	fetchAppState          func(context.Context, appstate.WAPatchName, bool, bool) error
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {

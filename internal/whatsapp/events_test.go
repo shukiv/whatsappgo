@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"errors"
+
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
@@ -1146,5 +1148,92 @@ func TestReactionBackfillDoesNotRunBesideItself(t *testing.T) {
 	defer mu.Unlock()
 	if requests != 1 {
 		t.Fatalf("a second backfill asked for %d pages while the first was running", requests)
+	}
+}
+
+func TestAppStateHashMismatchAsksThePhoneAndStaysQuiet(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	requests := 0
+	c := &Client{store: st, subs: make(map[uint64]func(gateway.Event))}
+	c.fetchAppState = func(context.Context, appstate.WAPatchName, bool, bool) error {
+		return fmt.Errorf("failed to decode app state regular patches: failed to verify patch v156: %w",
+			appstate.ErrMismatchingLTHash)
+	}
+	c.sendPeerMessage = func(_ context.Context, message *waE2E.Message) (whatsmeow.SendResponse, error) {
+		requests++
+		if message.GetProtocolMessage().GetPeerDataOperationRequestMessage().
+			GetSyncdCollectionFatalRecoveryRequest().GetCollectionName() != string(appstate.WAPatchRegular) {
+			t.Fatalf("the phone was asked for the wrong collection: %v", message)
+		}
+		return whatsmeow.SendResponse{}, nil
+	}
+	var shouted []gateway.Event
+	c.Subscribe(func(event gateway.Event) {
+		if event.Name == "daemon.error" {
+			shouted = append(shouted, event)
+		}
+	})
+
+	c.backfillCallLogs()
+	if requests != 1 {
+		t.Fatalf("a collection the server could not sign should be asked of the phone once, got %d", requests)
+	}
+	if len(shouted) != 0 {
+		t.Fatalf("a background sync nobody asked for put an error across the window: %#v", shouted)
+	}
+
+	// A phone that has not answered yet must not be asked again on every
+	// reconnection.
+	c.backfillCallLogs()
+	if requests != 1 {
+		t.Fatalf("the phone was asked again within the day: %d requests", requests)
+	}
+
+	value, _, err := st.Metadata(context.Background(), appStateRecoveryMetadataKey(appstate.WAPatchRegular))
+	if err != nil || value == "" {
+		t.Fatalf("the request was not remembered: %q err=%v", value, err)
+	}
+}
+
+func TestAppStateFailureThatIsNotAHashMismatchIsStillReported(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	c := &Client{store: st, subs: make(map[uint64]func(gateway.Event))}
+	c.fetchAppState = func(context.Context, appstate.WAPatchName, bool, bool) error {
+		return errors.New("websocket disconnected")
+	}
+	c.sendPeerMessage = func(context.Context, *waE2E.Message) (whatsmeow.SendResponse, error) {
+		t.Fatal("a plain failure must not ask the phone for a recovery copy")
+		return whatsmeow.SendResponse{}, nil
+	}
+	var shouted []gateway.Event
+	c.Subscribe(func(event gateway.Event) {
+		if event.Name == "daemon.error" {
+			shouted = append(shouted, event)
+		}
+	})
+	c.backfillChatSettings()
+	if len(shouted) != 1 {
+		t.Fatalf("a failure that is not a hash mismatch was swallowed: %#v", shouted)
+	}
+}
+
+func TestHashMismatchIsRecognisedThroughWrapping(t *testing.T) {
+	wrapped := fmt.Errorf("failed to decode app state %s patches: %w",
+		appstate.WAPatchRegular, fmt.Errorf("failed to verify patch v156: %w", appstate.ErrMismatchingLTHash))
+	if !isAppStateHashMismatch(wrapped) {
+		t.Fatal("the mismatch the server reports has to be recognised through whatsmeow's wrapping")
+	}
+	if isAppStateHashMismatch(appstate.ErrKeyNotFound) {
+		t.Fatal("a missing key is not a hash mismatch")
 	}
 }

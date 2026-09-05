@@ -193,46 +193,83 @@ const reactionBackfillChats = 25
 const reactionBackfillPause = 3 * time.Second
 const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v6"
 
+// Call history lives in the regular app-state collection and chat settings in
+// the low-priority one. A full sync is required once for installations that
+// linked before either was imported, because reconnecting only fetches
+// mutations newer than the cached collection version.
 func (c *Client) backfillCallLogs() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	if _, done, err := c.store.Metadata(ctx, callLogBackfillMetadataKey); err != nil || done {
-		return
-	}
-	// Call history is stored in the regular app-state collection. A full sync is
-	// required once for installations that linked before call-log importing was
-	// added, because reconnecting only fetches mutations newer than the cached
-	// collection version.
-	if err := c.wa.FetchAppState(ctx, appstate.WAPatchRegular, true, false); err != nil {
-		if shouldDeferAppStateBackfill(err) {
-			return
-		}
-		c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "sync call history: " + err.Error()}})
-		return
-	}
-	if err := c.store.SetMetadata(ctx, callLogBackfillMetadataKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
-		return
-	}
-	c.emit(gateway.Event{Name: "calls.synced"})
+	c.backfillAppState(appstate.WAPatchRegular, callLogBackfillMetadataKey, "sync call history", "calls.synced")
 }
 
 func (c *Client) backfillChatSettings() {
+	c.backfillAppState(appstate.WAPatchRegularLow, chatSettingsBackfillMetadataKey, "sync chat settings", "chat.updated")
+}
+
+func (c *Client) backfillAppState(name appstate.WAPatchName, metadataKey, label, doneEvent string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if _, done, err := c.store.Metadata(ctx, chatSettingsBackfillMetadataKey); err != nil || done {
+	if _, done, err := c.store.Metadata(ctx, metadataKey); err != nil || done {
 		return
 	}
-	if err := c.wa.FetchAppState(ctx, appstate.WAPatchRegularLow, true, false); err != nil {
+	fetch := c.fetchAppState
+	if fetch == nil {
+		fetch = c.wa.FetchAppState
+	}
+	if err := fetch(ctx, name, true, false); err != nil {
 		if shouldDeferAppStateBackfill(err) {
 			return
 		}
-		c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "sync chat settings: " + err.Error()}})
+		if isAppStateHashMismatch(err) {
+			// The collection the server sent does not add up to the hash it
+			// signed, and asking again produces the same bytes. Only the phone
+			// can settle it, so ask it for a plain copy and say nothing: this
+			// sync is one nobody asked for, and a banner about a hash across
+			// somebody's conversation helps no one.
+			c.recoverAppState(ctx, name, label)
+			return
+		}
+		c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": label + ": " + err.Error()}})
 		return
 	}
-	if err := c.store.SetMetadata(ctx, chatSettingsBackfillMetadataKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := c.store.SetMetadata(ctx, metadataKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return
 	}
-	c.emit(gateway.Event{Name: "chat.updated"})
+	c.emit(gateway.Event{Name: doneEvent})
+}
+
+// appStateRecoveryMetadataKey remembers when the phone was last asked for a
+// collection, so a mismatch that the phone cannot fix does not send it a
+// request on every connection.
+func appStateRecoveryMetadataKey(name appstate.WAPatchName) string {
+	return "app_state_recovery_" + string(name)
+}
+
+const appStateRecoveryInterval = 24 * time.Hour
+
+// recoverAppState asks the phone for an unencrypted copy of one app-state
+// collection. The reply arrives as a peer message that whatsmeow applies on its
+// own; it finishes as an AppStateSyncComplete, which is where the backfill is
+// marked done.
+func (c *Client) recoverAppState(ctx context.Context, name appstate.WAPatchName, label string) {
+	key := appStateRecoveryMetadataKey(name)
+	value, _, err := c.store.Metadata(ctx, key)
+	if err != nil {
+		return
+	}
+	if asked, parseErr := time.Parse(time.RFC3339, value); parseErr == nil &&
+		time.Since(asked) < appStateRecoveryInterval {
+		return
+	}
+	send := c.sendPeerMessage
+	if send == nil {
+		send = c.wa.SendPeerMessage
+	}
+	if _, err := send(ctx, whatsmeow.BuildAppStateRecoveryRequest(name)); err != nil {
+		log.Printf("%s: could not ask the phone for %s: %v", label, name, err)
+		return
+	}
+	log.Printf("%s: %s did not verify; asked the phone for a fresh copy", label, name)
+	_ = c.store.SetMetadata(ctx, key, time.Now().UTC().Format(time.RFC3339))
 }
 
 // backfillReactions asks the busiest conversations for their recent page once.
@@ -279,6 +316,13 @@ func (c *Client) backfillReactionsWith(ctx context.Context,
 
 func shouldDeferAppStateBackfill(err error) bool {
 	return errors.Is(err, appstate.ErrKeyNotFound)
+}
+
+// isAppStateHashMismatch reports the one failure a retry cannot help with: the
+// mutations decoded, but the running hash does not match the one the server
+// signed, so the collection has to come from the phone instead.
+func isAppStateHashMismatch(err error) bool {
+	return errors.Is(err, appstate.ErrMismatchingLTHash)
 }
 
 func (c *Client) handleAppStateSyncComplete(evt *waEvents.AppStateSyncComplete) {
