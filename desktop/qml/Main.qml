@@ -97,6 +97,14 @@ ApplicationWindow {
         category: "appearance"
         property string themeMode: "system"
     }
+    Settings {
+        id: updateSettings
+        category: "updates"
+        // The version the reader has already been offered. Without this, a
+        // release that stays newest for a week asks again every few hours and
+        // at every start.
+        property string offeredVersion: ""
+    }
     Component.onCompleted: {
         Theme.preferredMode = appearanceSettings.themeMode
         if (backend.daemonConnected) {
@@ -476,6 +484,19 @@ ApplicationWindow {
         function onNoticeOccurred(message) {
             window.transientNotice = message
             noticeTimer.restart()
+        }
+        function onUpdateAvailable(version) {
+            if (!version || version === updateSettings.offeredVersion)
+                return
+            updateSettings.offeredVersion = version
+            updatePromptDialog.open()
+        }
+        function onUpdateReady(path, version) {
+            updateReadyDialog.open()
+        }
+        function onUpdateFailed(message) {
+            window.transientError = message
+            errorTimer.restart()
         }
         function onBugReportFinished(success, message, url) {
             bugReportDialog.finish(success, message)
@@ -2317,6 +2338,11 @@ ApplicationWindow {
             onLogoutRequested: logoutDialog.open()
             onShortcutsRequested: shortcutsDialog.open()
             onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
+            onBugReportRequested: {
+                backend.refreshBugReportEnvironment()
+                bugReportDialog.reset()
+                bugReportDialog.open()
+            }
         }
 
         MediaLibraryPane {
@@ -2685,6 +2711,45 @@ ApplicationWindow {
                 placeholderText: qsTr("Description (optional)")
             }
         }
+    }
+
+    // A newer release exists. Nothing has been downloaded yet: this asks first,
+    // because an update is a hundred megabytes on somebody else's connection.
+    WhatsAppDialog {
+        id: updatePromptDialog
+        objectName: "updateAvailableDialog"
+        title: qsTr("Update WhatsAppGo")
+        subtitle: {
+            const status = backend.updateStatus
+            const latest = String(status.latest || "")
+            const current = String(status.current || "")
+            return backend.updateInstallable()
+                ? qsTr("Version %1 is out. This copy is %2.").arg(latest).arg(current)
+                : qsTr("Version %1 is out. This copy is %2, and it was not installed in a way that can replace itself, so the download is on the release page.").arg(latest).arg(current)
+        }
+        acceptText: backend.updateInstallable() ? qsTr("Download it") : qsTr("Open the release page")
+        cancelText: qsTr("Not now")
+        preferredWidth: 460
+        onAccepted: {
+            if (backend.updateInstallable())
+                backend.downloadUpdate()
+            else
+                backend.openReleasePage()
+        }
+    }
+
+    // The file is downloaded and checked. Installing it closes this window, so
+    // it happens when the reader says so and not in the middle of a message.
+    WhatsAppDialog {
+        id: updateReadyDialog
+        objectName: "updateReadyDialog"
+        title: qsTr("The update is ready")
+        subtitle: qsTr("Version %1 has been downloaded. Installing it closes WhatsAppGo and opens the new version.")
+            .arg(String(backend.updateStatus.latest || ""))
+        acceptText: qsTr("Install and restart")
+        cancelText: qsTr("Later")
+        preferredWidth: 460
+        onAccepted: backend.installUpdate()
     }
 
     WhatsAppDialog {

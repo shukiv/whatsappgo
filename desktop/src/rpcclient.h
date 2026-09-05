@@ -65,6 +65,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool clipboardHasImage READ clipboardHasImage NOTIFY clipboardChanged)
     Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
     Q_PROPERTY(QString bugReportEnvironment READ bugReportEnvironment NOTIFY bugReportEnvironmentChanged)
+    Q_PROPERTY(QVariantMap updateStatus READ updateStatus NOTIFY updateStatusChanged)
 
 public:
     explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
@@ -163,6 +164,18 @@ public:
 
     // Bug reports. The environment is fetched separately so the dialog can
     // show the reader exactly what a report would disclose before they send it.
+    // Updates. The daemon looks for them and downloads them; installing one
+    // is this process's job because only it knows what it is running from.
+    Q_INVOKABLE void refreshUpdateStatus();
+    Q_INVOKABLE void checkForUpdates();
+    Q_INVOKABLE void downloadUpdate();
+    Q_INVOKABLE void openReleasePage();
+    // Applies a file update.ready announced. The window restarts or closes
+    // when it returns true; it stays where it is when it does not.
+    Q_INVOKABLE bool installUpdate();
+    Q_INVOKABLE bool updateInstallable() const;
+    QVariantMap updateStatus() const { return m_updateStatus; }
+
     Q_INVOKABLE void refreshBugReportEnvironment();
     Q_INVOKABLE void submitBugReport(const QString &subject, const QString &body);
     QString bugReportEnvironment() const { return m_bugReportEnvironment; }
@@ -266,6 +279,12 @@ signals:
     void noticeOccurred(const QString &message);
     void notificationRequested(const QString &chatJid, const QString &title, const QString &body);
     void bugReportEnvironmentChanged();
+    void updateStatusChanged();
+    // A version nobody has been offered yet.
+    void updateAvailable(const QString &version);
+    void updateProgress(qint64 received, qint64 total);
+    void updateReady(const QString &path, const QString &version);
+    void updateFailed(const QString &message);
     void bugReportFinished(bool success, const QString &message, const QString &url);
     // A message's file is cached and can be played or opened.
     void mediaReady(const QString &messageId, const QString &path);
@@ -303,6 +322,7 @@ private:
     quint64 m_nextId = 0;
     QHash<QString, Callback> m_pending;
     QString m_bugReportEnvironment;
+    QVariantMap m_updateStatus;
     QVariantMap m_status;
     QVariantList m_chats;
     ChatListModel m_chatList;

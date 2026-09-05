@@ -14,7 +14,7 @@ ColumnLayout {
     // "" is the top level; otherwise the open section. A command-line argument
     // can open one directly, which is what makes each page photographable.
     property string openSection: {
-        const allowed = ["profile", "account", "privacy", "chats", "blocked"]
+        const allowed = ["profile", "account", "privacy", "chats", "blocked", "help"]
         const args = Qt.application.arguments
         for (let i = 0; i < args.length - 1; ++i) {
             if (args[i] === "--settings-section" && allowed.indexOf(args[i + 1]) >= 0)
@@ -36,6 +36,59 @@ ColumnLayout {
     signal logoutRequested()
     signal shortcutsRequested()
     signal appearanceRequested()
+    signal bugReportRequested()
+
+    // A build that was not stamped with a version is somebody's own, and it is
+    // never behind a release. Saying so is more use than "up to date".
+    readonly property bool stampedBuild: {
+        const current = String(backend.updateStatus.current || "")
+        return current !== "" && current !== "dev"
+    }
+    readonly property bool updateBusy: backend.updateStatus.downloading === true
+    readonly property bool updateReady: String(backend.updateStatus.downloaded || "") !== ""
+    readonly property string versionText: root.stampedBuild
+        ? qsTr("WhatsAppGo %1").arg(String(backend.updateStatus.current))
+        : qsTr("WhatsAppGo, built from source")
+    readonly property string updateText: {
+        const status = backend.updateStatus
+        if (String(status.error || "") !== "")
+            return String(status.error)
+        if (root.updateBusy)
+            return qsTr("Downloading version %1…").arg(String(status.latest || ""))
+        if (root.updateReady)
+            return qsTr("Version %1 is downloaded and ready to install.").arg(String(status.latest || ""))
+        if (status.available === true)
+            return qsTr("Version %1 is out.").arg(String(status.latest || ""))
+        if (!root.stampedBuild)
+            return qsTr("A build from source is not compared against the releases.")
+        if (String(status.checked_at || "") === "")
+            return qsTr("Not checked yet.")
+        return qsTr("This is the newest release.")
+    }
+    readonly property string updateButtonText: {
+        if (root.updateBusy)
+            return qsTr("Downloading…")
+        if (root.updateReady)
+            return qsTr("Install and restart")
+        if (backend.updateStatus.available === true)
+            return backend.updateInstallable() ? qsTr("Download the update") : qsTr("Open the release page")
+        return qsTr("Check for updates")
+    }
+
+    function updateAction() {
+        if (root.updateReady) {
+            backend.installUpdate()
+            return
+        }
+        if (backend.updateStatus.available === true) {
+            if (backend.updateInstallable())
+                backend.downloadUpdate()
+            else
+                backend.openReleasePage()
+            return
+        }
+        backend.checkForUpdates()
+    }
 
     readonly property var privacyRows: [
         { key: "last_seen", label: qsTr("Last seen and online"),
@@ -105,6 +158,7 @@ ColumnLayout {
         case "privacy": return qsTr("Privacy")
         case "chats": return qsTr("Chats")
         case "blocked": return qsTr("Blocked contacts")
+        case "help": return qsTr("Help")
         default: return qsTr("Settings")
         }
     }
@@ -162,7 +216,8 @@ ColumnLayout {
                         { key: "profile", label: qsTr("Profile"), icon: "user.svg" },
                         { key: "account", label: qsTr("Account"), icon: "lock.svg" },
                         { key: "privacy", label: qsTr("Privacy"), icon: "block.svg" },
-                        { key: "chats", label: qsTr("Chats"), icon: "chats.svg" }
+                        { key: "chats", label: qsTr("Chats"), icon: "chats.svg" },
+                        { key: "help", label: qsTr("Help"), icon: "info.svg" }
                     ]
                     SettingsRow {
                         required property var modelData
@@ -371,6 +426,93 @@ ColumnLayout {
                     onSwitched: value => composerSettings.enterIsSend = value
                 }
 
+            }
+
+            // Help: what this copy is, and whether a newer one exists.
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.margins: 22
+                visible: root.openSection === "help"
+                spacing: 10
+
+                Label {
+                    objectName: "settingsVersionLabel"
+                    Layout.fillWidth: true
+                    text: root.versionText
+                    color: Theme.text
+                    font.pixelSize: 15
+                    wrapMode: Text.WordWrap
+                }
+                Label {
+                    objectName: "settingsUpdateStatusLabel"
+                    Layout.fillWidth: true
+                    text: root.updateText
+                    color: Theme.textMuted
+                    font.pixelSize: 14
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                    spacing: 8
+
+                    AbstractButton {
+                        id: updateButton
+                        objectName: "settingsUpdateButton"
+                        implicitWidth: updateButtonLabel.implicitWidth + 36
+                        implicitHeight: 40
+                        enabled: !root.updateBusy
+                        Accessible.name: updateButtonLabel.text
+                        onClicked: root.updateAction()
+                        background: Rectangle {
+                            radius: 20
+                            color: !updateButton.enabled ? Theme.surfaceMuted
+                                : updateButton.hovered ? Qt.darker(Theme.primary, 1.1) : Theme.primary
+                        }
+                        contentItem: Label {
+                            id: updateButtonLabel
+                            text: root.updateButtonText
+                            color: updateButton.enabled ? Theme.primaryText : Theme.textMuted
+                            font.pixelSize: 14
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
+                    AbstractButton {
+                        id: releasePageButton
+                        objectName: "settingsReleasePageButton"
+                        visible: String(backend.updateStatus.url || "") !== ""
+                        implicitWidth: releasePageLabel.implicitWidth + 32
+                        implicitHeight: 40
+                        Accessible.name: releasePageLabel.text
+                        onClicked: backend.openReleasePage()
+                        background: Rectangle {
+                            radius: 20
+                            color: releasePageButton.hovered ? Theme.hoverRow : "transparent"
+                            border.color: Theme.border
+                            border.width: 1
+                        }
+                        contentItem: Label {
+                            id: releasePageLabel
+                            text: qsTr("What is new")
+                            color: Theme.text
+                            font.pixelSize: 14
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                }
+
+                SettingsRow {
+                    objectName: "settingsRow_reportProblem"
+                    Layout.fillWidth: true
+                    Layout.topMargin: 8
+                    text: qsTr("Report a problem")
+                    iconSource: Qt.resolvedUrl("icons/bug.svg")
+                    onClicked: root.bugReportRequested()
+                }
             }
         }
     }

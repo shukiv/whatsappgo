@@ -19,6 +19,8 @@ qt_add_executable(whatsappgo
     src/profilemonitor.h
     src/rpcclient.cpp
     src/rpcclient.h
+    src/updateinstaller.cpp
+    src/updateinstaller.h
     src/traybehavior.cpp
     src/traybehavior.h
 )
@@ -289,6 +291,8 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(pairing-auto-start-test PRIVATE src)
     target_link_libraries(pairing-auto-start-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -301,9 +305,25 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(presence-updates-test PRIVATE src)
     target_link_libraries(presence-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
+    qt_add_executable(update-flow-test
+        tests/UpdateFlow.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
+    )
+    target_include_directories(update-flow-test PRIVATE src)
+    target_link_libraries(update-flow-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
     qt_add_executable(chat-list-updates-test
         tests/ChatListUpdates.cpp
@@ -313,6 +333,8 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(chat-list-updates-test PRIVATE src)
     target_link_libraries(chat-list-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -333,6 +355,8 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(notification-routing-test PRIVATE src)
     target_link_libraries(notification-routing-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -345,6 +369,8 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(backend-probe-test PRIVATE src)
     target_link_libraries(backend-probe-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -357,6 +383,8 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(link-preview-upgrade-test PRIVATE src)
     target_link_libraries(link-preview-upgrade-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -369,6 +397,8 @@ if(BUILD_TESTING)
         src/profilemonitor.h
         src/rpcclient.cpp
         src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
     )
     target_include_directories(profile-display-names-test PRIVATE src)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -440,6 +470,8 @@ if(BUILD_TESTING)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
     add_test(NAME desktop-presence-updates COMMAND presence-updates-test)
     add_test(NAME desktop-chat-list-updates COMMAND chat-list-updates-test)
+    add_test(NAME desktop-update-flow COMMAND update-flow-test)
+    set_tests_properties(desktop-update-flow PROPERTIES TIMEOUT 15)
     add_test(NAME desktop-link-preview-upgrade COMMAND link-preview-upgrade-test)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
@@ -452,6 +484,8 @@ if(BUILD_TESTING)
     set_tests_properties(desktop-file-urls PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-style-detection COMMAND whatsappgo --style-detection-test)
     set_tests_properties(desktop-style-detection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_test(NAME desktop-update-settings COMMAND whatsappgo --update-settings-test)
+    set_tests_properties(desktop-update-settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
     add_test(NAME desktop-bug-report COMMAND whatsappgo --bug-report-test)
     set_tests_properties(desktop-bug-report PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
     add_test(NAME desktop-presence-display COMMAND whatsappgo --presence-display-test)

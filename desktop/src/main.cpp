@@ -292,6 +292,8 @@ int main(int argc, char *argv[])
     parser.addOption(searchResultsTestOption);
     QCommandLineOption bugReportTestOption(QStringLiteral("bug-report-test"), QStringLiteral("Verify the report-a-problem button, dialog and disclosure"));
     parser.addOption(bugReportTestOption);
+    QCommandLineOption updateSettingsTestOption(QStringLiteral("update-settings-test"), QStringLiteral("Verify the Help page reports the version and offers the update button"));
+    parser.addOption(updateSettingsTestOption);
     QCommandLineOption styleDetectionTestOption(QStringLiteral("style-detection-test"), QStringLiteral("Verify the Qt Quick Controls style is only chosen when its module is installed"));
     parser.addOption(styleDetectionTestOption);
     QCommandLineOption fileUrlTestOption(QStringLiteral("file-url-test"), QStringLiteral("Verify local paths and file URLs convert both ways, including Windows drive letters"));
@@ -320,7 +322,7 @@ int main(int argc, char *argv[])
     parser.addOption(themeOption);
     QCommandLineOption sectionOption(QStringLiteral("section"), QStringLiteral("Open a primary section (chats, status, calls, channels, communities, media, or profile)"), QStringLiteral("name"));
     parser.addOption(sectionOption);
-    QCommandLineOption settingsSectionOption(QStringLiteral("settings-section"), QStringLiteral("Open one page of Settings (profile, account, privacy, chats, or blocked)"), QStringLiteral("name"));
+    QCommandLineOption settingsSectionOption(QStringLiteral("settings-section"), QStringLiteral("Open one page of Settings (profile, account, privacy, chats, blocked, or help)"), QStringLiteral("name"));
     parser.addOption(settingsSectionOption);
     parser.process(app);
     const bool smokeTest = parser.isSet(smokeTestOption);
@@ -336,6 +338,7 @@ int main(int argc, char *argv[])
     const bool chatRowMenuTest = parser.isSet(chatRowMenuTestOption);
     const bool searchResultsTest = parser.isSet(searchResultsTestOption);
     const bool bugReportTest = parser.isSet(bugReportTestOption);
+    const bool updateSettingsTest = parser.isSet(updateSettingsTestOption);
     const bool profileRemovalTest = parser.isSet(profileRemovalTestOption);
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
@@ -355,7 +358,8 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || styleDetectionTest || fileUrlTest
+        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
+        || styleDetectionTest || fileUrlTest
         || !screenshotPath.isEmpty();
 
     // Automated runs keep the per-account monitors off, because each one opens
@@ -2504,6 +2508,43 @@ QtObject {
         rowItem->setParentItem(nullptr);
         return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
+    if (updateSettingsTest) {
+        if (engine.rootObjects().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *root = engine.rootObjects().constFirst();
+        auto *pane = root->findChild<QObject *>(QStringLiteral("settingsPane"));
+        if (pane == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        pane->setProperty("openSection", QStringLiteral("help"));
+        QCoreApplication::processEvents();
+
+        auto *version = root->findChild<QObject *>(QStringLiteral("settingsVersionLabel"));
+        auto *state = root->findChild<QObject *>(QStringLiteral("settingsUpdateStatusLabel"));
+        auto *button = qobject_cast<QQuickItem *>(root->findChild<QObject *>(QStringLiteral("settingsUpdateButton")));
+        if (version == nullptr || state == nullptr || button == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        // The page names the build rather than leaving the reader guessing,
+        // and the button is a pointer target rather than a line of text.
+        if (!version->property("text").toString().contains(QStringLiteral("WhatsAppGo")))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (state->property("text").toString().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        if (button->height() < 36 || button->width() < 80)
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // With no daemon there is nothing newer to install, so the button is
+        // the one that goes and looks.
+        auto *buttonLabel = root->findChild<QObject *>(QStringLiteral("settingsUpdateButton"));
+        if (buttonLabel == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!pane->property("updateButtonText").toString().contains(QStringLiteral("Check")))
+            return WHATSAPPGO_TEST_FAILURE();
+        // Pressing it must not need a daemon to survive.
+        QMetaObject::invokeMethod(button, "clicked");
+        QCoreApplication::processEvents();
+        return EXIT_SUCCESS;
+    }
+
     if (bugReportTest) {
         if (engine.rootObjects().isEmpty())
             return WHATSAPPGO_TEST_FAILURE();

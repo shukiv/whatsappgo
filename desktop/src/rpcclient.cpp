@@ -19,6 +19,7 @@
 #include <QCoreApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include "updateinstaller.h"
 #include <QDateTime>
 #include <QFileInfo>
 #include <QFile>
@@ -230,6 +231,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         refreshStatus();
         refreshChats();
         refreshArchived();
+        refreshUpdateStatus();
         if (!m_initialChat.isEmpty()) {
             const auto chat = m_initialChat;
             m_initialChat.clear();
@@ -572,6 +574,27 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         const auto payload = data.toObject();
         m_pairingQr = QStringLiteral("data:image/png;base64,") + payload.value(QStringLiteral("png_base64")).toString();
         emit pairingQrChanged();
+    } else if (name == QStringLiteral("update.available")) {
+        m_updateStatus = data.toObject().toVariantMap();
+        emit updateStatusChanged();
+        emit updateAvailable(m_updateStatus.value(QStringLiteral("latest")).toString());
+    } else if (name == QStringLiteral("update.progress")) {
+        const auto payload = data.toObject();
+        emit updateProgress(payload.value(QStringLiteral("received")).toVariant().toLongLong(),
+                            payload.value(QStringLiteral("total")).toVariant().toLongLong());
+    } else if (name == QStringLiteral("update.ready")) {
+        const auto payload = data.toObject();
+        m_updateStatus.insert(QStringLiteral("downloaded"), payload.value(QStringLiteral("path")).toString());
+        m_updateStatus.insert(QStringLiteral("downloading"), false);
+        emit updateStatusChanged();
+        emit updateReady(payload.value(QStringLiteral("path")).toString(),
+                         payload.value(QStringLiteral("version")).toString());
+    } else if (name == QStringLiteral("update.failed")) {
+        const auto message = data.toObject().value(QStringLiteral("error")).toString();
+        m_updateStatus.insert(QStringLiteral("downloading"), false);
+        m_updateStatus.insert(QStringLiteral("error"), message);
+        emit updateStatusChanged();
+        emit updateFailed(message);
     } else if (name == QStringLiteral("pairing.success")) {
         m_pairingQr.clear();
         emit pairingQrChanged();
@@ -2082,6 +2105,87 @@ void RpcClient::removeProfile(const QString &profile)
     });
     forceStop->start();
     process->terminate();
+}
+
+void RpcClient::refreshUpdateStatus()
+{
+    sendRequest(QStringLiteral("update.status"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
+        if (!error.isEmpty())
+            return;
+        m_updateStatus = result.toObject().toVariantMap();
+        emit updateStatusChanged();
+    });
+}
+
+void RpcClient::checkForUpdates()
+{
+    // Asking now rather than waiting for the next few-hourly look: somebody
+    // pressed a button and is waiting for an answer.
+    sendRequest(QStringLiteral("update.check"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
+        if (!error.isEmpty()) {
+            emit updateFailed(error.value(QStringLiteral("message")).toString());
+            return;
+        }
+        m_updateStatus = result.toObject().toVariantMap();
+        emit updateStatusChanged();
+    });
+}
+
+void RpcClient::downloadUpdate()
+{
+    m_updateStatus.insert(QStringLiteral("downloading"), true);
+    m_updateStatus.insert(QStringLiteral("error"), QString());
+    emit updateStatusChanged();
+    sendRequest(QStringLiteral("update.download"), {}, [this](const QJsonValue &, const QJsonObject &error) {
+        if (error.isEmpty())
+            return;
+        m_updateStatus.insert(QStringLiteral("downloading"), false);
+        emit updateStatusChanged();
+        emit updateFailed(error.value(QStringLiteral("message")).toString());
+    });
+}
+
+void RpcClient::openReleasePage()
+{
+    auto url = m_updateStatus.value(QStringLiteral("url")).toString();
+    if (url.isEmpty())
+        url = QStringLiteral("https://github.com/shukiv/whatsappgo/releases/latest");
+    QDesktopServices::openUrl(QUrl(url));
+}
+
+bool RpcClient::updateInstallable() const
+{
+    return m_updateStatus.value(QStringLiteral("installable")).toBool() && updateinstaller::installable();
+}
+
+bool RpcClient::installUpdate()
+{
+    const auto path = m_updateStatus.value(QStringLiteral("downloaded")).toString();
+    if (path.isEmpty()) {
+        emit updateFailed(tr("There is nothing downloaded to install."));
+        return false;
+    }
+    const auto outcome = updateinstaller::install(path);
+    if (!outcome.ok) {
+        emit updateFailed(outcome.message);
+        return false;
+    }
+    if (!outcome.message.isEmpty())
+        emit noticeOccurred(outcome.message);
+    if (outcome.restart) {
+        // Started as this process goes away rather than beside it: the new
+        // version brings up its own daemons, and two clients sharing one
+        // socket would fight over them.
+        const auto relaunch = QString::fromLocal8Bit(qgetenv("APPIMAGE"));
+        connect(qApp, &QCoreApplication::aboutToQuit, qApp, [relaunch] {
+            QProcess::startDetached(relaunch, {});
+        });
+    }
+    if (outcome.restart || outcome.quit) {
+        stopOwnedBackends();
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+    }
+    return true;
 }
 
 void RpcClient::refreshBugReportEnvironment()
