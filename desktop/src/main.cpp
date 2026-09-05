@@ -8,6 +8,7 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
@@ -23,6 +24,8 @@
 #include <QWindow>
 #include <QQuickWindow>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QIcon>
 #include <QLibraryInfo>
 #include <QFile>
@@ -370,6 +373,42 @@ int main(int argc, char *argv[])
     bool trayAvailable = !automatedRun && QSystemTrayIcon::isSystemTrayAvailable();
     if (!automatedRun)
         app.setQuitOnLastWindowClosed(!TrayBehavior::shouldKeepRunning(trayAvailable));
+
+    // The chat interface only exists once an account reports itself logged in,
+    // which is the daemon's answer to status.get. A test that drives the main
+    // window and has no daemon asserts against a hidden tree; on a developer
+    // machine it finds the real daemon instead and reads the real account. A
+    // stub answers just enough for the window to come up.
+    QLocalServer stubDaemon;
+    if (searchResultsTest) {
+        const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
+#ifndef Q_OS_WIN
+        QDir().mkpath(QFileInfo(stubPath).absolutePath());
+#endif
+        QLocalServer::removeServer(stubPath);
+        if (!stubDaemon.listen(stubPath)) {
+            qWarning().noquote() << QStringLiteral("stub daemon could not listen on %1: %2")
+                                        .arg(stubPath, stubDaemon.errorString());
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon] {
+            auto *socket = stubDaemon.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket] {
+                while (socket->canReadLine()) {
+                    const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                    QJsonValue result = QJsonObject{};
+                    if (request.value(QStringLiteral("method")).toString() == QStringLiteral("status.get")) {
+                        result = QJsonObject{{QStringLiteral("logged_in"), true},
+                                             {QStringLiteral("state"), QStringLiteral("connected")}};
+                    }
+                    const QJsonObject response{{QStringLiteral("version"), 1},
+                                               {QStringLiteral("id"), request.value(QStringLiteral("id"))},
+                                               {QStringLiteral("result"), result}};
+                    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+                }
+            });
+        });
+    }
 
     RpcClient backend(initialProfile, parser.value(chatOption));
     QQmlApplicationEngine engine;
@@ -2460,6 +2499,14 @@ QtObject {
         // at all until the window it lives in is up.
         mainWindow->show();
         QCoreApplication::processEvents();
+        // The stub daemon answers status.get over a socket, and the chat
+        // interface stays hidden until that answer arrives.
+        QElapsedTimer waitingForAccount;
+        waitingForAccount.start();
+        while (!backend.loggedIn() && waitingForAccount.elapsed() < 2000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (!backend.loggedIn())
+            return WHATSAPPGO_TEST_FAILURE();
 
         bool passed = true;
         const auto require = [&passed](bool condition, const QString &description) {

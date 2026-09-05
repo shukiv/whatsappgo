@@ -467,7 +467,13 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_DISABLE_PROFILE_MONITORS=0;WHATSAPPGO_BACKEND=/bin/false;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-monitored/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-monitored/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/profile-removal-monitored/config"
         TIMEOUT 30
     )
-    set_tests_properties(desktop-layout-regressions desktop-media-preview desktop-chat-filters desktop-chat-row-menu desktop-search-results PROPERTIES
+    # The search test stands up its own daemon, so it must not be able to reach
+    # a real one: without its own runtime directory it connected to whatever
+    # daemon the developer had running, and passed on their live account.
+    set_tests_properties(desktop-search-results PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_RUNTIME_DIR=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/run;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/search-results-test/config"
+    )
+    set_tests_properties(desktop-layout-regressions desktop-media-preview desktop-chat-filters desktop-chat-row-menu PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )
