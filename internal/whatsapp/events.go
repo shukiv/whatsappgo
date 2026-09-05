@@ -69,6 +69,7 @@ func (c *Client) handleEvent(raw any) {
 			}
 			c.backfillCallLogs()
 			c.backfillChatSettings()
+			go c.backfillReactions()
 			// Older messages and their attachments are collected side by
 			// side. Queueing the files behind the whole history would leave
 			// pictures missing for hours; both streams are slow enough on
@@ -182,6 +183,14 @@ const liveMediaTimeout = 5 * time.Minute
 var liveMediaSlots = make(chan struct{}, 4)
 
 const callLogBackfillMetadataKey = "call_logs_app_state_backfill_v1"
+const reactionBackfillMetadataKey = "reactions_history_backfill_v1"
+
+// reactionBackfillChats is how many conversations are asked for their recent
+// page again, and reactionBackfillPause is the gap between those requests.
+// Enough to cover the conversations anybody is reading, gentle enough that a
+// linked device does not look like it is scraping its own history.
+const reactionBackfillChats = 25
+const reactionBackfillPause = 3 * time.Second
 const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v6"
 
 func (c *Client) backfillCallLogs() {
@@ -224,6 +233,44 @@ func (c *Client) backfillChatSettings() {
 		return
 	}
 	c.emit(gateway.Event{Name: "chat.updated"})
+}
+
+// backfillReactions asks the busiest conversations for their recent page once.
+//
+// Reactions arrive with history rather than as events, and they were dropped
+// before this version, so the messages already stored carry none. Nothing that
+// arrives later mentions them: without asking again, a conversation everybody
+// reacted to would look untouched for as long as it is kept.
+func (c *Client) backfillReactions() {
+	ctx := c.baseCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.backfillReactionsWith(ctx, c.RefreshHistory, reactionBackfillChats, reactionBackfillPause)
+}
+
+func (c *Client) backfillReactionsWith(ctx context.Context,
+	refresh func(context.Context, string, int) error, chats int, pause time.Duration) {
+	if _, done, err := c.store.Metadata(ctx, reactionBackfillMetadataKey); err != nil || done {
+		return
+	}
+	conversations, err := c.store.ListChats(ctx, chats, 0, "")
+	if err != nil {
+		return
+	}
+	for _, chat := range conversations {
+		// A conversation with nothing stored has no message to anchor a page
+		// request to. The rest still get theirs.
+		if err := refresh(ctx, chat.JID, 50); err != nil {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pause):
+		}
+	}
+	_ = c.store.SetMetadata(ctx, reactionBackfillMetadataKey, time.Now().UTC().Format(time.RFC3339))
 }
 
 func shouldDeferAppStateBackfill(err error) bool {

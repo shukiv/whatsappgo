@@ -1058,3 +1058,45 @@ func TestHistorySyncKeepsTheReactionsAMessageAlreadyHad(t *testing.T) {
 		t.Fatalf("a reaction came back without the time it was left: %#v", reactions[0])
 	}
 }
+
+func TestReactionBackfillRefreshesTheBusiestChatsOnce(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	for i, jid := range []string{"quiet@s.whatsapp.net", "busy@s.whatsapp.net", "busiest@s.whatsapp.net"} {
+		if err := st.UpsertChat(ctx, model.Chat{JID: jid, LastMessageAt: int64(i+1) * 1000}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpsertMessage(ctx, model.Message{ID: "m" + jid, ChatJID: jid, SenderJID: jid,
+			Kind: "text", Body: "hello", Timestamp: int64(i+1) * 1000}, "", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &Client{store: st}
+	var refreshed []string
+	refresh := func(_ context.Context, chatJID string, _ int) error {
+		refreshed = append(refreshed, chatJID)
+		return nil
+	}
+
+	// Reactions left before this version were dropped, and nothing arriving
+	// later mentions them, so the recent page is asked for again.
+	c.backfillReactionsWith(ctx, refresh, 2, 0)
+	if len(refreshed) != 2 {
+		t.Fatalf("asked for %d pages instead of the two busiest chats: %v", len(refreshed), refreshed)
+	}
+	if refreshed[0] != "busiest@s.whatsapp.net" || refreshed[1] != "busy@s.whatsapp.net" {
+		t.Fatalf("the wrong conversations were refreshed: %v", refreshed)
+	}
+
+	// Reconnecting is routine. Asking WhatsApp for the same pages on every
+	// connection would be a repeated request for history nobody is waiting for.
+	refreshed = nil
+	c.backfillReactionsWith(ctx, refresh, 2, 0)
+	if len(refreshed) != 0 {
+		t.Fatalf("the backfill ran a second time: %v", refreshed)
+	}
+}
