@@ -2522,6 +2522,14 @@ QtObject {
                 QStringLiteral("the row chevron shows on a row that is neither hovered nor open"));
         require(pinnedMark->property("visible").toBool() && unreadBadge->property("visible").toBool(),
                 QStringLiteral("the pin and unread marks are missing from a resting row"));
+        // The pin is drawn to fill its box, so the box is the size of the mark
+        // on screen. WhatsApp Web's is 13 by 21 device pixels; this box, with
+        // the glyph spanning 21 of its 24 units, is what matches it. It read as
+        // a nail at 14.
+        auto *pinnedItem = qobject_cast<QQuickItem *>(pinnedMark);
+        require(pinnedItem != nullptr && pinnedItem->width() >= 19.0 && pinnedItem->height() >= 19.0,
+                QStringLiteral("the pinned mark is %1 by %2, smaller than WhatsApp Web draws it")
+                    .arg(pinnedItem ? pinnedItem->width() : -1).arg(pinnedItem ? pinnedItem->height() : -1));
 
         // Hover the row the way a pointer would, so the chevron appears, then
         // press it where it actually landed.

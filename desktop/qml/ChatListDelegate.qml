@@ -311,10 +311,13 @@ ItemDelegate {
                 TintedIcon {
                     objectName: "pinnedMark"
                     visible: Boolean(root.modelData.pinned) && !root.selectionActive && !root.showRowMenu
-                    Layout.preferredWidth: visible ? 14 : 0
-                    Layout.preferredHeight: 14
+                    // The glyph spans 21 of the 24 units it is drawn in, so
+                    // this box is what makes it the size WhatsApp Web draws
+                    // the mark at: 13 by 21 device pixels beside the clock.
+                    Layout.preferredWidth: visible ? 20 : 0
+                    Layout.preferredHeight: 20
                     source: Qt.resolvedUrl("icons/pin.svg")
-                    tint: Theme.textMuted
+                    tint: Theme.iconMuted
                     Accessible.name: qsTr("Pinned")
                 }
                 Rectangle {

@@ -196,19 +196,18 @@ Item {
                 ctx.lineTo(16.5, 15.5)
                 ctx.stroke()
             } else if (root.kind === "pin") {
-                ctx.beginPath()
-                ctx.moveTo(9, 3)
-                ctx.lineTo(15, 3)
-                ctx.lineTo(14, 9)
-                ctx.lineTo(17, 12)
-                ctx.lineTo(7, 12)
-                ctx.lineTo(10, 9)
-                ctx.closePath()
-                ctx.fill()
-                ctx.beginPath()
-                ctx.moveTo(12, 12)
-                ctx.lineTo(12, 20)
-                ctx.stroke()
+                // Measured off WhatsApp Web at 1:1: a drawing pin seen from
+                // the side, 13 wide and 21 tall in hairlines - a flat cap, two
+                // straight sides that flare into the base plate, and a needle.
+                // The old glyph was a filled wedge half this size, which read
+                // as a nail rather than as a pin.
+                ctx.fillRect(6.5, 1.5, 11, 2)
+                ctx.fillRect(7.5, 3.5, 1.2, 8)
+                ctx.fillRect(15.3, 3.5, 1.2, 8)
+                ctx.fillRect(6.3, 11.5, 1.2, 2)
+                ctx.fillRect(16.5, 11.5, 1.2, 2)
+                ctx.fillRect(5.5, 13.5, 13, 2)
+                ctx.fillRect(11.4, 15.5, 1.2, 7)
             } else if (root.kind === "logout") {
                 ctx.beginPath()
                 ctx.moveTo(10, 5)

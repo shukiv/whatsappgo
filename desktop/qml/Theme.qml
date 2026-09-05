@@ -52,6 +52,9 @@ QtObject {
     readonly property color input: dark ? "#2A3942" : "#FFFFFF"
     readonly property color text: dark ? "#E9EDEF" : "#0A0A0A"
     readonly property color textMuted: dark ? "#8696A0" : "#54545A"
+    // The small marks along a chat row - pinned, muted, and the rest. WhatsApp
+    // Web draws these a shade lighter than its secondary text.
+    readonly property color iconMuted: dark ? "#8696A0" : "#666666"
     readonly property color border: dark ? "#2A3942" : "#DDDAD6"
     readonly property color icon: dark ? "#AEBAC1" : "#54545A"
     readonly property color avatar: dark ? "#374248" : "#E7E5E2"
