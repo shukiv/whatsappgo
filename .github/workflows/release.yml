@@ -89,14 +89,10 @@ jobs:
 
   macos:
     needs: draft
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # macos-latest is Apple silicon; macos-13 is the last Intel image.
-          - runner: macos-latest
-          - runner: macos-13
-    runs-on: ${{ matrix.runner }}
+    # Apple silicon only. The Intel image, macos-13, no longer gets a runner:
+    # v0.1.0 sat queued for it until the run was cancelled, which held up the
+    # checksum file every platform needs before anybody can update.
+    runs-on: macos-latest
     timeout-minutes: 60
     env:
       WHATSAPPGO_VERSION: ${{ needs.draft.outputs.tag }}
