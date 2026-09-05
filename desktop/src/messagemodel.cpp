@@ -1,5 +1,6 @@
 #include "messagemodel.h"
 
+#include <QDateTime>
 #include <QImageReader>
 
 namespace {
@@ -178,6 +179,36 @@ void MessageListModel::rebuildIndex()
         m_rowById.insert(messageId(m_messages.at(row).toMap()), row);
 }
 
+namespace {
+// dayOf is the local calendar day a message belongs to. The separator names a
+// day in the reader's own timezone, which is where "today" is decided.
+QDate dayOf(const QVariantMap &message)
+{
+    const auto timestamp = message.value(QStringLiteral("timestamp")).toLongLong();
+    if (timestamp <= 0)
+        return {};
+    return QDateTime::fromMSecsSinceEpoch(timestamp).date();
+}
+}
+
+void MessageListModel::refreshDayStarts()
+{
+    QDate previous;
+    for (int row = 0; row < count(); ++row) {
+        auto message = m_messages.at(row).toMap();
+        const auto day = dayOf(message);
+        const bool starts = day.isValid() && day != previous;
+        if (day.isValid())
+            previous = day;
+        if (message.value(QStringLiteral("starts_day")).toBool() == starts)
+            continue;
+        message.insert(QStringLiteral("starts_day"), starts);
+        m_messages[row] = message;
+        const auto changed = index(count() - 1 - row, 0);
+        emit dataChanged(changed, changed, {MessageRole});
+    }
+}
+
 void MessageListModel::reset(const QVariantList &messages)
 {
     beginResetModel();
@@ -186,6 +217,7 @@ void MessageListModel::reset(const QVariantList &messages)
     for (const auto &message : messages)
         m_messages.append(withPreviewDimensions(message.toMap()));
     rebuildIndex();
+    refreshDayStarts();
     endResetModel();
     emit countChanged();
 }
@@ -205,6 +237,9 @@ void MessageListModel::prepend(const QVariantList &older)
     m_messages = combined;
     rebuildIndex();
     endInsertRows();
+    // The message that used to open the conversation may now be in the middle
+    // of a day, so this runs after the insert rather than inside it.
+    refreshDayStarts();
     emit countChanged();
 }
 
@@ -231,6 +266,7 @@ void MessageListModel::upsert(const QVariantMap &message)
     m_messages.append(prepared);
     m_rowById.insert(id, row);
     endInsertRows();
+    refreshDayStarts();
     emit countChanged();
     emit appended();
 }
@@ -313,6 +349,21 @@ QVariantMap MessageListModel::at(int row) const
 QVariantMap MessageListModel::oldest() const
 {
     return m_messages.isEmpty() ? QVariantMap{} : m_messages.constFirst().toMap();
+}
+
+QVariantMap MessageListModel::lastOwnEditableMessage() const
+{
+    for (auto row = m_messages.crbegin(); row != m_messages.crend(); ++row) {
+        const auto message = row->toMap();
+        if (!message.value(QStringLiteral("from_me")).toBool())
+            continue;
+        if (message.value(QStringLiteral("revoked")).toBool())
+            continue;
+        if (message.value(QStringLiteral("kind")).toString() != QStringLiteral("text"))
+            continue;
+        return message;
+    }
+    return {};
 }
 
 int MessageListModel::viewRowForId(const QString &id) const

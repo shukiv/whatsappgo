@@ -82,6 +82,11 @@ public:
     int count() const { return static_cast<int>(m_messages.size()); }
     QVariantMap at(int row) const;
     QVariantMap oldest() const;
+    // lastOwnEditableMessage is the message the composer's Up arrow edits: the
+    // newest one this account sent that an edit can still reach. Anything
+    // received, deleted, or not text is stepped over, the way the reader's own
+    // Edit item is only offered on those messages.
+    Q_INVOKABLE QVariantMap lastOwnEditableMessage() const;
     QVariantList items() const { return m_messages; }
     int viewRowForId(const QString &messageId) const;
 
@@ -93,6 +98,11 @@ signals:
 
 private:
     void rebuildIndex();
+    // Marks the message that opens each calendar day, so the conversation can
+    // put a date between one day and the next the way WhatsApp Web does. A
+    // page of older history changes which message opens its day, so this runs
+    // again after every change.
+    void refreshDayStarts();
 
     QVariantList m_messages;
     QHash<QString, int> m_rowById;

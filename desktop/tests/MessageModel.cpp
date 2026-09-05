@@ -197,5 +197,40 @@ int main(int argc, char **argv)
     require(nextAudioAfter(conversation, QString()).isEmpty(),
             QStringLiteral("an empty id has no successor"));
 
+    // Up on an empty composer edits the last thing this account said, so the
+    // model has to walk back past everything an edit cannot reach.
+    const auto sent = [](const QString &id, const QString &body) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), QStringLiteral("text")},
+                           {QStringLiteral("from_me"), true}, {QStringLiteral("body"), body}};
+    };
+    MessageListModel editable;
+    require(editable.lastOwnEditableMessage().isEmpty(),
+            QStringLiteral("an empty conversation offered something to edit"));
+    editable.reset(QVariantList{
+        sent(QStringLiteral("mine-old"), QStringLiteral("first")),
+        sent(QStringLiteral("mine-new"), QStringLiteral("second")),
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("theirs")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                    {QStringLiteral("from_me"), false}, {QStringLiteral("body"), QStringLiteral("reply")}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("mine-photo")}, {QStringLiteral("kind"), QStringLiteral("image")},
+                    {QStringLiteral("from_me"), true}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("mine-gone")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                    {QStringLiteral("from_me"), true}, {QStringLiteral("revoked"), true},
+                    {QStringLiteral("body"), QStringLiteral("deleted")}},
+    });
+    const auto candidate = editable.lastOwnEditableMessage();
+    require(candidate.value(QStringLiteral("id")).toString() == QStringLiteral("mine-new"),
+            QStringLiteral("Up offered %1 rather than the newest message an edit can reach")
+                .arg(candidate.value(QStringLiteral("id")).toString()));
+    require(candidate.value(QStringLiteral("body")).toString() == QStringLiteral("second"),
+            QStringLiteral("the message came back without the text to edit"));
+
+    MessageListModel received;
+    received.reset(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("theirs")}, {QStringLiteral("kind"), QStringLiteral("text")},
+                    {QStringLiteral("from_me"), false}},
+    });
+    require(received.lastOwnEditableMessage().isEmpty(),
+            QStringLiteral("a conversation this account has not spoken in offered somebody else's message"));
+
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

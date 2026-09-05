@@ -94,6 +94,19 @@ ApplicationWindow {
         return qsTr("Update WhatsAppGo")
     }
 
+    // editLastOwnMessage opens the edit dialog on the newest message this
+    // account sent, and reports whether there was one to edit.
+    function editLastOwnMessage() {
+        const message = backend.messages.lastOwnEditableMessage()
+        const id = String(message.id || "")
+        if (id === "")
+            return false
+        editDialog.messageId = id
+        editField.text = String(message.body || "")
+        editDialog.open()
+        return true
+    }
+
     function applyUpdateAction() {
         if (window.updateDownloading)
             return
@@ -2268,6 +2281,17 @@ ApplicationWindow {
                                         if (event.matches(StandardKey.Paste) && backend.clipboardHasImage) {
                                             window.prepareClipboardPaste()
                                             event.accepted = true
+                                            return
+                                        }
+                                        // What WhatsApp Web does with Up on an
+                                        // empty composer: the last thing this
+                                        // account said opens for editing. A
+                                        // composer with something in it keeps
+                                        // the arrow for moving the cursor.
+                                        if (event.key === Qt.Key_Up && event.modifiers === Qt.NoModifier
+                                                && composer.text === "") {
+                                            if (window.editLastOwnMessage())
+                                                event.accepted = true
                                             return
                                         }
                                         // With "Enter is send" off, the roles swap:
