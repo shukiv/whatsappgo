@@ -537,19 +537,19 @@ int main(int argc, char *argv[])
     }
     if (presenceDisplayTest) {
         if (engine.rootObjects().isEmpty())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         auto *root = engine.rootObjects().constFirst();
         QVariant unknownResult;
         const QVariantMap offline{{QStringLiteral("state"), QStringLiteral("offline")},
                                   {QStringLiteral("last_seen"), 0}};
         if (!QMetaObject::invokeMethod(root, "presenceText", Q_RETURN_ARG(QVariant, unknownResult),
                                        Q_ARG(QVariant, offline), Q_ARG(QVariant, QVariant::fromValue<qint64>(0))))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QVariant cachedResult;
         const auto oneHourAgo = QDateTime::currentMSecsSinceEpoch() - 60 * 60 * 1000;
         if (!QMetaObject::invokeMethod(root, "presenceText", Q_RETURN_ARG(QVariant, cachedResult),
                                        Q_ARG(QVariant, offline), Q_ARG(QVariant, QVariant::fromValue(oneHourAgo))))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         return unknownResult.toString().isEmpty() && cachedResult.toString().contains(QStringLiteral("Last seen"))
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
@@ -589,7 +589,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("sharedContent"), sharedContent},
         }));
         if (!drawer)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *back = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactInfoBackButton")));
         auto *avatarButton = qobject_cast<QQuickItem *>(drawer->findChild<QObject *>(QStringLiteral("contactAvatarButton")));
@@ -723,7 +723,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("statusItemCount"), 2},
         }));
         if (!page || !viewer || !chatStatus)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *list = page->findChild<QObject *>(QStringLiteral("statusGroupList"));
         auto *statusAvatar = qobject_cast<QQuickItem *>(chatStatus->findChild<QObject *>(QStringLiteral("chatStatusAvatar")));
@@ -766,10 +766,10 @@ int main(int argc, char *argv[])
     }
     if (resizeRenderingTest) {
         if (engine.rootObjects().isEmpty())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
         if (window == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto initialGeneration = window->property("_resizeRepaintGeneration").toInt();
         window->resize(window->width() - 37, window->height() - 23);
         QTimer::singleShot(150, &app, [window, initialGeneration] {
@@ -780,7 +780,7 @@ int main(int argc, char *argv[])
     }
     if (searchNavigationTest) {
         if (engine.rootObjects().isEmpty())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         auto *root = engine.rootObjects().constFirst();
         root->setProperty("activeSection", QStringLiteral("communities"));
         const bool invoked = QMetaObject::invokeMethod(root, "openChatSearch");
@@ -1149,7 +1149,7 @@ QtObject {
             {QStringLiteral("unreadCounts"), QVariantMap{{QStringLiteral("default"), 12}, {QStringLiteral("work"), 0}}},
         }));
         if (!accountChip)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QQuickWindow accountWindow;
         accountWindow.resize(640, 480);
         if (auto *accountItem = qobject_cast<QQuickItem *>(accountChip.get()))
@@ -1202,7 +1202,7 @@ QtObject {
             {QStringLiteral("current"), false},
         }));
         if (!chatDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *timestamp = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatTimestamp")));
         auto *badge = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("unreadBadge")));
@@ -1210,7 +1210,7 @@ QtObject {
         auto *rowBackground = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatRowBackground")));
         auto *chatItem = qobject_cast<QQuickItem *>(chatDelegate.get());
         if (!timestamp || !badge || !preview || !chatItem || !rowBackground)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto timestampRight = timestamp->mapToItem(chatItem, QPointF(timestamp->width(), 0)).x();
         const auto badgeRight = badge->mapToItem(chatItem, QPointF(badge->width(), 0)).x();
 
@@ -1230,7 +1230,7 @@ QtObject {
             {QStringLiteral("modelData"), message},
         }));
         if (!messageDelegate)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *bubble = qobject_cast<QQuickItem *>(messageDelegate->findChild<QObject *>(QStringLiteral("messageBubble")));
         auto *tail = qobject_cast<QQuickItem *>(messageDelegate->findChild<QObject *>(QStringLiteral("messageTail")));
@@ -1827,7 +1827,7 @@ QtObject {
             : nullptr;
         auto *messages = qobject_cast<MessageListModel *>(backend.messages());
         if (messageList == nullptr || messages == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         bool passed = true;
         const auto require = [&passed](bool condition, const QString &description) {
@@ -2235,7 +2235,7 @@ QtObject {
             {QStringLiteral("unreadCount"), 3},
         }));
         if (!bar)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *all = bar->findChild<QObject *>(QStringLiteral("filterAllButton"));
         auto *unread = bar->findChild<QObject *>(QStringLiteral("filterUnreadButton"));
@@ -2243,7 +2243,7 @@ QtObject {
         auto *groups = bar->findChild<QObject *>(QStringLiteral("filterGroupsButton"));
         auto *overflow = bar->findChild<QObject *>(QStringLiteral("filterAddButton"));
         if (!all || !unread || !favorites || !groups || !overflow)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const bool clicked = QMetaObject::invokeMethod(unread, "click");
         QCoreApplication::processEvents();
         const bool unreadSelected = bar->property("selectedFilter").toString() == QStringLiteral("unread");
@@ -2283,33 +2283,33 @@ QtObject {
         backend.addProfile(probe);
         QCoreApplication::processEvents();
         if (!backend.profiles().contains(probe))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         auto dataBase = qEnvironmentVariable("XDG_DATA_HOME");
         if (dataBase.isEmpty())
             dataBase = QDir::home().filePath(QStringLiteral(".local/share"));
         const QDir probeData(QDir(dataBase).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(probe)));
         if (!probeData.mkpath(QStringLiteral(".")))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         QFile marker(probeData.filePath(QStringLiteral("messages.db")));
         if (!marker.open(QIODevice::WriteOnly))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         marker.write("probe");
         marker.close();
 
         // The first account holds the shared data directory, so it is never
         // removable however it is asked for.
         if (backend.profileRemovable(QStringLiteral("default")))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         backend.removeProfile(QStringLiteral("default"));
         QCoreApplication::processEvents();
         if (!backend.profiles().contains(QStringLiteral("default")))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         backend.removeProfile(probe);
         QCoreApplication::processEvents();
         if (backend.profiles().contains(probe) || probeData.exists())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         // Removing the account that is open is the path the menu actually
         // takes: it has to leave the account before deleting what it is
@@ -2320,16 +2320,16 @@ QtObject {
         backend.switchProfile(current);
         QCoreApplication::processEvents();
         if (backend.profile() != current)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const QDir currentData(QDir(dataBase).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(current)));
         if (!currentData.mkpath(QStringLiteral(".")))
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         backend.removeProfile(current);
         QCoreApplication::processEvents();
         if (backend.profiles().contains(current) || currentData.exists())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         if (backend.profile() == current)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         // The account's monitor and daemon are torn down asynchronously, and a
         // monitor that outlives the account asks for its daemon back. Give the
@@ -2340,11 +2340,11 @@ QtObject {
         settle.exec();
         if (currentData.exists()) {
             qInfo().noquote() << QStringLiteral("FAIL: the removed account's data directory came back");
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         if (backend.profiles().contains(current)) {
             qInfo().noquote() << QStringLiteral("FAIL: the removed account reappeared in the account list");
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         return EXIT_SUCCESS;
     }
@@ -2355,7 +2355,7 @@ QtObject {
         auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
         auto *mainWindow = qobject_cast<QQuickWindow *>(mainRoot);
         if (mainWindow == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         const QVariantMap personalChat{
             {QStringLiteral("jid"), QStringLiteral("15551234567@s.whatsapp.net")},
@@ -2372,11 +2372,11 @@ QtObject {
         }));
         if (!row) {
             qInfo().noquote() << component.errorString();
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         }
         auto *rowItem = qobject_cast<QQuickItem *>(row.get());
         if (rowItem == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         rowItem->setParentItem(mainWindow->contentItem());
         // Away from the origin, where the offscreen platform leaves the pointer
         // and would otherwise report the row as permanently hovered.
@@ -2390,7 +2390,7 @@ QtObject {
         auto *unreadBadge = row->findChild<QObject *>(QStringLiteral("unreadBadge"));
         if (menuButton == nullptr || rowMenu == nullptr || blockItem == nullptr
                 || pinnedMark == nullptr || unreadBadge == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
 
         bool passed = true;
         const auto require = [&passed](bool condition, const QString &description) {
@@ -2409,7 +2409,7 @@ QtObject {
         // press it where it actually landed.
         auto *buttonItem = qobject_cast<QQuickItem *>(menuButton);
         if (buttonItem == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto sendMouse = [mainWindow](QEvent::Type type, const QPointF &scenePosition,
                                             Qt::MouseButton button, Qt::MouseButtons buttons) {
             QMouseEvent event(type, scenePosition, mainWindow->mapToGlobal(scenePosition.toPoint()),
@@ -2660,29 +2660,29 @@ QtObject {
     }
     if (fileDropTest) {
         if (engine.rootObjects().isEmpty())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         auto *root = engine.rootObjects().constFirst();
         auto *dropArea = root->findChild<QObject *>(QStringLiteral("fileDropArea"));
         auto *dialog = root->findChild<QObject *>(QStringLiteral("dropSendDialog"));
         if (dropArea == nullptr || dialog == nullptr)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // Dropping onto no conversation has nowhere to send, so the area stays
         // inert until a chat is open.
         if (dropArea->property("enabled").toBool())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         dialog->setProperty("files", QVariantList{QStringLiteral("file:///tmp/one.png")});
         QMetaObject::invokeMethod(dialog, "open");
         QCoreApplication::processEvents();
         auto *caption = root->findChild<QObject *>(QStringLiteral("dropCaptionField"));
         if (caption == nullptr || !caption->property("visible").toBool())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // A caption belongs to one file. With several, WhatsApp asks per item
         // and this dialog does not, so it must not offer a single shared one.
         dialog->setProperty("files", QVariantList{QStringLiteral("file:///tmp/one.png"),
                                                   QStringLiteral("file:///tmp/two.png")});
         QCoreApplication::processEvents();
         if (caption->property("visible").toBool())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // With --screenshot the same run captures the dialog, so its appearance
         // can be reviewed without driving the live window.
         if (!screenshotPath.isEmpty()) {
@@ -2690,7 +2690,7 @@ QtObject {
             QMetaObject::invokeMethod(dialog, "open");
             auto *window = qobject_cast<QQuickWindow *>(root);
             if (window == nullptr)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
             int result = EXIT_FAILURE;
             QTimer::singleShot(1200, &app, [window, screenshotPath, &result] {
                 result = window->grabWindow().save(screenshotPath) ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -2703,7 +2703,7 @@ QtObject {
     }
     if (smokeTest && screenshotPath.isEmpty()) {
         if (engine.rootObjects().isEmpty())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // A selected rail destination must have a visible circular state in
         // both themes. The previous light colors differed by a single RGB
         // step, so the control technically had a background but looked bare.
@@ -2759,12 +2759,12 @@ QtObject {
         // that was never open.
         auto *pairingBack = root->findChild<QObject *>(QStringLiteral("pairingBackButton"));
         if (pairingBack != nullptr && pairingBack->property("visible").toBool())
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         // The row menu's entries live in a delegate, so they only exist once
         // the list has chats; the smoke run has none and cannot assert them.
         for (const auto &name : appMenuItems) {
             if (root->findChild<QObject *>(name) == nullptr)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
         }
         const QStringList conversationMenuItems{
             QStringLiteral("conversationContactInfoItem"),
@@ -2774,7 +2774,7 @@ QtObject {
         };
         for (const auto &name : conversationMenuItems) {
             if (root->findChild<QObject *>(name) == nullptr)
-                return EXIT_FAILURE;
+                return WHATSAPPGO_TEST_FAILURE();
         }
         // The PWA rail runs on a 44 px pitch: a 10 px inset, 40 px actions and
         // 4 px gaps. Pinning the three values keeps the rhythm from drifting
@@ -2783,11 +2783,11 @@ QtObject {
         if (!navigationRail || !selectedNavigation || !chatBackgroundPattern
             || !starredMenuItem || !starredDialog
             || !conversationMenuButton || !conversationMenu || !navigationRailColumn)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         if (navigationRailColumn->property("anchors").value<QObject *>()->property("topMargin").toReal() != 10
             || navigationRailColumn->property("anchors").value<QObject *>()->property("bottomMargin").toReal() != 10
             || navigationRailColumn->property("spacing").toReal() != 4)
-            return EXIT_FAILURE;
+            return WHATSAPPGO_TEST_FAILURE();
         const auto railColor = navigationRail->property("color").value<QColor>();
         const auto selectedColor = selectedNavigation->property("color").value<QColor>();
         const auto patternOpacity = chatBackgroundPattern->property("opacity").toReal();
