@@ -70,6 +70,16 @@ ApplicationWindow {
     readonly property bool updateDownloading: backend.updateStatus.downloading === true
     readonly property bool updateDownloaded: String(backend.updateStatus.downloaded || "") !== ""
     readonly property bool updateOffered: backend.updateStatus.available === true
+    // What this copy calls itself, in the same words the Help page uses: a
+    // build from a working copy carries a commit id, not a version.
+    readonly property string updateVersionText: {
+        const current = String(backend.updateStatus.current || "")
+        if (/^v?\d+\.\d+(\.\d+)?([-+].*)?$/.test(current))
+            return qsTr("WhatsAppGo %1").arg(current)
+        return current === "" || current === "dev"
+            ? qsTr("WhatsAppGo, built from source")
+            : qsTr("WhatsAppGo, built from source (%1)").arg(current)
+    }
     readonly property string updateActionText: {
         if (backend.checkingForUpdates)
             return qsTr("Checking for updates…")
@@ -801,7 +811,7 @@ ApplicationWindow {
                     iconTint: window.updateOffered || window.updateDownloaded ? Theme.brand : Theme.icon
                     iconSpinning: backend.checkingForUpdates || window.updateDownloading
                     enabled: !window.updateDownloading && !backend.checkingForUpdates
-                    Accessible.name: window.updateActionText
+                    Accessible.name: window.updateVersionText + ". " + window.updateActionText
                     onClicked: window.applyUpdateAction()
                     background: Rectangle {
                         radius: 12
@@ -825,7 +835,9 @@ ApplicationWindow {
                         border.width: 2
                     }
                     ToolTip.visible: hovered
-                    ToolTip.text: Accessible.name
+                    // The version this copy is on belongs where somebody looks
+                    // before deciding whether to update it.
+                    ToolTip.text: window.updateVersionText + "\n" + window.updateActionText
                 }
 
                 ThemedToolButton {
