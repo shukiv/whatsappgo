@@ -24,6 +24,8 @@
 #include <QQuickWindow>
 #include <QImage>
 #include <QIcon>
+#include <QLibraryInfo>
+#include <QFile>
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
@@ -80,6 +82,33 @@ void installResizeRepaintGuard(QQuickWindow *window)
         window->setProperty("_resizeRepaintGeneration",
                             window->property("_resizeRepaintGeneration").toInt() + 1);
     });
+}
+
+
+// A Qt Quick Controls style is a QML module. Naming one that is not installed
+// does not fall back to anything: the style's own imports fail and the
+// application's root component never loads. setFallbackStyle only covers
+// controls a present style does not implement, so it does not help here.
+QStringList qmlImportRoots()
+{
+    QStringList roots{QLibraryInfo::path(QLibraryInfo::QmlImportsPath)};
+    for (const char *name : {"QML_IMPORT_PATH", "QML2_IMPORT_PATH"}) {
+        const QString value = QString::fromLocal8Bit(qgetenv(name));
+        if (!value.isEmpty())
+            roots += value.split(QDir::listSeparator(), Qt::SkipEmptyParts);
+    }
+    return roots;
+}
+
+bool styleModuleInstalled(const QString &module, const QStringList &roots)
+{
+    QString relative = module;
+    relative.replace(QLatin1Char('.'), QLatin1Char('/'));
+    for (const QString &root : roots) {
+        if (QFileInfo::exists(root + QLatin1Char('/') + relative + QLatin1String("/qmldir")))
+            return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -177,7 +206,14 @@ int main(int argc, char *argv[])
         // qqc2-desktop-style still gets a styled application rather than the
         // unstyled Basic controls.
         QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
-        QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+        // qqc2-desktop-style is packaged separately on every distribution and
+        // is absent from most containers, so ask whether its module is on the
+        // import path instead of assuming it. Choosing it when it is missing
+        // does not degrade to Fusion, it stops Main.qml from loading at all.
+        if (styleModuleInstalled(QStringLiteral("org.kde.desktop"), qmlImportRoots()))
+            QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
+        else
+            QQuickStyle::setStyle(QStringLiteral("Fusion"));
 #else
         // Windows and macOS get Fusion rather than their native style. Almost
         // every control here is drawn by the application's own QML against
@@ -228,6 +264,8 @@ int main(int argc, char *argv[])
     parser.addOption(searchResultsTestOption);
     QCommandLineOption bugReportTestOption(QStringLiteral("bug-report-test"), QStringLiteral("Verify the report-a-problem button, dialog and disclosure"));
     parser.addOption(bugReportTestOption);
+    QCommandLineOption styleDetectionTestOption(QStringLiteral("style-detection-test"), QStringLiteral("Verify the Qt Quick Controls style is only chosen when its module is installed"));
+    parser.addOption(styleDetectionTestOption);
     QCommandLineOption backendLifecycleTestOption(QStringLiteral("backend-lifecycle-test"), QStringLiteral("Verify that the desktop owns its bundled backend process"));
     parser.addOption(backendLifecycleTestOption);
     QCommandLineOption resizeRenderingTestOption(QStringLiteral("resize-rendering-test"), QStringLiteral("Verify that resizing schedules a complete scene repaint"));
@@ -259,6 +297,7 @@ int main(int argc, char *argv[])
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
+    const bool styleDetectionTest = parser.isSet(styleDetectionTestOption);
     const bool clipboardImageTest = parser.isSet(clipboardImageTestOption);
     const bool layoutRegressionTest = parser.isSet(layoutRegressionTestOption);
     const bool mediaPreviewTest = parser.isSet(mediaPreviewTestOption);
@@ -285,7 +324,7 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest
+        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || styleDetectionTest
         || !screenshotPath.isEmpty();
 
     // Automated runs keep the per-account monitors off, because each one opens
@@ -710,6 +749,31 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (styleDetectionTest) {
+        // The Fedora CI container has no qqc2-desktop-style, which is how the
+        // unconditional setStyle call was found: every window-opening test
+        // failed with 'module "org.kde.desktop" is not installed'.
+        QTemporaryDir importRoot;
+        if (!importRoot.isValid())
+            return WHATSAPPGO_TEST_FAILURE();
+        const QStringList roots{importRoot.path()};
+        if (styleModuleInstalled(QStringLiteral("org.kde.desktop"), roots))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!QDir(importRoot.path()).mkpath(QStringLiteral("org/kde/desktop")))
+            return WHATSAPPGO_TEST_FAILURE();
+        QFile qmldir(QDir(importRoot.path()).filePath(QStringLiteral("org/kde/desktop/qmldir")));
+        if (!qmldir.open(QIODevice::WriteOnly))
+            return WHATSAPPGO_TEST_FAILURE();
+        qmldir.write("module org.kde.desktop\n");
+        qmldir.close();
+        if (!styleModuleInstalled(QStringLiteral("org.kde.desktop"), roots))
+            return WHATSAPPGO_TEST_FAILURE();
+        // A module directory without a qmldir is not an importable module.
+        if (styleModuleInstalled(QStringLiteral("org.kde.plasma"), roots))
+            return WHATSAPPGO_TEST_FAILURE();
+        return EXIT_SUCCESS;
+    }
+
     if (bundledFontTest) {
         // The interface is measured against WhatsApp Web in Roboto. If the
         // bundled faces stop being packaged the application keeps running and
