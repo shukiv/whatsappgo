@@ -185,9 +185,18 @@ else()
     set(WHATSAPPGO_DAEMON_SUFFIX "")
 endif()
 
+# A Windows GUI subsystem binary has no console, so anything it writes to
+# stdout or stderr is discarded - including the reason a --*-test run failed,
+# which makes a red CI job unreadable. The release scripts configure with
+# BUILD_TESTING=OFF and get the GUI subsystem; a testing tree keeps its console.
+if(BUILD_TESTING)
+    set(WHATSAPPGO_WIN32_EXECUTABLE OFF)
+else()
+    set(WHATSAPPGO_WIN32_EXECUTABLE ON)
+endif()
+
 set_target_properties(whatsappgo PROPERTIES
-    # No console window behind the application on Windows.
-    WIN32_EXECUTABLE ON
+    WIN32_EXECUTABLE ${WHATSAPPGO_WIN32_EXECUTABLE}
     # A .app bundle on macOS: the platform will not show a notification, a dock
     # icon or a menu bar for a bare executable.
     MACOSX_BUNDLE ON

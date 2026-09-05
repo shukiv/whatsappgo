@@ -84,9 +84,11 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: true
+      # Qt before 6.8.4 links the AGL framework, which Apple removed from the
+      # macOS SDK: every link fails with "ld: framework 'AGL' not found".
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.2'
+          version: '6.8.4'
           modules: 'qtmultimedia'
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl

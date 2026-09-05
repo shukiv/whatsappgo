@@ -24,7 +24,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
 
     QLocalServer server;
-    if (!server.listen(QDir(socketDir).filePath(QStringLiteral("whatsappd-chatlist.sock"))))
+    if (!server.listen(RpcClient::socketPathForProfile(QStringLiteral("chatlist"))))
         return EXIT_FAILURE;
 
     int chatListRequests = 0;

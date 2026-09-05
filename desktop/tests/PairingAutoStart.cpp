@@ -23,7 +23,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
 
     QLocalServer server;
-    const auto socketPath = QDir(socketDir).filePath(QStringLiteral("whatsappd-autopair.sock"));
+    const auto socketPath = RpcClient::socketPathForProfile(QStringLiteral("autopair"));
     if (!server.listen(socketPath))
         return EXIT_FAILURE;
 

@@ -29,7 +29,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
 
     QLocalServer server;
-    if (!server.listen(QDir(socketDir).filePath(QStringLiteral("whatsappd-linkupgrade.sock"))))
+    if (!server.listen(RpcClient::socketPathForProfile(QStringLiteral("linkupgrade"))))
         return EXIT_FAILURE;
 
     bool refreshRequested = false;

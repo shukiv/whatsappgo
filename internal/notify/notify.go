@@ -4,6 +4,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net"
 	"os"
@@ -59,6 +60,13 @@ type Desktop struct {
 	closeOnce         sync.Once
 	serverPlaysSound  bool
 	playSound         func()
+
+	// liveNotifications are the ids this daemon has posted and not yet seen
+	// closed, oldest first. chatNotifications maps a chat to its live id so a
+	// second message from the same chat replaces the first instead of adding
+	// another. Both are guarded by mu.
+	liveNotifications []uint32
+	chatNotifications map[string]uint32
 }
 
 func NewDesktop(profile string) (*Desktop, error) {
@@ -66,7 +74,7 @@ func NewDesktop(profile string) (*Desktop, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), profile: profile, playSound: playNotificationSound}
+	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), chatNotifications: make(map[string]uint32), profile: profile, playSound: playNotificationSound}
 	lookupOwner := func() (string, error) {
 		var current string
 		err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&current)
@@ -183,6 +191,19 @@ func launchNotificationDaemon(path string) error {
 // are evicted in the order they were created.
 const maxTrackedNotifications = 256
 
+// maxLiveNotifications bounds how many notifications this daemon leaves open
+// on the server at once.
+//
+// Notification servers cap their queue and then refuse everything: GNOME's
+// notification-daemon answers MaxNotificationsExceeded, and from that moment
+// the user silently stops receiving messages. A notification carrying actions
+// does not always expire on its own, so without a bound of our own the queue
+// fills over a day of use and never drains. Closing the oldest keeps room.
+const maxLiveNotifications = 8
+
+// maxNotificationsExceeded is the error a full server queue returns.
+const maxNotificationsExceeded = "org.freedesktop.Notifications.MaxNotificationsExceeded"
+
 func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	if d.usePortal {
 		return d.notifyPortal(ctx, message)
@@ -192,24 +213,123 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 		actions = []string{"default", "Open"}
 	}
 	appIcon, hints := freedesktopMessage(message)
-	// The D-Bus round trip is not guarded, so delivering a notification never
-	// blocks the signal watcher that resolves earlier notification clicks.
-	call := d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).CallWithContext(ctx, notificationInterface+".Notify", 0,
-		"WhatsAppGo", uint32(0), appIcon, message.Title, message.Body, actions, hints, int32(8000))
-	if call.Err != nil {
-		return call.Err
+	// A chat's previous notification is replaced rather than stacked on, which
+	// is what WhatsApp itself does and what keeps one busy group from filling
+	// the server's queue on its own.
+	d.mu.Lock()
+	replaces := d.chatNotifications[message.ChatJID]
+	d.mu.Unlock()
+
+	id, err := d.postNotification(ctx, replaces, appIcon, message, actions, hints)
+	if isMaxNotificationsExceeded(err) {
+		// The server is full, and it stays full until something closes: an
+		// unattended session would never see another notification. Clear what
+		// this daemon put there and post again as a new notification, since
+		// the id being replaced may be one that was just closed.
+		d.closeLiveNotifications(ctx)
+		id, err = d.postNotification(ctx, 0, appIcon, message, actions, hints)
 	}
-	var id uint32
-	if err := call.Store(&id); err != nil {
+	if err != nil {
 		return err
 	}
+
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.trackActionLocked(id, message.ChatJID)
+	d.trackLiveLocked(id, message.ChatJID)
+	stale := d.overflowingLiveLocked()
+	d.mu.Unlock()
+	for _, old := range stale {
+		d.closeNotification(ctx, old)
+	}
 	if !d.serverPlaysSound && d.playSound != nil {
 		go d.playSound()
 	}
 	return nil
+}
+
+func (d *Desktop) postNotification(ctx context.Context, replaces uint32, appIcon string, message Message, actions []string, hints map[string]dbus.Variant) (uint32, error) {
+	// The D-Bus round trip is not guarded, so delivering a notification never
+	// blocks the signal watcher that resolves earlier notification clicks.
+	call := d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).CallWithContext(ctx, notificationInterface+".Notify", 0,
+		"WhatsAppGo", replaces, appIcon, message.Title, message.Body, actions, hints, int32(8000))
+	if call.Err != nil {
+		return 0, call.Err
+	}
+	var id uint32
+	if err := call.Store(&id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func isMaxNotificationsExceeded(err error) bool {
+	var dbusErr dbus.Error
+	if errors.As(err, &dbusErr) {
+		return dbusErr.Name == maxNotificationsExceeded
+	}
+	return false
+}
+
+func (d *Desktop) closeNotification(ctx context.Context, id uint32) {
+	if id == 0 {
+		return
+	}
+	_ = d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).
+		CallWithContext(ctx, notificationInterface+".CloseNotification", 0, id).Err
+	d.mu.Lock()
+	d.forgetLiveLocked(id)
+	d.mu.Unlock()
+}
+
+// closeLiveNotifications clears everything this daemon still has open. It is
+// the recovery path for a server that has stopped accepting new notifications.
+func (d *Desktop) closeLiveNotifications(ctx context.Context) {
+	d.mu.Lock()
+	open := append([]uint32(nil), d.liveNotifications...)
+	d.mu.Unlock()
+	for _, id := range open {
+		d.closeNotification(ctx, id)
+	}
+}
+
+func (d *Desktop) trackLiveLocked(id uint32, chatJID string) {
+	previous, existed := d.chatNotifications[chatJID]
+	if existed && previous != id {
+		d.forgetLiveLocked(previous)
+	}
+	d.chatNotifications[chatJID] = id
+	for _, tracked := range d.liveNotifications {
+		if tracked == id {
+			return
+		}
+	}
+	d.liveNotifications = append(d.liveNotifications, id)
+}
+
+// overflowingLiveLocked drops the oldest ids past the bound and returns them
+// so the caller can close them without holding the lock across D-Bus calls.
+func (d *Desktop) overflowingLiveLocked() []uint32 {
+	var stale []uint32
+	for len(d.liveNotifications) > maxLiveNotifications {
+		stale = append(stale, d.liveNotifications[0])
+		d.liveNotifications = d.liveNotifications[1:]
+	}
+	return stale
+}
+
+func (d *Desktop) forgetLiveLocked(id uint32) {
+	for i, tracked := range d.liveNotifications {
+		if tracked == id {
+			d.liveNotifications = append(d.liveNotifications[:i], d.liveNotifications[i+1:]...)
+			break
+		}
+	}
+	for chatJID, tracked := range d.chatNotifications {
+		if tracked == id {
+			delete(d.chatNotifications, chatJID)
+			break
+		}
+	}
 }
 
 func freedesktopMessage(message Message) (string, map[string]dbus.Variant) {
@@ -301,6 +421,8 @@ func (d *Desktop) forgetActionLocked(id uint32) {
 			break
 		}
 	}
+	// A closed notification no longer occupies the server's queue.
+	d.forgetLiveLocked(id)
 }
 
 func (d *Desktop) trackPortalActionLocked(id, chatJID string) {
