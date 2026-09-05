@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shukiv/whatsappgo/internal/bugreport"
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/linkpreview"
@@ -21,12 +22,41 @@ type Service struct {
 	gateway     gateway.Gateway
 	events      *events.Broker
 	unsubscribe func()
+
+	version  string
+	accounts int
+	started  time.Time
+	reporter bugreport.Submitter
 }
 
 func New(st *store.Store, gw gateway.Gateway, broker *events.Broker) *Service {
-	s := &Service{store: st, gateway: gw, events: broker}
+	s := &Service{
+		store:    st,
+		gateway:  gw,
+		events:   broker,
+		version:  "dev",
+		accounts: 1,
+		started:  time.Now(),
+		reporter: bugreport.NewCLISubmitter(),
+	}
 	s.unsubscribe = gw.Subscribe(func(evt gateway.Event) { broker.Publish(events.Event{Name: evt.Name, Data: evt.Data}) })
 	return s
+}
+
+// Describe records what a bug report should say about this build. The daemon
+// knows its version and how many accounts exist; the service does not discover
+// either on its own.
+func (s *Service) Describe(version string, accounts int) {
+	s.version = version
+	s.accounts = accounts
+}
+
+// SetBugReporter replaces how reports are filed. Only tests use it.
+func (s *Service) SetBugReporter(reporter bugreport.Submitter) { s.reporter = reporter }
+
+func (s *Service) bugReportEnvironment() bugreport.Environment {
+	status := s.gateway.Status()
+	return bugreport.Describe(s.version, status.Connected, status.LoggedIn, s.accounts, s.started)
 }
 
 func (s *Service) Close() {
@@ -176,6 +206,30 @@ func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage
 		return discoveryResult(), nil
 	case "status.get":
 		return s.gateway.Status(), nil
+	case "bugreport.environment":
+		// The desktop shows this to the reader before anything is sent, so
+		// nobody files a report without seeing what travels with it.
+		environment := s.bugReportEnvironment()
+		return map[string]any{"fields": environment, "rendered": environment.Render(),
+			"repository": bugreport.Repository}, nil
+	case "bugreport.submit":
+		var params struct {
+			Subject string `json:"subject"`
+			Body    string `json:"body"`
+		}
+		if err := decode(raw, &params); err != nil {
+			return nil, err
+		}
+		subject, body, err := bugreport.Validate(params.Subject, params.Body)
+		if err != nil {
+			return nil, err
+		}
+		report := body + "\n\n" + s.bugReportEnvironment().Render()
+		url, err := s.reporter.Submit(ctx, subject, report)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"url": url}, nil
 	case "connection.connect":
 		return okResult(), s.gateway.Connect(ctx)
 	case "connection.disconnect":

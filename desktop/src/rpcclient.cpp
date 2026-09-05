@@ -2016,6 +2016,39 @@ void RpcClient::removeProfile(const QString &profile)
     process->terminate();
 }
 
+void RpcClient::refreshBugReportEnvironment()
+{
+    sendRequest(QStringLiteral("bugreport.environment"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
+        if (!error.isEmpty())
+            return;
+        const auto rendered = result.toObject().value(QStringLiteral("rendered")).toString();
+        if (rendered == m_bugReportEnvironment)
+            return;
+        m_bugReportEnvironment = rendered;
+        emit bugReportEnvironmentChanged();
+    });
+}
+
+void RpcClient::submitBugReport(const QString &subject, const QString &body)
+{
+    // The daemon validates and bounds this text as well; checking here only
+    // keeps the dialog from sending an obviously empty report.
+    if (subject.trimmed().isEmpty() || body.trimmed().isEmpty()) {
+        emit bugReportFinished(false, tr("A report needs a subject and a description."), QString());
+        return;
+    }
+    sendRequest(QStringLiteral("bugreport.submit"),
+                {{QStringLiteral("subject"), subject}, {QStringLiteral("body"), body}},
+                [this](const QJsonValue &result, const QJsonObject &error) {
+        if (!error.isEmpty()) {
+            emit bugReportFinished(false, error.value(QStringLiteral("message")).toString(), QString());
+            return;
+        }
+        emit bugReportFinished(true, tr("Report sent."),
+                               result.toObject().value(QStringLiteral("url")).toString());
+    });
+}
+
 void RpcClient::renameProfile(const QString &profile, const QString &displayName)
 {
     if (!m_profiles.contains(profile))

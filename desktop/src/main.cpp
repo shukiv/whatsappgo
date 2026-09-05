@@ -226,6 +226,8 @@ int main(int argc, char *argv[])
     parser.addOption(chatRowMenuTestOption);
     QCommandLineOption searchResultsTestOption(QStringLiteral("search-results-test"), QStringLiteral("Verify the sidebar search swaps the chat list for grouped results"));
     parser.addOption(searchResultsTestOption);
+    QCommandLineOption bugReportTestOption(QStringLiteral("bug-report-test"), QStringLiteral("Verify the report-a-problem button, dialog and disclosure"));
+    parser.addOption(bugReportTestOption);
     QCommandLineOption backendLifecycleTestOption(QStringLiteral("backend-lifecycle-test"), QStringLiteral("Verify that the desktop owns its bundled backend process"));
     parser.addOption(backendLifecycleTestOption);
     QCommandLineOption resizeRenderingTestOption(QStringLiteral("resize-rendering-test"), QStringLiteral("Verify that resizing schedules a complete scene repaint"));
@@ -263,6 +265,7 @@ int main(int argc, char *argv[])
     const bool chatFilterTest = parser.isSet(chatFilterTestOption);
     const bool chatRowMenuTest = parser.isSet(chatRowMenuTestOption);
     const bool searchResultsTest = parser.isSet(searchResultsTestOption);
+    const bool bugReportTest = parser.isSet(bugReportTestOption);
     const bool profileRemovalTest = parser.isSet(profileRemovalTestOption);
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
@@ -282,7 +285,7 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || presenceDisplayTest || bundledFontTest || fileDropTest
+        || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest
         || !screenshotPath.isEmpty();
 
     // Automated runs keep the per-account monitors off, because each one opens
@@ -2284,6 +2287,53 @@ int main(int argc, char *argv[])
 
         rowItem->setParentItem(nullptr);
         return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+    if (bugReportTest) {
+        if (engine.rootObjects().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *root = engine.rootObjects().constFirst();
+        auto *button = qobject_cast<QQuickItem *>(root->findChild<QObject *>(QStringLiteral("bugReportButton")));
+        auto *dialog = root->findChild<QObject *>(QStringLiteral("bugReportDialog"));
+        if (button == nullptr || dialog == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        // A 40px control is the sidebar header's pointer target; anything
+        // smaller is a different button from the ones beside it.
+        if (button->width() < 36 || button->height() < 36)
+            return WHATSAPPGO_TEST_FAILURE();
+
+        QMetaObject::invokeMethod(button, "click");
+        QCoreApplication::processEvents();
+        // A Popup becomes visible at once and only reports "opened" after its
+        // enter transition, which needs more than one turn of the loop.
+        if (!dialog->property("visible").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // An empty report must not be sendable: it costs the reader a public
+        // issue and tells nobody anything.
+        if (dialog->property("acceptEnabled").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        dialog->setProperty("subject", QStringLiteral("Videos play as a black screen"));
+        QCoreApplication::processEvents();
+        if (dialog->property("acceptEnabled").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        dialog->setProperty("details", QStringLiteral("Opening a status video shows nothing."));
+        QCoreApplication::processEvents();
+        if (!dialog->property("acceptEnabled").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // The environment is disclosed in the dialog rather than hidden: a
+        // GitHub issue is public and the reader is the one publishing it.
+        auto *environment = root->findChild<QObject *>(QStringLiteral("bugReportEnvironmentText"));
+        if (environment == nullptr || !environment->property("visible").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Sending is what the daemon does; the dialog only reports the result.
+        QMetaObject::invokeMethod(dialog, "finish", Q_ARG(QVariant, false),
+                                  Q_ARG(QVariant, QStringLiteral("no route")));
+        QCoreApplication::processEvents();
+        if (!dialog->property("visible").toBool() || dialog->property("sending").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        return EXIT_SUCCESS;
     }
     if (searchResultsTest) {
         auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();

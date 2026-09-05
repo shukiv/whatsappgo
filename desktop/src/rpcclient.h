@@ -64,6 +64,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantList communities READ communities NOTIFY communitiesChanged)
     Q_PROPERTY(bool clipboardHasImage READ clipboardHasImage NOTIFY clipboardChanged)
     Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
+    Q_PROPERTY(QString bugReportEnvironment READ bugReportEnvironment NOTIFY bugReportEnvironmentChanged)
 
 public:
     explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
@@ -156,6 +157,12 @@ public:
     Q_INVOKABLE void followChannelLink(const QString &link);
     Q_INVOKABLE void createCommunity(const QString &name);
     Q_INVOKABLE void joinGroupLink(const QString &link);
+
+    // Bug reports. The environment is fetched separately so the dialog can
+    // show the reader exactly what a report would disclose before they send it.
+    Q_INVOKABLE void refreshBugReportEnvironment();
+    Q_INVOKABLE void submitBugReport(const QString &subject, const QString &body);
+    QString bugReportEnvironment() const { return m_bugReportEnvironment; }
     Q_INVOKABLE void setChannelMuted(const QString &jid, bool muted);
     Q_INVOKABLE void postTextStatus(const QString &text, int background);
     Q_INVOKABLE void postMediaStatus(const QString &localUrl, const QString &caption);
@@ -255,6 +262,8 @@ signals:
     void composerLinkPreviewChanged();
     void noticeOccurred(const QString &message);
     void notificationRequested(const QString &chatJid, const QString &title, const QString &body);
+    void bugReportEnvironmentChanged();
+    void bugReportFinished(bool success, const QString &message, const QString &url);
     // A message's file is cached and can be played or opened.
     void mediaReady(const QString &messageId, const QString &path);
 
@@ -290,6 +299,7 @@ private:
     QByteArray m_readBuffer;
     quint64 m_nextId = 0;
     QHash<QString, Callback> m_pending;
+    QString m_bugReportEnvironment;
     QVariantMap m_status;
     QVariantList m_chats;
     ChatListModel m_chatList;

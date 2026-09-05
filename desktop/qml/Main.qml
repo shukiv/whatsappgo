@@ -481,6 +481,15 @@ ApplicationWindow {
             window.transientNotice = message
             noticeTimer.restart()
         }
+        function onBugReportFinished(success, message, url) {
+            bugReportDialog.finish(success, message)
+            if (!success)
+                return
+            // The URL is the only receipt the reader gets, so it goes in the
+            // notice rather than only into the dialog that just closed.
+            window.transientNotice = url ? qsTr("Report sent: %1").arg(url) : message
+            noticeTimer.restart()
+        }
         function onDaemonConnectedChanged() {
             if (!backend.daemonConnected)
                 return
@@ -872,6 +881,24 @@ ApplicationWindow {
                         Item {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 8
+                        }
+
+                        ThemedToolButton {
+                            id: bugReportButton
+                            objectName: "bugReportButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/bug.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("Report a problem")
+                            onClicked: {
+                                backend.refreshBugReportEnvironment()
+                                bugReportDialog.reset()
+                                bugReportDialog.open()
+                            }
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
                         }
 
                         AccountSwitcherButton {
@@ -3082,6 +3109,11 @@ ApplicationWindow {
         acceptText: qsTr("Remove")
         destructive: true
         onAccepted: backend.removeProfile(profile)
+    }
+
+    BugReportDialog {
+        id: bugReportDialog
+        onSubmitRequested: (subject, details) => backend.submitBugReport(subject, details)
     }
 
     WhatsAppDialog {

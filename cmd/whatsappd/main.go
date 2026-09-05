@@ -54,6 +54,29 @@ func restrictDatabase(path string) {
 	}
 }
 
+// countProfiles reports how many accounts exist on this machine, for the
+// environment attached to a bug report. Only the count travels, never a name:
+// a profile name is the user's own word for a phone number.
+func countProfiles() int {
+	// The default profile lives at the root of the data directory and the
+	// others under profiles/, so the count starts at one for the root.
+	root, err := config.Resolve()
+	if err != nil {
+		return 1
+	}
+	entries, err := os.ReadDir(filepath.Join(root.DataDir, "profiles"))
+	if err != nil {
+		return 1
+	}
+	count := 1
+	for _, entry := range entries {
+		if entry.IsDir() {
+			count++
+		}
+	}
+	return count
+}
+
 func run(socketOverride, profile string, desktopNotifications bool) error {
 	paths, err := config.ResolveProfile(profile)
 	if err != nil {
@@ -105,6 +128,7 @@ func run(socketOverride, profile string, desktopNotifications bool) error {
 	restrictDatabase(paths.DeviceDB)
 	broker := events.New()
 	app := service.New(messageStore, wa, broker)
+	app.Describe(version, countProfiles())
 	defer app.Close()
 	server := rpc.NewServer(paths.Socket, app, broker)
 	if err := server.Listen(); err != nil {

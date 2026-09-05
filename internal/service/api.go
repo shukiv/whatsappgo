@@ -19,6 +19,9 @@ func method(name, summary string, mutating bool, params map[string]any) MethodDe
 var apiMethods = []MethodDescription{
 	method("rpc.discover", "List protocol methods and event names", false, nil),
 	method("status.get", "Get connection and login state", false, nil),
+	method("bugreport.environment", "Describe what a bug report would disclose", false, nil),
+	method("bugreport.submit", "File a bug report as a GitHub issue", true,
+		map[string]any{"subject": "Videos play as a black screen", "body": "Steps to reproduce..."}),
 	method("connection.connect", "Connect the linked device", true, nil),
 	method("connection.disconnect", "Disconnect without unlinking", true, nil),
 	method("pairing.start", "Start QR-code pairing", true, nil),

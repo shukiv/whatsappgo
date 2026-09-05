@@ -119,6 +119,7 @@ qt_add_qml_module(whatsappgo
         qml/DialogRadioButton.qml
         qml/DialogTextField.qml
         qml/WhatsAppDialog.qml
+        qml/BugReportDialog.qml
         qml/WhatsAppMenuPopup.qml
         qml/WhatsAppMenuItem.qml
         qml/VoiceRecorder.qml
@@ -129,6 +130,7 @@ qt_add_qml_module(whatsappgo
     RESOURCES
         qml/icons/new-chat.svg
         qml/icons/menu.svg
+        qml/icons/bug.svg
         qml/icons/search.svg
         qml/icons/attach.svg
         qml/icons/send.svg
@@ -431,6 +433,8 @@ if(BUILD_TESTING)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
     add_test(NAME desktop-file-drop COMMAND whatsappgo --file-drop-test)
     add_test(NAME desktop-status-stories COMMAND whatsappgo --status-stories-test)
+    add_test(NAME desktop-bug-report COMMAND whatsappgo --bug-report-test)
+    set_tests_properties(desktop-bug-report PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
     add_test(NAME desktop-presence-display COMMAND whatsappgo --presence-display-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
