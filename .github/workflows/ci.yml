@@ -87,6 +87,18 @@ jobs:
       - run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build desktop/build --config Release --parallel
       - run: ctest --test-dir desktop/build -C Release --output-on-failure
+      # The packaging script is the only thing that runs windeployqt, so it is
+      # also the only thing that proves the application ships with the Qt DLLs
+      # and QML plugins it needs. Build it even when a test failed: a red suite
+      # is still worth a binary someone can try.
+      - if: always()
+        run: powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsappgo-windows-x64
+          path: build/WhatsAppGo-windows-x64.zip
+          if-no-files-found: error
 
   desktop-macos:
     runs-on: macos-latest
@@ -108,3 +120,15 @@ jobs:
       - run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build desktop/build --parallel
       - run: ctest --test-dir desktop/build --output-on-failure
+      # Same reasoning as the Windows job: macdeployqt runs nowhere else, so
+      # nothing else proves the bundle carries its frameworks and QML plugins.
+      # The build is unsigned here - no Developer ID is available to CI - so
+      # Gatekeeper will refuse it on a machine that did not build it.
+      - if: always()
+        run: packaging/macos/build.sh
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsappgo-macos
+          path: build/macos/*.dmg
+          if-no-files-found: error
