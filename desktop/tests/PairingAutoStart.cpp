@@ -14,7 +14,7 @@
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    QTemporaryDir runtime;
+    QTemporaryDir runtime(shortTempTemplate(QStringLiteral("wag-pair")));
     if (!runtime.isValid())
         return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());

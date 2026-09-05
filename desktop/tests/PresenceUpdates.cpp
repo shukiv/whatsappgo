@@ -24,7 +24,7 @@ QByteArray eventLine(const QString &name, const QJsonObject &data)
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    QTemporaryDir runtime;
+    QTemporaryDir runtime(shortTempTemplate(QStringLiteral("wag-presence")));
     if (!runtime.isValid())
         return testFatal("could not create a temporary runtime directory");
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());

@@ -432,6 +432,9 @@ if(BUILD_TESTING)
     add_test(NAME desktop-system-integration COMMAND whatsappgo --desktop-integration-test)
     add_test(NAME desktop-contact-info COMMAND whatsappgo --contact-info-test)
     add_test(NAME desktop-file-drop COMMAND whatsappgo --file-drop-test)
+    # Every other window-opening test names the platform plugin; this one did
+    # not, so it tried to reach a display and aborted on any headless machine.
+    set_tests_properties(desktop-file-drop PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-status-stories COMMAND whatsappgo --status-stories-test)
     add_test(NAME desktop-file-urls COMMAND whatsappgo --file-url-test)
     set_tests_properties(desktop-file-urls PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
