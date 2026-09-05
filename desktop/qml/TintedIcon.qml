@@ -53,12 +53,16 @@ Item {
                 }
             } else if (root.kind === "chats" || root.kind === "new-chat") {
                 ctx.beginPath()
-                ctx.moveTo(20, 11.5)
-                ctx.bezierCurveTo(20, 16.5, 16, 19.7, 11.5, 19.5)
-                ctx.lineTo(5, 21)
-                ctx.lineTo(6.5, 17)
-                ctx.bezierCurveTo(3.2, 13, 4, 7.2, 8.2, 4.5)
-                ctx.bezierCurveTo(13.5, 1.2, 20, 5, 20, 11.5)
+                // WhatsApp Web's bubble is squarer than a circle and sits
+                // wider in its box, with the tail dropped from the left edge.
+                ctx.moveTo(21.5, 12)
+                ctx.bezierCurveTo(21.5, 17.4, 17.4, 20.4, 12, 20.4)
+                ctx.lineTo(7.6, 20.4)
+                ctx.lineTo(3, 22.4)
+                ctx.lineTo(4.4, 18.6)
+                ctx.bezierCurveTo(2.9, 16.9, 2.5, 14.6, 2.5, 12)
+                ctx.bezierCurveTo(2.5, 6.6, 6.6, 3.6, 12, 3.6)
+                ctx.bezierCurveTo(17.4, 3.6, 21.5, 6.6, 21.5, 12)
                 ctx.stroke()
                 if (root.kind === "new-chat") {
                     ctx.beginPath()
@@ -68,11 +72,14 @@ Item {
                     ctx.lineTo(15, 10.5)
                     ctx.stroke()
                 } else {
-                    for (let x of [9, 12, 15]) {
-                        ctx.beginPath()
-                        ctx.arc(x, 11.5, 0.8, 0, Math.PI * 2)
-                        ctx.fill()
-                    }
+                    // WhatsApp Web puts two lines of writing in the bubble,
+                    // not three dots.
+                    ctx.beginPath()
+                    ctx.moveTo(8, 9.8)
+                    ctx.lineTo(16, 9.8)
+                    ctx.moveTo(8, 14)
+                    ctx.lineTo(13.6, 14)
+                    ctx.stroke()
                 }
             } else if (root.kind === "attach") {
                 ctx.beginPath()
@@ -308,40 +315,60 @@ Item {
                 ctx.bezierCurveTo(4.5, 11, 19.5, 11, 19.5, 21)
                 ctx.closePath()
                 ctx.fill()
-            } else if (root.kind === "calls") {
+            } else if (root.kind === "calls" || root.kind === "phone") {
+                // WhatsApp Web's handset: two hollow ends, the earpiece at the
+                // top right and the mouthpiece at the bottom left, joined by a
+                // curve that bows away from them. Ours used to be a closed
+                // loop, which read as a whole telephone rather than a call.
                 ctx.beginPath()
-                ctx.moveTo(7, 3)
-                ctx.lineTo(10, 8)
-                ctx.lineTo(7.5, 10.5)
-                ctx.bezierCurveTo(9, 13.5, 10.5, 15, 13.5, 16.5)
-                ctx.lineTo(16, 14)
-                ctx.lineTo(21, 17)
-                ctx.bezierCurveTo(18, 23, 10, 19, 6, 15)
-                ctx.bezierCurveTo(2, 11, -2, 3, 4, 0)
+                ctx.moveTo(15.2, 4.4)
+                ctx.lineTo(19.6, 4.4)
+                ctx.lineTo(19.6, 9)
+                ctx.lineTo(17.4, 10.4)
+                ctx.lineTo(14.6, 7.4)
                 ctx.closePath()
                 ctx.stroke()
-            } else if (root.kind === "status") {
                 ctx.beginPath()
-                ctx.arc(12, 12, 8, -1.15, 1.15)
-                ctx.moveTo(9.1, 19.4)
-                ctx.arc(12, 12, 8, 1.95, 4.33)
+                ctx.moveTo(4.4, 15.2)
+                ctx.lineTo(7.4, 14.6)
+                ctx.lineTo(10.4, 17.4)
+                ctx.lineTo(9, 19.6)
+                ctx.lineTo(4.4, 19.6)
+                ctx.closePath()
                 ctx.stroke()
                 ctx.beginPath()
-                ctx.arc(12, 12, 3.2, 0, Math.PI * 2)
+                ctx.moveTo(17.2, 10.6)
+                ctx.bezierCurveTo(15.8, 13.6, 13.6, 15.8, 10.6, 17.2)
+                ctx.stroke()
+            } else if (root.kind === "status") {
+                // A ring broken at the sides around a smaller solid ring, the
+                // proportions WhatsApp Web uses: the outer one nearly twice
+                // the inner, both drawn in the same weight.
+                ctx.beginPath()
+                // The ring is broken along the diagonal, not at the sides.
+                ctx.arc(12, 12, 9, 1.15, 3.55)
+                ctx.moveTo(15.8, 3.9)
+                ctx.arc(12, 12, 9, 4.29, 6.69)
+                ctx.stroke()
+                ctx.beginPath()
+                ctx.arc(12, 12, 5, 0, Math.PI * 2)
                 ctx.stroke()
             } else if (root.kind === "channels") {
+                // WhatsApp Web draws a message bubble with a broadcast mark
+                // inside it: a dot between two arcs. Ours was three bare rings
+                // with no bubble around them, which read as a wifi symbol.
                 ctx.beginPath()
-                ctx.arc(12, 12, 2.6, 0, Math.PI * 2)
+                ctx.arc(12, 11.4, 9.4, 0.62, Math.PI * 2 + 0.12)
+                ctx.lineTo(19.8, 20.6)
+                ctx.closePath()
                 ctx.stroke()
                 ctx.beginPath()
-                ctx.arc(12, 12, 7, -0.75, 0.75)
-                ctx.moveTo(7.1, 17)
-                ctx.arc(12, 12, 7, 2.35, 3.93)
-                ctx.stroke()
+                ctx.arc(12, 11.4, 1.5, 0, Math.PI * 2)
+                ctx.fill()
                 ctx.beginPath()
-                ctx.arc(12, 12, 10, -0.7, 0.7)
-                ctx.moveTo(4.4, 18.5)
-                ctx.arc(12, 12, 10, 2.45, 3.83)
+                ctx.arc(12, 11.4, 5.2, -0.72, 0.72)
+                ctx.moveTo(8.1, 8)
+                ctx.arc(12, 11.4, 5.2, Math.PI - 0.72, Math.PI + 0.72)
                 ctx.stroke()
             } else if (root.kind === "group-add") {
                 ctx.beginPath()
@@ -372,21 +399,22 @@ Item {
                 ctx.lineTo(21.5, 13.5)
                 ctx.stroke()
             } else if (root.kind === "communities") {
+                // Three people: the one in the middle drawn in outline and the
+                // two beside it solid, which is how WhatsApp Web separates the
+                // group from the community around it.
                 ctx.beginPath()
-                ctx.arc(12, 8, 3.2, 0, Math.PI * 2)
-                ctx.arc(5.5, 10, 2.4, 0, Math.PI * 2)
-                ctx.arc(18.5, 10, 2.4, 0, Math.PI * 2)
+                ctx.arc(4.2, 8.6, 2.4, 0, Math.PI * 2)
+                ctx.arc(19.8, 8.6, 2.4, 0, Math.PI * 2)
                 ctx.fill()
                 ctx.beginPath()
-                ctx.moveTo(6, 21)
-                ctx.bezierCurveTo(6, 13, 18, 13, 18, 21)
-                ctx.closePath()
+                ctx.roundedRect(0.6, 13.6, 4.8, 6, 2.4, 2.4)
+                ctx.roundedRect(18.6, 13.6, 4.8, 6, 2.4, 2.4)
                 ctx.fill()
                 ctx.beginPath()
-                ctx.moveTo(1.5, 20)
-                ctx.bezierCurveTo(1.5, 15, 6, 14, 8, 16)
-                ctx.moveTo(22.5, 20)
-                ctx.bezierCurveTo(22.5, 15, 18, 14, 16, 16)
+                ctx.arc(12, 7.4, 3, 0, Math.PI * 2)
+                ctx.stroke()
+                ctx.beginPath()
+                ctx.roundedRect(7.2, 13.2, 9.6, 6.6, 2, 2)
                 ctx.stroke()
             } else if (root.kind === "profile") {
                 ctx.beginPath()
@@ -394,18 +422,6 @@ Item {
                 ctx.stroke()
                 ctx.beginPath()
                 ctx.arc(12, 20, 7, Math.PI, Math.PI * 2)
-                ctx.stroke()
-            } else if (root.kind === "phone") {
-                ctx.beginPath()
-                ctx.moveTo(7, 3)
-                ctx.lineTo(10, 8)
-                ctx.lineTo(7.5, 10.5)
-                ctx.bezierCurveTo(9, 13.5, 10.5, 15, 13.5, 16.5)
-                ctx.lineTo(16, 14)
-                ctx.lineTo(21, 17)
-                ctx.bezierCurveTo(18, 23, 10, 19, 6, 15)
-                ctx.bezierCurveTo(2, 11, -2, 3, 4, 0)
-                ctx.closePath()
                 ctx.stroke()
             } else if (root.kind === "video") {
                 ctx.strokeRect(3, 6, 13, 12)
