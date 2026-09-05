@@ -127,6 +127,43 @@ The application defers that optional backfill rather than deleting state. Keep
 the official phone and desktop online and reconnect later. Do not remove
 `device.db`; doing so unlinks the local profile.
 
+## `mismatching LTHash` while syncing call history or chat settings
+
+The collection WhatsApp sent does not add up to the hash it signed. Asking again
+produces the same bytes, so the daemon asks the phone for a plain copy of that
+collection instead and says nothing on screen; it asks at most once a day. Keep
+the phone online and reconnect later. Nothing is deleted, and the rest of the
+conversation is unaffected.
+
+## The update button says WhatsAppGo is up to date
+
+Check, in this order:
+
+- This copy was built from source. Its tooltip says so instead of naming a
+  version, and a working copy is never behind a release; `git pull` updates it.
+- The newest release is still a draft. GitHub's "latest release" ignores drafts,
+  so there is nothing to compare against until it is published.
+- The release has no `SHA256SUMS`. An artifact whose checksum the release does
+  not publish is never installed, so the release offers nothing.
+
+`whatsappctl --profile <name> call update.status '{}'` answers all three: it
+reports the running version, the newest release it found, and the error from the
+last check, if any.
+
+## The AppImage does not start
+
+It mounts itself with FUSE. Where FUSE is missing or an unprivileged mount is
+refused, run the contents from a temporary directory instead:
+
+```bash
+./WhatsAppGo-x86_64.AppImage --appimage-extract-and-run
+```
+
+Debian and Ubuntu install FUSE with `sudo apt install libfuse2t64` (older
+releases call it `libfuse2`); Fedora uses `sudo dnf install fuse-libs`. An
+update also needs the file to be writable by the account running it: a copy in
+`/opt` owned by root can only be replaced by hand.
+
 ## Calls, statuses, channels, or communities are empty
 
 These pages display data that WhatsApp exposes to linked devices. App-state key

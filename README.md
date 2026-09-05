@@ -76,6 +76,10 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - text and media messages, voice notes, documents, replies, reactions, edits,
   delete-for-everyone, receipts, and typing indicators
 - SQLite-backed history with 50-message pagination and message search
+- day separators through a conversation, and Up on an empty composer edits the
+  last message you sent
+- one-click updates: a packaged build finds a new release, verifies it against
+  the checksums the release publishes, and installs it over itself
 - phone-number/LID identity consolidation so one contact has one history
 - inline photo, video, and sticker previews before the full file is fetched
 - voice notes with the sender's waveform that play in place and run on to the next

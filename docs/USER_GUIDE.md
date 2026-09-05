@@ -97,6 +97,26 @@ actions instead of displaying controls that would fail silently.
 - Select text inside a bubble and copy it normally. HTTP and HTTPS links open
   in the system browser.
 
+## Keyboard
+
+| Key | What it does |
+| --- | --- |
+| **Enter** | Sends the message. With **Enter is send** turned off in Settings the roles swap: Enter opens a line and **Ctrl+Enter** sends. |
+| **Shift+Enter** | Always opens a line. |
+| **Up arrow** | On an empty composer, opens the last message you sent for editing. Received messages, deleted ones, and anything that is not text are stepped over. A composer with something in it keeps the arrow for moving the cursor. |
+| **Escape** | Closes the open menu or emoji picker. |
+
+## Reading a conversation
+
+A conversation is dated the way WhatsApp Web dates one: a pill between one
+calendar day and the next says **Today**, **Yesterday**, the weekday for the
+rest of the week, and a date for anything older. Loading older history moves
+the pill onto the message that now opens that day.
+
+Your own messages sit on the right with a tail on their top-right corner;
+messages you received sit on the left. A tick beside your own time is one mark
+for sent, two for delivered, and two blue for read.
+
 ## Images and media
 
 Photos, videos, and stickers appear as pictures as soon as the conversation
@@ -129,7 +149,9 @@ unread; each change is sent to WhatsApp, so it applies to your phone too.
 Archived conversations live behind the **Archived** row below the filters.
 
 Hover a message to reveal its reaction button and action arrow. Reactions are
-grouped below the bubble with a count when several people choose the same emoji.
+grouped below the bubble with a count when several people choose the same emoji;
+click the badge to see who left which one. A thumb is a thumb whoever left it,
+so the skin tones people choose are grouped together.
 Menus are repositioned when opened near an edge so their final actions remain
 inside the application window.
 The message menu can pin a message for 24 hours, 7 days, or 30 days. A pinned
@@ -205,6 +227,23 @@ With a tray available, minimizing or closing the window hides it and keeps notif
 the linked-device connection active. Use **Quit WhatsAppGo** in the tray menu to
 stop the application and its backend. Without a tray host, closing the window
 still quits normally. Neither action unlinks the device.
+
+## Updating
+
+A packaged build looks for a newer release every three hours and on the first
+start of the day, and asks once when it finds one. The circular arrow in the
+left-hand rail checks now; its tooltip names the version this copy is running,
+and a dot appears on it while an update is waiting. **Settings -> Help** has the
+same button.
+
+Accepting an update downloads the file, checks it against the checksums the
+release publishes, and installs it: on Linux the AppImage replaces itself and
+the window reopens, on Windows the installer takes over, and on macOS the disk
+image opens for you to drag across.
+
+A build made from source reports itself as built from source and is never
+offered an update, because a working copy is not behind anything. `git pull` is
+the update there.
 
 ## Logging out and local data
 

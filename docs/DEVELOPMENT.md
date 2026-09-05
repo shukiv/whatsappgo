@@ -140,6 +140,20 @@ QT_QPA_PLATFORM=offscreen ./desktop/build/whatsappgo \
   --theme light --screenshot /tmp/whatsappgo.png
 ```
 
+`--screenshot-chat <jid>` opens a conversation first, which is how a rendering
+is compared with WhatsApp Web:
+
+```bash
+QT_QPA_PLATFORM=offscreen ./desktop/build/whatsappgo --profile <name> \
+  --screenshot-chat '1234567890@lid' --screenshot /tmp/conversation.png
+```
+
+The run attaches to whichever daemon already serves that profile, so it does not
+disturb a window that is open. Measure the result rather than eyeballing it: at
+a 1.25 device scale a 24-pixel item is 30 pixels on screen, so compare in device
+pixels and check a shared element - an avatar, a tick - to confirm both images
+are at the same scale.
+
 ## Debugging
 
 The managed backend is quiet by default. Forward its stdout/stderr through the

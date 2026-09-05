@@ -234,6 +234,28 @@ and the window relaunches itself. Windows starts the installer and closes.
 macOS opens the disk image for the reader to drag across, which is as far as an
 unsigned bundle can go.
 
+## App-state collections
+
+Call history lives in WhatsApp's regular app-state collection and conversation
+settings in the low-priority one. Each is fetched once in full for installations
+that linked before those were imported, and the fact that it was done is written
+to `messages.db` metadata so it is not repeated.
+
+Two failures are expected and neither is shown to the reader. A missing
+app-state key means WhatsApp has not shared it yet, so the backfill is deferred
+rather than retried. A mismatching LTHash means the collection the server sent
+does not verify against the hash it signed; a retry produces the same bytes, so
+the daemon sends the phone the peer message whatsmeow builds for this case,
+asking for an unencrypted copy of that collection. The reply is applied by
+whatsmeow and arrives as `AppStateSyncComplete`, which is where the backfill is
+marked done. The request is remembered so a phone that has not answered is asked
+at most once a day.
+
+Protocol messages that are not revocations - ephemeral-timer changes, history
+notifications, key shares - are machinery rather than conversation and are not
+stored. Ones written by earlier versions are left in place and filtered out of a
+conversation.
+
 ## Event flow
 
 Incoming message:
@@ -249,6 +271,15 @@ Outgoing message:
 QML composer → RPC request → whatsmeow send → SQLite transaction
              → RPC result/event → QML model and receipt updates
 ```
+
+### Conversation model
+
+`MessageListModel` stores a conversation chronologically and exposes it
+newest-first, so a bottom-to-top view keeps row zero at the composer while older
+history grows away from the reader. It also marks the message that opens each
+calendar day, which is what the date pills are drawn from; a page of older
+history moves that mark rather than leaving two, so the recompute runs after
+every change to the list.
 
 ## Memory and rendering
 
