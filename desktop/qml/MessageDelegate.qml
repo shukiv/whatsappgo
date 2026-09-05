@@ -368,8 +368,34 @@ Item {
         reactionDetailsPopup.close()
     }
 
+    // The first message of a calendar day carries the date above it, which is
+    // where WhatsApp Web puts one day's end and the next one's start.
+    readonly property bool startsDay: Boolean(modelData.starts_day)
+    readonly property real daySeparatorHeight: startsDay ? 42 : 0
+
     width: ListView.view ? ListView.view.width : 640
-    implicitHeight: bubble.implicitHeight + (reactionsFlow.visible ? 22 : 4)
+    implicitHeight: root.daySeparatorHeight + bubble.implicitHeight + (reactionsFlow.visible ? 22 : 4)
+
+    Rectangle {
+        id: daySeparator
+        objectName: "messageDaySeparator"
+        visible: root.startsDay
+        height: visible ? 26 : 0
+        width: daySeparatorLabel.implicitWidth + 24
+        x: Math.round((root.width - width) / 2)
+        y: 8
+        radius: 8
+        color: Theme.daySeparator
+        Label {
+            id: daySeparatorLabel
+            objectName: "messageDaySeparatorLabel"
+            anchors.centerIn: parent
+            text: RowTime.daySeparator(root.modelData.timestamp)
+            color: Theme.textMuted
+            font.pixelSize: 13
+            Accessible.name: text
+        }
+    }
 
     // Attachments that arrived through history synchronisation carry no file,
     // so the conversation fetches the ones it is showing. The view only builds
@@ -409,6 +435,7 @@ Item {
         // anchors are set for an instant. That stretches the bubble across the
         // conversation and discards its width binding for good.
         x: root.modelData.from_me ? Math.max(0, root.width - width - 40) : 40
+        y: root.daySeparatorHeight
         color: root.stickerKind
             ? "transparent"
             : (root.modelData.from_me ? Theme.outgoingBubble : Theme.incomingBubble)
