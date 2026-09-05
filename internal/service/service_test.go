@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"go.mau.fi/whatsmeow"
 
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
@@ -111,6 +116,7 @@ type fakeGateway struct {
 	fetchedAvatar   string
 	refreshedAvatar string
 	presenceChat    string
+	presenceErr     error
 	playedChat      string
 	playedSender    string
 	playedMessage   string
@@ -154,7 +160,7 @@ func TestPlayingMediaSendsPlayedReceiptAndUpdatesLocalMessage(t *testing.T) {
 
 func (f *fakeGateway) SubscribePresence(_ context.Context, jid string) error {
 	f.presenceChat = jid
-	return nil
+	return f.presenceErr
 }
 
 func TestContactPresenceSubscriptionUsesGateway(t *testing.T) {
@@ -456,5 +462,37 @@ func TestDiscoveryListsCompleteAutomationSurface(t *testing.T) {
 		if !seen[required] {
 			t.Fatalf("discovery omitted %q", required)
 		}
+	}
+}
+
+func TestConnectionErrorsAreRewrittenForTheReader(t *testing.T) {
+	st, err := store.Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// whatsmeow reports its own internal state this way whenever the
+	// connection is down, and the desktop shows the message it is given: on
+	// the pairing page that put a red "websocket not connected" over the QR
+	// code while the client was reconnecting on its own.
+	gw := &fakeGateway{presenceErr: fmt.Errorf("subscribe: %w", whatsmeow.ErrNotConnected)}
+	svc := New(st, gw, events.New())
+	defer svc.Close()
+
+	_, err = svc.Handle(context.Background(), "contact.presence.subscribe", json.RawMessage(`{"chat_jid":"alice@lid"}`))
+	if err == nil {
+		t.Fatal("a failed request reported success")
+	}
+	if strings.Contains(err.Error(), "websocket") {
+		t.Fatalf("the reader was shown the protocol's own wording: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not connected to WhatsApp") {
+		t.Fatalf("the message does not say what happened: %v", err)
+	}
+
+	// Everything else reaches the reader unchanged.
+	gw.presenceErr = errors.New("chat_jid is required")
+	if _, err := svc.Handle(context.Background(), "contact.presence.subscribe", json.RawMessage(`{"chat_jid":"alice@lid"}`)); err == nil || err.Error() != "chat_jid is required" {
+		t.Fatalf("an ordinary error was rewritten: %v", err)
 	}
 }

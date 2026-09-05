@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow"
+
 	"github.com/shukiv/whatsappgo/internal/bugreport"
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
@@ -200,7 +202,33 @@ type saveContactParams struct {
 	Name  string `json:"name"`
 }
 
+// Handle answers one request.
+//
+// Errors reach the reader as a message in the interface, so a protocol
+// library's wording for its own internal state does not belong there:
+// whatsmeow returns "websocket not connected" whenever the connection is down,
+// which on the pairing page put a red "websocket not connected" over the QR
+// code while the client was reconnecting on its own.
 func (s *Service) Handle(ctx context.Context, method string, raw json.RawMessage) (any, error) {
+	result, err := s.handle(ctx, method, raw)
+	return result, readable(err)
+}
+
+// readable rewrites the errors that say something about the connection rather
+// than about the request.
+func readable(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, whatsmeow.ErrNotConnected):
+		return errors.New("not connected to WhatsApp yet - this will work once the connection is back")
+	case errors.Is(err, whatsmeow.ErrIQTimedOut):
+		return errors.New("WhatsApp did not answer in time - try again in a moment")
+	}
+	return err
+}
+
+func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	switch method {
 	case "rpc.discover":
 		return discoveryResult(), nil
