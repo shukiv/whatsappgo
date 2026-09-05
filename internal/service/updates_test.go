@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -248,5 +250,79 @@ func TestUpdateDownloadDoesNotStartTwice(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if len(starts) != 0 {
 		t.Fatal("a second download ran while the first was still going")
+	}
+}
+
+func TestUpdateForgetsAFileThatIsNoLongerTheNewest(t *testing.T) {
+	svc, stream := updateService(t, "v1.0.0")
+	offered := updates.Release{Version: "v1.1.0"}
+	svc.updates.check = func(context.Context) (updates.Release, error) { return offered, nil }
+	svc.checkForUpdate(context.Background())
+	svc.AllowUpdateDownloads(func(context.Context, updates.Release, func(int64, int64)) (string, error) {
+		return "/tmp/WhatsAppGo-x86_64.AppImage", nil
+	})
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, saw := awaitEvent(stream, "update.ready", time.Second); !saw {
+		t.Fatal("the download never finished")
+	}
+
+	// A newer release arrives before the reader installed the last one. The
+	// artifacts share one name, so the file on disk is the old version and
+	// offering it as the new one would install the wrong thing.
+	offered = updates.Release{Version: "v1.2.0"}
+	svc.checkForUpdate(context.Background())
+	status, err := svc.Handle(context.Background(), "update.status", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields, _ := status.(map[string]any)
+	if fields["downloaded"] != "" {
+		t.Fatalf("a file downloaded for v1.1.0 is still offered as %v: %v", fields["latest"], fields["downloaded"])
+	}
+}
+
+func TestUpdateDownloadStartsOnceWhenAskedAtOnce(t *testing.T) {
+	svc, _ := updateService(t, "v1.0.0")
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		return updates.Release{Version: "v1.1.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+	release := make(chan struct{})
+	var starts atomic.Int64
+	svc.AllowUpdateDownloads(func(context.Context, updates.Release, func(int64, int64)) (string, error) {
+		starts.Add(1)
+		<-release
+		return "/tmp/WhatsAppGo-x86_64.AppImage", nil
+	})
+
+	// Two requests that arrive together are still one download: a second
+	// writer over the same file is a corrupt install.
+	var asking sync.WaitGroup
+	begin := make(chan struct{})
+	for i := 0; i < 8; i++ {
+		asking.Add(1)
+		go func() {
+			defer asking.Done()
+			<-begin
+			if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	close(begin)
+	asking.Wait()
+	// The download runs on its own goroutine, so wait for one to be under way
+	// and leave any second one the same chance to start.
+	deadline := time.Now().Add(2 * time.Second)
+	for starts.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	got := starts.Load()
+	close(release)
+	if got != 1 {
+		t.Fatalf("the download started %d times", got)
 	}
 }

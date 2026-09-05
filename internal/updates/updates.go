@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,6 +38,9 @@ type Release struct {
 // A draft or a pre-release is not an answer: the release workflow publishes a
 // draft first and a person decides when it becomes a release, so a draft is
 // precisely the state that must not reach anyone.
+// maxReleaseBytes bounds the release description GitHub sends back.
+const maxReleaseBytes = 1 << 20
+
 func Latest(ctx context.Context, client *http.Client, baseURL, repo string) (Release, error) {
 	if repo == "" {
 		return Release{}, errors.New("a repository is required")
@@ -80,7 +84,9 @@ func Latest(ctx context.Context, client *http.Client, baseURL, repo string) (Rel
 			Size int64  `json:"size"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	// A release description is a few kilobytes. Reading whatever arrives
+	// would let one bad answer grow this process without limit.
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxReleaseBytes)).Decode(&payload); err != nil {
 		return Release{}, err
 	}
 	if payload.Draft || payload.Prerelease {

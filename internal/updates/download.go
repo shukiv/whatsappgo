@@ -117,6 +117,11 @@ func (d Downloader) Fetch(ctx context.Context, release Release, goos, goarch str
 	if err := os.MkdirAll(d.Dir, 0o700); err != nil {
 		return "", err
 	}
+	// MkdirAll only sets the mode on a directory it creates. A file that is
+	// about to be executed is not left somewhere another account can write.
+	if err := os.Chmod(d.Dir, 0o700); err != nil {
+		return "", err
+	}
 	body, size, err := d.open(ctx, client, asset.URL)
 	if err != nil {
 		return "", err

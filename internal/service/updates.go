@@ -82,6 +82,11 @@ func (s *Service) checkForUpdate(ctx context.Context) updates.Release {
 		return updates.Release{}
 	}
 	s.updates.lastError = ""
+	if release.Version != s.updates.latest.Version {
+		// A file downloaded for the release before this one is not the one
+		// the reader would be offered now, and the artifacts share a name.
+		s.updates.downloaded = ""
+	}
 	s.updates.latest = release
 	s.updates.mu.Unlock()
 
@@ -105,10 +110,17 @@ func (s *Service) AllowUpdateDownloads(download UpdateDownloader) {
 // The transfer is minutes of work on a slow line, so the request returns as
 // soon as it has started and the progress arrives as events.
 func (s *Service) startUpdateDownload() (map[string]any, error) {
+	// Read and claim under one lock: two requests arriving together both
+	// found "not running" when this was two.
 	s.updates.mu.Lock()
 	release := s.updates.latest
 	download := s.updates.download
 	running := s.updates.downloading
+	startable := download != nil && !running &&
+		release.Version != "" && updates.Newer(s.version, release.Version)
+	if startable {
+		s.updates.downloading = true
+	}
 	s.updates.mu.Unlock()
 
 	if download == nil {
@@ -117,14 +129,10 @@ func (s *Service) startUpdateDownload() (map[string]any, error) {
 	if release.Version == "" || !updates.Newer(s.version, release.Version) {
 		return nil, errors.New("there is no newer version to install")
 	}
-	if running {
+	if !startable {
 		// Asking twice is a double click, not a second download.
 		return map[string]any{"started": true, "version": release.Version}, nil
 	}
-
-	s.updates.mu.Lock()
-	s.updates.downloading = true
-	s.updates.mu.Unlock()
 
 	go func() {
 		// The request that started this is long gone, and a download that

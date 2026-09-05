@@ -110,6 +110,12 @@ int main(int argc, char **argv)
     QString readyPath;
     QString readyVersion;
     QString failure;
+    QString offered;
+    int offers = 0;
+    QObject::connect(&client, &RpcClient::updateAvailable, &app, [&](const QString &version) {
+        offered = version;
+        ++offers;
+    });
     QObject::connect(&client, &RpcClient::updateProgress, &app, [&](qint64 got, qint64 expected) {
         received = got;
         total = expected;
@@ -128,6 +134,13 @@ int main(int argc, char **argv)
     if (client.updateStatus().value(QStringLiteral("latest")).toString() != QStringLiteral("v1.1.0"))
         return testFatal("the newer version did not reach the client",
                          client.updateStatus().value(QStringLiteral("latest")).toString());
+    // The daemon announces a release once, when it first sees it, and it
+    // starts before this window exists. The status answer has to offer it as
+    // well or nobody is ever asked about an update they can install.
+    if (!waitFor([&] { return offers > 0; }))
+        return testFatal("connecting to a daemon that already found an update offered nothing");
+    if (offered != QStringLiteral("v1.1.0"))
+        return testFatal("the wrong version was offered", offered);
 
     client.downloadUpdate();
     if (!waitFor([&] { return !readyPath.isEmpty(); }))

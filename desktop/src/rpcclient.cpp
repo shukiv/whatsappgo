@@ -2114,6 +2114,14 @@ void RpcClient::refreshUpdateStatus()
             return;
         m_updateStatus = result.toObject().toVariantMap();
         emit updateStatusChanged();
+        // update.available is published once, when the version the daemon
+        // found changes. A window that opened after that - the usual case,
+        // since the daemon starts first - would never hear it, so the status
+        // answer offers it too. The window remembers what it has already
+        // offered and does not ask twice.
+        if (m_updateStatus.value(QStringLiteral("available")).toBool()) {
+            emit updateAvailable(m_updateStatus.value(QStringLiteral("latest")).toString());
+        }
     });
 }
 
@@ -2147,10 +2155,15 @@ void RpcClient::downloadUpdate()
 
 void RpcClient::openReleasePage()
 {
-    auto url = m_updateStatus.value(QStringLiteral("url")).toString();
-    if (url.isEmpty())
-        url = QStringLiteral("https://github.com/shukiv/whatsappgo/releases/latest");
-    QDesktopServices::openUrl(QUrl(url));
+    const auto releases = QStringLiteral("https://github.com/shukiv/whatsappgo/releases/latest");
+    const QUrl page(m_updateStatus.value(QStringLiteral("url")).toString());
+    // The address arrives over the socket and is handed to whatever program
+    // the desktop has registered for its scheme, so only the release page
+    // this application publishes is opened; anything else falls back to it.
+    const bool ours = page.scheme() == QStringLiteral("https")
+        && page.host() == QStringLiteral("github.com")
+        && page.path().startsWith(QStringLiteral("/shukiv/whatsappgo/"));
+    QDesktopServices::openUrl(ours ? page : QUrl(releases));
 }
 
 bool RpcClient::updateInstallable() const

@@ -126,6 +126,9 @@ jobs:
   # the release actually carries.
   checksums:
     needs: [draft, linux, windows, macos]
+    # One platform failing must not leave the others unverifiable: without
+    # this file the updater refuses to install anything at all.
+    if: ${{ !cancelled() && needs.draft.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - run: |
