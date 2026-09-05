@@ -440,6 +440,11 @@ Item {
             ? "transparent"
             : (root.modelData.from_me ? Theme.outgoingBubble : Theme.incomingBubble)
         radius: Theme.radiusLarge
+        // The corner the tail grows out of is square in WhatsApp Web, and the
+        // tail continues the bubble's own top edge. Rounding it left the tail
+        // hanging beside the bubble with a notch between the two.
+        topLeftRadius: (messageTail.visible && !root.modelData.from_me) ? 0 : radius
+        topRightRadius: (messageTail.visible && root.modelData.from_me) ? 0 : radius
         border.color: root.navigationHighlighted ? Theme.primary : Theme.bubbleBorder
         border.width: root.navigationHighlighted ? 2 : ((root.modelData.from_me || root.stickerKind) ? 0 : 1)
 
@@ -448,16 +453,21 @@ Item {
         Canvas {
             id: messageTail
             objectName: "messageTail"
-            width: 10
-            height: 13
+            // Measured off WhatsApp Web at a 1.25 device scale: the tail is 8
+            // device pixels wide and 14 tall, and its flat edge is the bubble's
+            // own top edge.
+            width: 6.4
+            height: 11.2
             y: 0
-            x: root.modelData.from_me ? bubble.width + 8 - width : -8
+            x: root.modelData.from_me ? bubble.width : -width
             property color fillColor: bubble.color
+            property color edgeColor: bubble.border.width > 0 ? bubble.border.color : bubble.color
             visible: root.modelData.kind !== "system" && !root.stickerKind
 
             renderStrategy: Canvas.Immediate
             antialiasing: true
             onFillColorChanged: requestPaint()
+            onEdgeColorChanged: requestPaint()
             onPaint: {
                 const ctx = getContext("2d")
                 ctx.reset()
@@ -469,12 +479,28 @@ Item {
                     ctx.lineTo(width, 0)
                     ctx.lineTo(0, height)
                 } else {
-                    ctx.moveTo(0, 0)
-                    ctx.lineTo(width, 0)
+                    ctx.moveTo(width, 0)
+                    ctx.lineTo(0, 0)
                     ctx.lineTo(width, height)
                 }
                 ctx.closePath()
                 ctx.fill()
+                // A received bubble is outlined, so the tail has to carry that
+                // line along its two outer edges or the outline stops dead at
+                // the corner.
+                if (bubble.border.width > 0) {
+                    ctx.strokeStyle = edgeColor
+                    ctx.lineWidth = bubble.border.width
+                    ctx.beginPath()
+                    if (root.modelData.from_me) {
+                        ctx.moveTo(width, 0)
+                        ctx.lineTo(0, height)
+                    } else {
+                        ctx.moveTo(0, 0)
+                        ctx.lineTo(width, height)
+                    }
+                    ctx.stroke()
+                }
             }
         }
 

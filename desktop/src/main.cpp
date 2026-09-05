@@ -320,6 +320,9 @@ int main(int argc, char *argv[])
     parser.addOption(presenceDisplayTestOption);
     QCommandLineOption screenshotOption(QStringLiteral("screenshot"), QStringLiteral("Render the interface to a PNG and exit"), QStringLiteral("path"));
     parser.addOption(screenshotOption);
+    QCommandLineOption screenshotChatOption(QStringLiteral("screenshot-chat"),
+        QStringLiteral("Open this conversation before the screenshot is taken"), QStringLiteral("jid"));
+    parser.addOption(screenshotChatOption);
     QCommandLineOption themeOption(QStringLiteral("theme"), QStringLiteral("Override the appearance for this run (system, light, or dark)"), QStringLiteral("mode"));
     parser.addOption(themeOption);
     QCommandLineOption sectionOption(QStringLiteral("section"), QStringLiteral("Open a primary section (chats, status, calls, channels, communities, media, or profile)"), QStringLiteral("name"));
@@ -357,6 +360,7 @@ int main(int argc, char *argv[])
     const auto screenshotSearchQuery = parser.value(searchQueryOption);
     const auto screenshotRemoveAccount = parser.value(removeProfileOption);
     const auto screenshotConversationSearch = parser.value(conversationSearchOption);
+    const auto screenshotChat = parser.value(screenshotChatOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
@@ -1361,6 +1365,17 @@ QtObject {
                 && note(preview->property("text").toString().contains(QStringLiteral("line Second")), "preview text")
                 && note(bubble && bubble->width() < 360.0, "bubble width")
                 && note(tail && qFuzzyIsNull(tail->rotation()) && tail->z() >= 0.0, "bubble tail")
+                // WhatsApp Web's tail is 8 device pixels wide and 14 tall, and
+                // it starts exactly where the bubble ends: a rounded corner
+                // behind it left a notch between the two.
+                && note(tail && qAbs(tail->width() - 6.4) < 0.01 && qAbs(tail->height() - 11.2) < 0.01,
+                        "tail measurements")
+                // This delegate is one of the reader's own messages, so the
+                // tail is on the right and that corner is the square one.
+                && note(bubble && qAbs(tail->x() - bubble->width()) < 0.01
+                            && qFuzzyIsNull(bubble->property("topRightRadius").toReal())
+                            && bubble->property("topLeftRadius").toReal() > 0.0,
+                        "tail joins a square corner")
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
@@ -3149,6 +3164,15 @@ QtObject {
             });
         }
 
+        // A conversation is what most of the interface is, and a screenshot run
+        // has nothing to click with. Opening one by JID is how a rendering can
+        // be measured against WhatsApp Web without driving the desktop.
+        if (!screenshotChat.isEmpty()) {
+            QTimer::singleShot(1500, &app, [&backend, screenshotChat] {
+                backend.openChat(screenshotChat, QString());
+            });
+        }
+
         // The removal dialog is the only way an account is deleted, so the path
         // under test is the dialog's own, not the client call alone. It waits
         // for the account's own daemon to be up, which is the state the
@@ -3170,6 +3194,7 @@ QtObject {
         // photograph, which the dialog case does not.
         const int grabDelay = !screenshotRemoveAccount.isEmpty() ? 8000
             : !screenshotConversationSearch.isEmpty() ? 7000
+            : !screenshotChat.isEmpty() ? 6000
             : (screenshotSearchQuery.isEmpty() ? 1800 : 5000);
         QTimer::singleShot(grabDelay, &app, [&engine, screenshotPath] {
             if (engine.rootObjects().isEmpty()) {
