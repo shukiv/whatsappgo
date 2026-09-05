@@ -54,6 +54,20 @@ Q_GUI_EXPORT void qt_handleWheelEvent(QWindow *window, const QPointF &local,
 
 namespace {
 
+QString configBaseDir()
+{
+    const auto configured = qEnvironmentVariable("XDG_CONFIG_HOME");
+    if (!configured.isEmpty())
+        return configured;
+#if defined(Q_OS_WIN)
+    return qEnvironmentVariable("APPDATA");
+#elif defined(Q_OS_MACOS)
+    return QDir::home().filePath(QStringLiteral("Library/Application Support"));
+#else
+    return QDir::home().filePath(QStringLiteral(".config"));
+#endif
+}
+
 void installResizeRepaintGuard(QQuickWindow *window)
 {
     if (window == nullptr)
@@ -142,6 +156,16 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationDomain(QStringLiteral("whatsappgo.org"));
     QApplication::setApplicationName(QStringLiteral("WhatsAppGo"));
     QApplication::setDesktopFileName(QStringLiteral("org.whatsappgo.Desktop"));
+#ifndef Q_OS_LINUX
+    // On Linux QSettings already writes an INI file under XDG_CONFIG_HOME,
+    // beside everything else the application keeps per account. Windows stores
+    // settings in the registry and macOS in a plist under ~/Library/Preferences,
+    // neither of which follows that directory: the account list outlived the
+    // accounts themselves, which is why removing an account passed on Linux and
+    // failed on both of the others.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, configBaseDir());
+#endif
     const QIcon applicationIcon = QIcon::fromTheme(QStringLiteral("org.whatsappgo.Desktop"),
                                                    QIcon(QStringLiteral(":/org.whatsappgo.Desktop.svg")));
     QApplication::setWindowIcon(applicationIcon);
@@ -2308,7 +2332,9 @@ QtObject {
 
         backend.removeProfile(probe);
         QCoreApplication::processEvents();
-        if (backend.profiles().contains(probe) || probeData.exists())
+        if (backend.profiles().contains(probe))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (probeData.exists())
             return WHATSAPPGO_TEST_FAILURE();
 
         // Removing the account that is open is the path the menu actually
@@ -2326,7 +2352,9 @@ QtObject {
             return WHATSAPPGO_TEST_FAILURE();
         backend.removeProfile(current);
         QCoreApplication::processEvents();
-        if (backend.profiles().contains(current) || currentData.exists())
+        if (backend.profiles().contains(current))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (currentData.exists())
             return WHATSAPPGO_TEST_FAILURE();
         if (backend.profile() == current)
             return WHATSAPPGO_TEST_FAILURE();

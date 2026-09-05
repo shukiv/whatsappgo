@@ -1163,6 +1163,16 @@ Item {
         padding: 6
         modal: false
         focus: true
+        // Qt 6.8 added Popup.popupType, and 6.9 opens a plain Popup in its own
+        // window by default. This one is positioned by clamping it inside the
+        // application window - see clampPopupX and clampPopupY - so it has to
+        // be an item in that window's overlay. The guard keeps the file
+        // loadable on the Qt 6.5 the build still supports, where every popup
+        // was an item already.
+        Component.onCompleted: {
+            if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
+                popupType = Popup.Item
+        }
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onClosed: {
             if (pairedWithMenu) {
@@ -1251,6 +1261,16 @@ Item {
         width: 196
         property string capturedSelection: ""
         closePolicy: Popup.CloseOnEscape
+        // Qt 6.8 added Popup.popupType, and 6.9 opens a plain Popup in its own
+        // window by default. This one is positioned by clamping it inside the
+        // application window - see clampPopupX and clampPopupY - so it has to
+        // be an item in that window's overlay. The guard keeps the file
+        // loadable on the Qt 6.5 the build still supports, where every popup
+        // was an item already.
+        Component.onCompleted: {
+            if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
+                popupType = Popup.Item
+        }
 
         WhatsAppMenuItem {
 			id: messageInfoAction
