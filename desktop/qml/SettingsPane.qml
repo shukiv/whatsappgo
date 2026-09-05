@@ -38,17 +38,22 @@ ColumnLayout {
     signal appearanceRequested()
     signal bugReportRequested()
 
-    // A build that was not stamped with a version is somebody's own, and it is
-    // never behind a release. Saying so is more use than "up to date".
-    readonly property bool stampedBuild: {
-        const current = String(backend.updateStatus.current || "")
-        return current !== "" && current !== "dev"
-    }
+    // A build that was not stamped with a release version is somebody's own,
+    // and it is never behind a release - the daemon compares the same way. A
+    // working copy is stamped with its commit instead, which is worth showing
+    // but is not a version to compare. Saying so is more use than "up to date".
+    readonly property bool stampedBuild:
+        /^v?\d+\.\d+(\.\d+)?([-+].*)?$/.test(String(backend.updateStatus.current || ""))
     readonly property bool updateBusy: backend.updateStatus.downloading === true
     readonly property bool updateReady: String(backend.updateStatus.downloaded || "") !== ""
-    readonly property string versionText: root.stampedBuild
-        ? qsTr("WhatsAppGo %1").arg(String(backend.updateStatus.current))
-        : qsTr("WhatsAppGo, built from source")
+    readonly property string versionText: {
+        const current = String(backend.updateStatus.current || "")
+        if (root.stampedBuild)
+            return qsTr("WhatsAppGo %1").arg(current)
+        return current === "" || current === "dev"
+            ? qsTr("WhatsAppGo, built from source")
+            : qsTr("WhatsAppGo, built from source (%1)").arg(current)
+    }
     readonly property string updateText: {
         const status = backend.updateStatus
         if (String(status.error || "") !== "")
