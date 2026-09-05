@@ -208,6 +208,32 @@ on the network. `whatsappctl` is a thin same-user client for this protocol; it
 does not start a daemon. `rpc.discover` provides the installed method and event
 catalogue. See [Command-line and bot API](API.md).
 
+## Updates
+
+The daemon asks GitHub for the newest published release every three hours and
+publishes `update.available` when the version on offer changes. A draft or a
+pre-release is not an answer: the release workflow publishes a draft first, and
+a person decides when it becomes a release.
+
+The comparison is against the version the binary was stamped with at build
+time, by `scripts/version.sh` through `-X main.version`. A build with no stamp
+calls itself `dev` and is never behind a release, so a working copy is never
+told to update - and an unstamped release build would silently have no update
+check at all, which is why `scripts/version-test.sh` runs in CI.
+
+`update.download` fetches the artifact for the running platform. Nothing about
+the answer is trusted: https only, every host in the redirect chain has to be on
+an allow list, the size is capped, the name on disk is the one this build
+expects rather than the one the server offered, and the contents have to match
+the release's own `SHA256SUMS`. A file that fails any of that is deleted.
+
+Installing is the desktop's job, because the daemon has no idea what the window
+is running from and cannot restart it. An AppImage is replaced in place - copy
+beside it, then a rename, so either the old version or the new one is there -
+and the window relaunches itself. Windows starts the installer and closes.
+macOS opens the disk image for the reader to drag across, which is as far as an
+unsigned bundle can go.
+
 ## Event flow
 
 Incoming message:

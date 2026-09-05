@@ -131,6 +131,9 @@ All parameter objects reject unknown fields.
 | --- | --- | --- |
 | `rpc.discover` | `{}` | API metadata |
 | `status.get` | `{}` | Connection status |
+| `update.status` | `{}` | The installed version, any newer release, and whether this build can install one |
+| `update.check` | `{}` | Ask GitHub now instead of waiting for the next three-hourly look |
+| `update.download` | `{}` | Start downloading this platform's artifact; reports itself with `update.progress`, `update.ready` and `update.failed` |
 | `connection.connect` / `connection.disconnect` | `{}` | Connect or disconnect this linked device |
 | `pairing.start` | `{}` | Start QR pairing and emit pairing events |
 | `pairing.phone` | `phone` | Return a phone-pairing code |

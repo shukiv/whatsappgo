@@ -12,6 +12,18 @@ warns about an unsigned installer. Building from source avoids both.
 The desktop application and its Go backend are installed together. Start only
 `whatsappgo`; it starts and stops its private `whatsappd` helper automatically.
 
+## Staying up to date
+
+A packaged build looks for a newer release every three hours and asks once when
+it finds one. **Settings → Help** shows what this copy is and has the same
+button, so nobody has to wait to be asked. On Linux the AppImage replaces itself
+and the window reopens; on Windows the installer takes over; on macOS the disk
+image opens for you to drag across.
+
+A build made from source is not compared against the releases - it reports
+itself as built from source and offers nothing, because a working copy is not
+behind anything. `git pull` is the update there.
+
 ## Requirements
 
 - Linux, Windows 10 or newer, or macOS 12 or newer
