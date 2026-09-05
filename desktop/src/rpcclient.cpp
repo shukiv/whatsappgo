@@ -7,6 +7,10 @@
 #include <cstdlib>
 #endif
 #ifdef Q_OS_WIN
+// windows.h defines min and max as macros and drags in most of the Win32 API;
+// both break Qt headers compiled after it in the same translation unit.
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
 #include "profilemonitor.h"
