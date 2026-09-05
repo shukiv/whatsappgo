@@ -15,6 +15,9 @@ ThemedToolButton {
     // past the edge of the window as it did on the pairing page.
     readonly property Item menuSurface: popupParent
         || (Window.window ? Window.window.contentItem : null)
+    // Lets a caller drop its tooltip while the menu is up: a tooltip left on
+    // screen covers the menu the reader just opened.
+    readonly property bool menuOpen: accountMenu.visible
     signal switchRequested(string profile)
     signal removeRequested(string profile)
     signal renameRequested(string profile)
@@ -38,7 +41,7 @@ ThemedToolButton {
     Accessible.description: totalUnread > 0
         ? qsTr("%1 unread messages across all accounts").arg(totalUnread)
         : qsTr("No unread messages")
-    onClicked: accountMenu.opened ? accountMenu.close() : accountMenu.open()
+    onClicked: accountMenu.toggleUnder(root)
 
     contentItem: Item {
         TintedIcon {
@@ -86,14 +89,7 @@ ThemedToolButton {
         objectName: "accountSwitcherMenu"
         parent: root.menuSurface || root
         width: 244
-        x: root.menuSurface
-            ? Math.max(8, Math.min(root.menuSurface.width - width - 8,
-                                   root.mapToItem(root.menuSurface, 0, 0).x + root.width - width))
-            : 0
-        y: root.menuSurface
-            ? Math.max(8, Math.min(root.menuSurface.height - implicitHeight - 8,
-                                   root.mapToItem(root.menuSurface, 0, 0).y + root.height + 2))
-            : root.height + 2
+        anchorItem: root
 
         Item {
             width: parent.width

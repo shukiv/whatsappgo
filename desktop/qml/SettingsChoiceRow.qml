@@ -14,7 +14,7 @@ ItemDelegate {
     signal choiceSelected(string choice)
 
     implicitHeight: 56
-    onClicked: choiceMenu.opened ? choiceMenu.close() : choiceMenu.open()
+    onClicked: choiceMenu.toggleUnder(root)
 
     readonly property string valueLabel: {
         for (let i = 0; i < root.choices.length; ++i) {
@@ -52,10 +52,8 @@ ItemDelegate {
         objectName: "settingsChoiceMenu"
         parent: Overlay.overlay
         width: 240
-        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
-            root.mapToItem(Overlay.overlay, root.width - 260, 0).x))
-        y: Math.max(8, Math.min(Overlay.overlay.height - implicitHeight - 8,
-            root.mapToItem(Overlay.overlay, 0, root.height).y))
+        anchorItem: root
+        anchorOffsetX: -20
 
         Repeater {
             model: root.choices

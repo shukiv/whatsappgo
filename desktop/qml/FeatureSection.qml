@@ -103,7 +103,7 @@ RowLayout {
                             root.createCommunityRequested()
                             return
                         }
-                        sectionAddMenu.opened ? sectionAddMenu.close() : sectionAddMenu.open()
+                        sectionAddMenu.toggleUnder(sectionAddButton)
                     }
                     background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
                     ToolTip.visible: hovered
@@ -378,9 +378,7 @@ RowLayout {
         objectName: "featureSectionAddMenu"
         parent: Overlay.overlay
         width: 240
-        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
-            sectionAddButton.mapToItem(Overlay.overlay, 0, 0).x - width + 40))
-        y: sectionAddButton.mapToItem(Overlay.overlay, 0, sectionAddButton.height).y + 4
+        anchorItem: sectionAddButton
 
         WhatsAppMenuItem {
             objectName: "newChannelItem"

@@ -262,6 +262,8 @@ int main(int argc, char *argv[])
     parser.addOption(chatOption);
     QCommandLineOption smokeTestOption(QStringLiteral("smoke-test"), QStringLiteral("Load the complete QML interface and exit"));
     parser.addOption(smokeTestOption);
+    QCommandLineOption menuPlacementTestOption(QStringLiteral("menu-placement-test"), QStringLiteral("Verify each menu opens under the control that owns it"));
+    parser.addOption(menuPlacementTestOption);
     QCommandLineOption searchNavigationTestOption(QStringLiteral("search-navigation-test"), QStringLiteral("Verify that the rail search action opens and focuses chat search"));
     parser.addOption(searchNavigationTestOption);
     QCommandLineOption messageInteractionTestOption(QStringLiteral("message-interaction-test"), QStringLiteral("Verify message text can be selected and links are interactive"));
@@ -326,6 +328,7 @@ int main(int argc, char *argv[])
     parser.addOption(settingsSectionOption);
     parser.process(app);
     const bool smokeTest = parser.isSet(smokeTestOption);
+    const bool menuPlacementTest = parser.isSet(menuPlacementTestOption);
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
@@ -359,7 +362,7 @@ int main(int argc, char *argv[])
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
         || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
-        || styleDetectionTest || fileUrlTest
+        || styleDetectionTest || fileUrlTest || menuPlacementTest
         || !screenshotPath.isEmpty();
 
     // Automated runs keep the per-account monitors off, because each one opens
@@ -2916,6 +2919,97 @@ QtObject {
             return result;
         }
         return EXIT_SUCCESS;
+    }
+    if (menuPlacementTest) {
+        if (engine.rootObjects().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *root = engine.rootObjects().constFirst();
+        // The window has to be on screen and laid out before anything can be
+        // said about where a menu lands: an unpolished window reports its
+        // controls at negative coordinates that settle later.
+        if (auto *window = qobject_cast<QQuickWindow *>(root)) {
+            window->show();
+            QEventLoop settle;
+            QTimer::singleShot(700, &settle, &QEventLoop::quit);
+            settle.exec();
+        }
+        bool passed = true;
+        const auto require = [&passed](bool condition, const QString &description) {
+            if (!condition) {
+                passed = false;
+                qInfo().noquote() << QStringLiteral("FAIL: ") + description;
+            }
+        };
+        struct Placement {
+            const char *button;
+            const char *menu;
+        };
+        // A menu belongs to the control that opened it: WhatsApp Web hangs one
+        // under its button, lined up with the button's right edge.
+        const QList<Placement> placements{
+            {"sidebarMenuButton", "sidebarMenu"},
+            {"accountSwitcherButton", "accountSwitcherMenu"},
+            {"conversationMenuButton", "conversationMenu"},
+        };
+        for (const auto &placement : placements) {
+            // The same control appears on more than one page - the account
+            // switcher is on the pairing page too - so the button that is on
+            // screen is the one to measure, and its menu is the one inside it.
+            QQuickItem *button = nullptr;
+            for (auto *candidate : root->findChildren<QQuickItem *>(QString::fromLatin1(placement.button))) {
+                if (candidate->isVisible() && candidate->width() > 0) {
+                    button = candidate;
+                    break;
+                }
+            }
+            auto *menu = button != nullptr
+                ? button->findChild<QObject *>(QString::fromLatin1(placement.menu))
+                : nullptr;
+            if (button == nullptr) {
+                // The conversation header only exists once a chat is open, so
+                // its menu is measured when the page it lives on is shown.
+                qInfo().noquote() << QStringLiteral("skipped: %1 is not on screen")
+                                         .arg(QString::fromLatin1(placement.button));
+                continue;
+            }
+            if (menu == nullptr) {
+                qInfo().noquote() << QStringLiteral("FAIL: %1 has no menu named %2")
+                                         .arg(QString::fromLatin1(placement.button))
+                                         .arg(QString::fromLatin1(placement.menu));
+                passed = false;
+                continue;
+            }
+            QMetaObject::invokeMethod(menu, "open");
+            QEventLoop opening;
+            QTimer::singleShot(250, &opening, &QEventLoop::quit);
+            opening.exec();
+            auto *surface = qobject_cast<QQuickItem *>(menu->property("parent").value<QObject *>());
+            if (surface == nullptr) {
+                qInfo().noquote() << QStringLiteral("FAIL: %1 has no surface to open in")
+                                         .arg(QString::fromLatin1(placement.menu));
+                passed = false;
+                continue;
+            }
+            const auto anchor = button->mapToItem(surface, QPointF(0, 0));
+            const auto menuX = menu->property("x").toReal();
+            const auto menuY = menu->property("y").toReal();
+            const auto menuWidth = menu->property("width").toReal();
+            const auto wantedRight = anchor.x() + button->width();
+            const auto wantedTop = anchor.y() + button->height();
+            qInfo().noquote() << QStringLiteral("%1: button at (%2,%3) %4x%5, menu at (%6,%7) width %8")
+                                     .arg(QString::fromLatin1(placement.menu))
+                                     .arg(anchor.x()).arg(anchor.y()).arg(button->width()).arg(button->height())
+                                     .arg(menuX).arg(menuY).arg(menuWidth);
+            require(qAbs(menuX + menuWidth - wantedRight) <= 1.0,
+                    QStringLiteral("%1 ends %2 px from its button's right edge")
+                        .arg(QString::fromLatin1(placement.menu)).arg(menuX + menuWidth - wantedRight));
+            require(menuY >= wantedTop - 1.0 && menuY <= wantedTop + 8.0,
+                    QStringLiteral("%1 opens %2 px below its button")
+                        .arg(QString::fromLatin1(placement.menu)).arg(menuY - wantedTop));
+            QMetaObject::invokeMethod(menu, "close");
+            QCoreApplication::processEvents();
+        }
+        return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (smokeTest && screenshotPath.isEmpty()) {
         if (engine.rootObjects().isEmpty())

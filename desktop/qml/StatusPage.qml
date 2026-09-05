@@ -54,7 +54,7 @@ RowLayout {
                     Layout.preferredHeight: 44
                     iconSource: Qt.resolvedUrl("icons/menu.svg")
                     Accessible.name: qsTr("Status menu")
-                    onClicked: statusMenu.opened ? statusMenu.close() : statusMenu.open()
+                    onClicked: statusMenu.toggleUnder(statusMenuButton)
                     background: Rectangle { radius: 22; color: parent.hovered ? Theme.hoverRow : "transparent" }
                 }
                 ThemedToolButton {
@@ -63,7 +63,7 @@ RowLayout {
                     Layout.preferredWidth: 44
                     Layout.preferredHeight: 44
                     Accessible.name: qsTr("Add status update")
-                    onClicked: addStatusMenu.opened ? addStatusMenu.close() : addStatusMenu.open()
+                    onClicked: addStatusMenu.toggleUnder(addStatusButton)
                     contentItem: Label {
                         text: "+"
                         color: Theme.text
@@ -251,9 +251,7 @@ RowLayout {
         objectName: "statusMenu"
         parent: Overlay.overlay
         width: 220
-        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
-            statusMenuButton.mapToItem(Overlay.overlay, 0, statusMenuButton.height).x - width + 44))
-        y: statusMenuButton.mapToItem(Overlay.overlay, 0, statusMenuButton.height).y + 4
+        anchorItem: statusMenuButton
 
         WhatsAppMenuItem {
             objectName: "statusPrivacyItem"
@@ -271,9 +269,7 @@ RowLayout {
         objectName: "addStatusMenu"
         parent: Overlay.overlay
         width: 220
-        x: Math.max(8, Math.min(Overlay.overlay.width - width - 8,
-            addStatusButton.mapToItem(Overlay.overlay, 0, addStatusButton.height).x - width + 44))
-        y: addStatusButton.mapToItem(Overlay.overlay, 0, addStatusButton.height).y + 4
+        anchorItem: addStatusButton
 
         WhatsAppMenuItem {
             objectName: "addPhotoStatusItem"

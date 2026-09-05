@@ -13,7 +13,58 @@ Popup {
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    // The control the menu belongs to. A menu hangs under its button, lined
+    // up with the button's right edge, the way WhatsApp Web's do.
+    //
+    // The position cannot be a binding: mapToItem is a function call, so QML
+    // has nothing to re-evaluate it on. A menu bound that way keeps whatever
+    // the layout happened to say the first time - before the window had been
+    // laid out - and afterwards opens far from the button that owns it.
+    property Item anchorItem
+    // A menu normally hangs below its control and lines up with its right
+    // edge. The composer's attachment menu opens upwards, and a couple of
+    // menus sit a few pixels in from the edge they line up with.
+    property bool anchorAbove: false
+    property bool anchorAlignLeft: false
+    property real anchorOffsetX: 0
+
+    function positionUnder(item) {
+        if (!item || !parent)
+            return
+        anchorItem = item
+        const anchor = item.mapToItem(parent, 0, 0)
+        const shownHeight = Math.max(height, implicitHeight)
+        const wantedX = (anchorAlignLeft ? anchor.x : anchor.x + item.width - width) + anchorOffsetX
+        const wantedY = anchorAbove
+            ? anchor.y - shownHeight - 8
+            : anchor.y + item.height + 2
+        x = parent.width >= width + 16
+            ? Math.max(8, Math.min(parent.width - width - 8, wantedX))
+            : wantedX
+        y = parent.height >= shownHeight + 16
+            ? Math.max(8, Math.min(parent.height - shownHeight - 8, wantedY))
+            : wantedY
+    }
+
+    function openUnder(item) {
+        positionUnder(item)
+        open()
+    }
+
+    function toggleUnder(item) {
+        if (opened)
+            close()
+        else
+            openUnder(item)
+    }
+
     function clampToParent() {
+        // A menu with an anchor is placed against it again, so growing content
+        // pushes it back under its button rather than merely inside the window.
+        if (anchorItem && visible) {
+            positionUnder(anchorItem)
+            return
+        }
         if (!parent)
             return
         const shownHeight = Math.max(height, implicitHeight)

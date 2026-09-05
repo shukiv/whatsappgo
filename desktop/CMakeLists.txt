@@ -436,6 +436,7 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME desktop-qml-smoke COMMAND whatsappgo --smoke-test)
+    add_test(NAME desktop-menu-placement COMMAND whatsappgo --menu-placement-test)
     set_tests_properties(desktop-qml-smoke PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10

@@ -301,7 +301,7 @@ ApplicationWindow {
 
     function toggleAttachmentMenu() {
         emojiPicker.close()
-        attachmentMenu.opened ? attachmentMenu.close() : attachmentMenu.open()
+        attachmentMenu.toggleUnder(attachmentButton)
     }
 
     function prepareClipboardPaste() {
@@ -937,31 +937,31 @@ ApplicationWindow {
                                 removeAccountDialog.profile = profile
                                 removeAccountDialog.open()
                             }
-                            ToolTip.visible: hovered
+                            ToolTip.visible: hovered && !accountSwitcherButton.menuOpen
                             ToolTip.text: Accessible.name
                         }
 
                         ThemedToolButton {
                             id: sidebarMenuButton
+                            objectName: "sidebarMenuButton"
                             Layout.preferredWidth: 40
                             Layout.preferredHeight: 40
                             iconSource: Qt.resolvedUrl("icons/menu.svg")
                             iconSize: 20
                             Accessible.name: qsTr("Main menu")
                             Accessible.description: sidebarMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
-                            onClicked: sidebarMenu.opened ? sidebarMenu.close() : sidebarMenu.open()
+                            onClicked: sidebarMenu.toggleUnder(sidebarMenuButton)
                             background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
-                            ToolTip.visible: hovered
+                            // A tooltip that stays up once the menu is open
+                            // covers the menu it belongs to.
+                            ToolTip.visible: hovered && !sidebarMenu.visible
                             ToolTip.text: Accessible.name
 
                             WhatsAppMenuPopup {
                                 id: sidebarMenu
                                 objectName: "sidebarMenu"
                                 parent: Overlay.overlay
-                                x: Math.max(8, Math.min(window.width - width - 8,
-                                                       sidebarMenuButton.mapToItem(window.contentItem, 0, 0).x
-                                                       + sidebarMenuButton.width - width))
-                                y: sidebarMenuButton.mapToItem(window.contentItem, 0, 0).y + sidebarMenuButton.height + 2
+                                anchorItem: sidebarMenuButton
 
                                 WhatsAppMenuItem {
                                     objectName: "newGroupMenuItem"
@@ -1563,9 +1563,9 @@ ApplicationWindow {
                             iconSize: 20
                             Accessible.name: qsTr("Conversation menu")
                             Accessible.description: conversationMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
-                            onClicked: conversationMenu.opened ? conversationMenu.close() : conversationMenu.open()
+                            onClicked: conversationMenu.toggleUnder(conversationMenuButton)
                             background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
-                            ToolTip.visible: hovered
+                            ToolTip.visible: hovered && !conversationMenu.visible
                             ToolTip.text: Accessible.name
 
                             WhatsAppMenuPopup {
@@ -1573,10 +1573,7 @@ ApplicationWindow {
                                 objectName: "conversationMenu"
                                 parent: Overlay.overlay
                                 width: 238
-                                x: Math.max(8, Math.min(window.width - width - 8,
-                                                       conversationMenuButton.mapToItem(window.contentItem, 0, 0).x
-                                                       + conversationMenuButton.width - width))
-                                y: conversationMenuButton.mapToItem(window.contentItem, 0, 0).y + conversationMenuButton.height + 2
+                                anchorItem: conversationMenuButton
 
                                 WhatsAppMenuItem {
                                     objectName: "conversationContactInfoItem"
@@ -1731,7 +1728,7 @@ ApplicationWindow {
                     }
 
                     TapHandler {
-                        onTapped: pinnedMessageMenu.open()
+                        onTapped: pinnedMessageMenu.openUnder(pinnedMessageBar)
                     }
 
                     WhatsAppMenuPopup {
@@ -1739,8 +1736,8 @@ ApplicationWindow {
                         objectName: "pinnedMessageMenu"
                         parent: Overlay.overlay
                         width: 210
-                        x: Math.max(8, window.width - width - 18)
-                        y: Math.max(8, pinnedMessageBar.mapToItem(window.contentItem, 0, pinnedMessageBar.height).y + 2)
+                        anchorItem: pinnedMessageBar
+                        anchorOffsetX: -10
 
                         WhatsAppMenuItem {
                             text: qsTr("Unpin")
@@ -2107,16 +2104,16 @@ ApplicationWindow {
                                         radius: 22
                                         color: parent.hovered || attachmentMenu.opened ? Theme.hoverRow : "transparent"
                                     }
-                                    ToolTip.visible: hovered
+                                    ToolTip.visible: hovered && !attachmentMenu.visible
                                     ToolTip.text: Accessible.name
 
                                     AttachmentMenu {
                                         id: attachmentMenu
                                         parent: Overlay.overlay
-                                        x: Math.max(8, Math.min(window.width - width - 8,
-                                                               attachmentButton.mapToItem(window.contentItem, 0, 0).x - 8))
-                                        y: Math.max(8, attachmentButton.mapToItem(window.contentItem, 0, 0).y
-                                                       - height - 8)
+                                        anchorItem: attachmentButton
+                                        anchorAlignLeft: true
+                                        anchorAbove: true
+                                        anchorOffsetX: -8
                                         onDocumentRequested: documentFileDialog.open()
                                         onPhotosVideosRequested: photosVideosFileDialog.open()
                                         onAudioRequested: audioFileDialog.open()
