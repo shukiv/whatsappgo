@@ -66,6 +66,9 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
     Q_PROPERTY(QString bugReportEnvironment READ bugReportEnvironment NOTIFY bugReportEnvironmentChanged)
     Q_PROPERTY(QVariantMap updateStatus READ updateStatus NOTIFY updateStatusChanged)
+    // True while a check the reader asked for is in flight, so the control
+    // they pressed can show that something is happening.
+    Q_PROPERTY(bool checkingForUpdates READ checkingForUpdates NOTIFY checkingForUpdatesChanged)
 
 public:
     explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
@@ -175,6 +178,7 @@ public:
     Q_INVOKABLE bool installUpdate();
     Q_INVOKABLE bool updateInstallable() const;
     QVariantMap updateStatus() const { return m_updateStatus; }
+    bool checkingForUpdates() const { return m_checkingForUpdates; }
 
     Q_INVOKABLE void refreshBugReportEnvironment();
     Q_INVOKABLE void submitBugReport(const QString &subject, const QString &body);
@@ -280,6 +284,10 @@ signals:
     void notificationRequested(const QString &chatJid, const QString &title, const QString &body);
     void bugReportEnvironmentChanged();
     void updateStatusChanged();
+    void checkingForUpdatesChanged();
+    // The answer to a check somebody asked for, so the window can say what
+    // came of it rather than leaving the button looking dead.
+    void updateCheckFinished(bool available, const QString &version, const QString &error);
     // A version nobody has been offered yet.
     void updateAvailable(const QString &version);
     void updateProgress(qint64 received, qint64 total);
@@ -323,6 +331,8 @@ private:
     QHash<QString, Callback> m_pending;
     QString m_bugReportEnvironment;
     QVariantMap m_updateStatus;
+    bool m_checkingForUpdates = false;
+    void startUpdateCheck(bool announce);
     QVariantMap m_status;
     QVariantList m_chats;
     ChatListModel m_chatList;

@@ -49,6 +49,7 @@ int main(int argc, char **argv)
         return testFatal("could not listen on the socket", socketPath + QStringLiteral(": ") + server.errorString());
 
     int statusRequests = 0;
+    int checkRequests = 0;
     int downloadRequests = 0;
     QByteArray input;
     QObject::connect(&server, &QLocalServer::newConnection, &app, [&] {
@@ -69,6 +70,13 @@ int main(int argc, char **argv)
                                          {QStringLiteral("logged_in"), true}};
                 } else if (method == QStringLiteral("update.status")) {
                     ++statusRequests;
+                    result = QJsonObject{{QStringLiteral("current"), QStringLiteral("v1.0.0")},
+                                         {QStringLiteral("available"), true},
+                                         {QStringLiteral("latest"), QStringLiteral("v1.1.0")},
+                                         {QStringLiteral("url"), QStringLiteral("https://example.test/v1.1.0")},
+                                         {QStringLiteral("installable"), true}};
+                } else if (method == QStringLiteral("update.check")) {
+                    ++checkRequests;
                     result = QJsonObject{{QStringLiteral("current"), QStringLiteral("v1.0.0")},
                                          {QStringLiteral("available"), true},
                                          {QStringLiteral("latest"), QStringLiteral("v1.1.0")},
@@ -104,11 +112,58 @@ int main(int argc, char **argv)
         });
     });
 
+    // A second daemon that has not looked for a release in days: opening the
+    // window is when somebody would want to know, so the window asks by itself.
+    QLocalServer staleServer;
+    const auto stalePath = RpcClient::socketPathForProfile(QStringLiteral("update-stale"));
+    if (!staleServer.listen(stalePath))
+        return testFatal("could not listen on the stale socket", stalePath);
+    int staleChecks = 0;
+    QByteArray staleInput;
+    QObject::connect(&staleServer, &QLocalServer::newConnection, &app, [&] {
+        auto *socket = staleServer.nextPendingConnection();
+        QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
+            staleInput += socket->readAll();
+            while (true) {
+                const auto newline = staleInput.indexOf('\n');
+                if (newline < 0)
+                    break;
+                const auto request = QJsonDocument::fromJson(staleInput.left(newline)).object();
+                staleInput.remove(0, newline + 1);
+                const auto method = request.value(QStringLiteral("method")).toString();
+                QJsonValue result = QJsonObject{};
+                if (method == QStringLiteral("update.status")) {
+                    result = QJsonObject{{QStringLiteral("current"), QStringLiteral("v1.0.0")},
+                                         {QStringLiteral("available"), false},
+                                         {QStringLiteral("checked_at"), 0},
+                                         {QStringLiteral("installable"), true}};
+                } else if (method == QStringLiteral("update.check")) {
+                    ++staleChecks;
+                    result = QJsonObject{{QStringLiteral("current"), QStringLiteral("v1.0.0")},
+                                         {QStringLiteral("available"), false},
+                                         {QStringLiteral("checked_at"), 1},
+                                         {QStringLiteral("installable"), true}};
+                }
+                socket->write(QJsonDocument(QJsonObject{
+                    {QStringLiteral("version"), 1},
+                    {QStringLiteral("id"), request.value(QStringLiteral("id"))},
+                    {QStringLiteral("result"), result},
+                }).toJson(QJsonDocument::Compact) + '\n');
+            }
+        });
+    });
+    RpcClient stale(QStringLiteral("update-stale"));
+    QString staleOutcome;
+    bool staleAnnounced = false;
+    QObject::connect(&stale, &RpcClient::updateCheckFinished, &app,
+                     [&](bool, const QString &, const QString &) { staleAnnounced = true; });
+
     RpcClient client(QStringLiteral("update"));
     qint64 received = 0;
     qint64 total = 0;
     QString readyPath;
     QString readyVersion;
+    Q_UNUSED(staleOutcome);
     QString failure;
     QString offered;
     int offers = 0;
@@ -141,6 +196,43 @@ int main(int argc, char **argv)
         return testFatal("connecting to a daemon that already found an update offered nothing");
     if (offered != QStringLiteral("v1.1.0"))
         return testFatal("the wrong version was offered", offered);
+
+    // Pressing the control has to say what came of it: a check that answers
+    // nothing is a button that looks broken.
+    bool checkAnnounced = false;
+    bool checkAvailable = false;
+    QString checkVersion;
+    QString checkError;
+    bool sawChecking = false;
+    QObject::connect(&client, &RpcClient::checkingForUpdatesChanged, &app, [&] {
+        if (client.checkingForUpdates())
+            sawChecking = true;
+    });
+    QObject::connect(&client, &RpcClient::updateCheckFinished, &app,
+                     [&](bool available, const QString &version, const QString &error) {
+        checkAnnounced = true;
+        checkAvailable = available;
+        checkVersion = version;
+        checkError = error;
+    });
+    client.checkForUpdates();
+    if (!waitFor([&] { return checkAnnounced; }))
+        return testFatal("a check the reader asked for answered nothing");
+    if (!sawChecking)
+        return testFatal("the control never showed that a check was running");
+    if (client.checkingForUpdates())
+        return testFatal("the check never finished");
+    if (!checkAvailable || checkVersion != QStringLiteral("v1.1.0") || !checkError.isEmpty())
+        return testFatal("the check reported the wrong outcome", checkVersion + QStringLiteral(" ") + checkError);
+    if (checkRequests != 1)
+        return testFatal("update.check was asked a different number of times",
+                         QString::number(checkRequests));
+
+    // The daemon that last looked days ago is asked again, quietly.
+    if (!waitFor([&] { return staleChecks > 0; }))
+        return testFatal("a daemon that had not looked in a day was never asked");
+    if (staleAnnounced)
+        return testFatal("a check nobody asked for announced itself anyway");
 
     client.downloadUpdate();
     if (!waitFor([&] { return !readyPath.isEmpty(); }))

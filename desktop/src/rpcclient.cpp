@@ -2121,6 +2121,16 @@ void RpcClient::refreshUpdateStatus()
         // offered and does not ask twice.
         if (m_updateStatus.value(QStringLiteral("available")).toBool()) {
             emit updateAvailable(m_updateStatus.value(QStringLiteral("latest")).toString());
+            return;
+        }
+        // Opening the application is when somebody would want to know, and a
+        // daemon that has been running for days may have last looked long ago.
+        // A check a day is enough to notice a release without asking GitHub
+        // about it on every window.
+        const auto checkedAt = m_updateStatus.value(QStringLiteral("checked_at")).toLongLong();
+        const auto dayMs = 24LL * 60LL * 60LL * 1000LL;
+        if (checkedAt <= 0 || QDateTime::currentMSecsSinceEpoch() - checkedAt > dayMs) {
+            startUpdateCheck(false);
         }
     });
 }
@@ -2129,13 +2139,41 @@ void RpcClient::checkForUpdates()
 {
     // Asking now rather than waiting for the next few-hourly look: somebody
     // pressed a button and is waiting for an answer.
-    sendRequest(QStringLiteral("update.check"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
+    startUpdateCheck(true);
+}
+
+// announce says whether anybody is waiting to be told what came of this. A
+// check the window starts by itself, on the first connection of the day, says
+// nothing unless there is actually a new version.
+void RpcClient::startUpdateCheck(bool announce)
+{
+    if (m_checkingForUpdates) {
+        return;
+    }
+    m_checkingForUpdates = true;
+    emit checkingForUpdatesChanged();
+    sendRequest(QStringLiteral("update.check"), {}, [this, announce](const QJsonValue &result, const QJsonObject &error) {
+        m_checkingForUpdates = false;
+        emit checkingForUpdatesChanged();
         if (!error.isEmpty()) {
-            emit updateFailed(error.value(QStringLiteral("message")).toString());
+            const auto message = error.value(QStringLiteral("message")).toString();
+            if (announce) {
+                emit updateCheckFinished(false, QString(), message);
+                emit updateFailed(message);
+            }
             return;
         }
         m_updateStatus = result.toObject().toVariantMap();
         emit updateStatusChanged();
+        const auto available = m_updateStatus.value(QStringLiteral("available")).toBool();
+        const auto latest = m_updateStatus.value(QStringLiteral("latest")).toString();
+        const auto failure = m_updateStatus.value(QStringLiteral("error")).toString();
+        if (announce) {
+            emit updateCheckFinished(available, latest, failure);
+        }
+        if (available) {
+            emit updateAvailable(latest);
+        }
     });
 }
 

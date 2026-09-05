@@ -71,6 +71,8 @@ ApplicationWindow {
     readonly property bool updateDownloaded: String(backend.updateStatus.downloaded || "") !== ""
     readonly property bool updateOffered: backend.updateStatus.available === true
     readonly property string updateActionText: {
+        if (backend.checkingForUpdates)
+            return qsTr("Checking for updates…")
         if (window.updateDownloading)
             return qsTr("Downloading version %1…").arg(String(backend.updateStatus.latest || ""))
         if (window.updateDownloaded)
@@ -530,6 +532,17 @@ ApplicationWindow {
         function onUpdateReady(path, version) {
             updateReadyDialog.open()
         }
+        function onUpdateCheckFinished(available, version, error) {
+            // A check that says nothing looks like a button that does nothing.
+            if (error) {
+                window.transientNotice = qsTr("Could not check for updates: %1").arg(error)
+            } else if (available) {
+                window.transientNotice = qsTr("Version %1 is available.").arg(version)
+            } else {
+                window.transientNotice = qsTr("WhatsAppGo is up to date.")
+            }
+            noticeTimer.restart()
+        }
         function onUpdateFailed(message) {
             window.transientError = message
             errorTimer.restart()
@@ -786,7 +799,8 @@ ApplicationWindow {
                     Layout.preferredHeight: 40
                     iconSource: Qt.resolvedUrl("icons/reconnect.svg")
                     iconTint: window.updateOffered || window.updateDownloaded ? Theme.brand : Theme.icon
-                    enabled: !window.updateDownloading
+                    iconSpinning: backend.checkingForUpdates || window.updateDownloading
+                    enabled: !window.updateDownloading && !backend.checkingForUpdates
                     Accessible.name: window.updateActionText
                     onClicked: window.applyUpdateAction()
                     background: Rectangle {
