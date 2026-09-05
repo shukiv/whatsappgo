@@ -10,9 +10,14 @@ cd "${project_root}"
 mkdir -p "${appdir}/usr/bin" "${tools_dir}" "${project_root}/bin"
 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsappd" "${project_root}/cmd/whatsappd"
 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "${project_root}/bin/whatsappctl" "${project_root}/cmd/whatsappctl"
-cmake -S "${project_root}/desktop" -B "${project_root}/desktop/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-cmake --build "${project_root}/desktop/build" --parallel
-DESTDIR="${appdir}" cmake --install "${project_root}/desktop/build"
+# Its own build directory, the way packaging/macos/build.sh has one: this
+# configures with an install prefix of /usr and without the tests, neither of
+# which belongs in the tree a developer builds in.
+build_dir="${project_root}/desktop/build-appimage"
+cmake -S "${project_root}/desktop" -B "${build_dir}" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF
+cmake --build "${build_dir}" --parallel
+DESTDIR="${appdir}" cmake --install "${build_dir}"
 install -Dm644 "${project_root}/packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml" "${appdir}/usr/share/metainfo/org.whatsappgo.Desktop.metainfo.xml"
 
 arch="$(uname -m)"
