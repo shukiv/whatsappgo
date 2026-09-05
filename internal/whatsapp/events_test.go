@@ -926,3 +926,62 @@ func TestStarPatchKeyLeavesTheSenderSlotEmptyExceptForGroupMessages(t *testing.T
 		})
 	}
 }
+
+func TestReplyCarriesAnExcerptOfTheQuotedMessage(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	chat := types.NewJID("123", types.DefaultUserServer)
+	if err := st.UpsertMessage(ctx, model.Message{
+		ID: "quoted", ChatJID: chat.String(), SenderJID: chat.String(), SenderName: "Alice",
+		Timestamp: 1, Kind: "text", Body: "the original message", Status: "received",
+	}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st, subs: make(map[uint64]func(gateway.Event))}
+
+	reply := model.Message{ID: "answer", ChatJID: chat.String(), ReplyTo: "quoted"}
+	filled := c.withReplyPreview(ctx, reply)
+	if filled.ReplyPreview != "the original message" || filled.ReplySender != "Alice" || filled.ReplyFromMe {
+		t.Fatalf("a stored quote should describe itself: %#v", filled)
+	}
+
+	// Nothing to look up: the reply keeps whatever the message carried, which
+	// is the copy WhatsApp attaches to it.
+	unknown := model.Message{ID: "answer", ChatJID: chat.String(), ReplyTo: "never-synced",
+		ReplyPreview: "from the context", ReplySender: "456"}
+	kept := c.withReplyPreview(ctx, unknown)
+	if kept.ReplyPreview != "from the context" || kept.ReplySender != "456" {
+		t.Fatalf("an unknown quote should keep the attached copy: %#v", kept)
+	}
+}
+
+func TestMessageFromEventDescribesTheQuotedMessageItCarries(t *testing.T) {
+	evt := &waEvents.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Chat:   types.NewJID("123", types.DefaultUserServer),
+			Sender: types.NewJID("456", types.DefaultUserServer)},
+			ID: "m1", Timestamp: time.Unix(100, 0)},
+		Message: &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String("answering"),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:      proto.String("prior"),
+				Participant:   proto.String("789@s.whatsapp.net"),
+				QuotedMessage: &waE2E.Message{Conversation: proto.String("  what was said before  ")},
+			}}},
+	}
+	m := messageFromEvent(evt)
+	if m.ReplyTo != "prior" || m.ReplyPreview != "what was said before" || m.ReplySender != "789" {
+		t.Fatalf("unexpected reply context: %#v", m)
+	}
+
+	// A quoted picture has no words of its own.
+	evt.Message.ExtendedTextMessage.ContextInfo.QuotedMessage = &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{Mimetype: proto.String("image/jpeg")}}
+	if m := messageFromEvent(evt); m.ReplyPreview != "Image" {
+		t.Fatalf("a quoted image should say so: %q", m.ReplyPreview)
+	}
+}

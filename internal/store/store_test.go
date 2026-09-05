@@ -1735,3 +1735,35 @@ func TestSearchMessagesScopesToOneChatAndFindsFilenames(t *testing.T) {
 		t.Fatalf("the document was not matched by its filename: %#v", scoped)
 	}
 }
+
+func TestReplyPreviewDescribesTheQuotedMessage(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := st.UpsertMessage(ctx, model.Message{
+		ID: "quoted", ChatJID: "chat@s.whatsapp.net", SenderJID: "alice@s.whatsapp.net",
+		SenderName: "Alice", Timestamp: 1, Kind: "text", Body: "  the original  ",
+	}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertMessage(ctx, model.Message{
+		ID: "mine", ChatJID: "chat@s.whatsapp.net", Timestamp: 2, Kind: "image",
+		FromMe: true,
+	}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+
+	text, sender, fromMe, ok := st.ReplyPreview(ctx, "chat@s.whatsapp.net", "quoted")
+	if !ok || text != "the original" || sender != "Alice" || fromMe {
+		t.Fatalf("quoted text: %q sender %q fromMe %v ok %v", text, sender, fromMe, ok)
+	}
+
+	// A quoted picture has no words to show, so the kind is the preview.
+	text, _, fromMe, ok = st.ReplyPreview(ctx, "chat@s.whatsapp.net", "mine")
+	if !ok || text != "Image" || !fromMe {
+		t.Fatalf("quoted image: %q fromMe %v ok %v", text, fromMe, ok)
+	}
+
+	if _, _, _, ok := st.ReplyPreview(ctx, "chat@s.whatsapp.net", "never-synced"); ok {
+		t.Fatal("a message that is not in the database reported a preview")
+	}
+}

@@ -1000,6 +1000,26 @@ func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (mode
 	return m, err
 }
 
+// ReplyPreview describes a quoted message the way a reply bubble shows it: who
+// wrote it and a line of what it said. ok is false when the quoted message is
+// not in this database - history older than this device, most often - and the
+// caller then has only the copy WhatsApp puts in the reply's context.
+func (s *Store) ReplyPreview(ctx context.Context, chatJID, messageID string) (text, sender string, fromMe, ok bool) {
+	if chatJID == "" || messageID == "" {
+		return "", "", false, false
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	var body, kind, senderName string
+	var quotedFromMe, revoked bool
+	err := s.db.QueryRowContext(ctx, `SELECT body,kind,COALESCE(sender_name,''),from_me,revoked
+ FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).
+		Scan(&body, &kind, &senderName, &quotedFromMe, &revoked)
+	if err != nil {
+		return "", "", false, false
+	}
+	return preview(model.Message{Kind: kind, Body: body, Revoked: revoked}), senderName, quotedFromMe, true
+}
+
 func (s *Store) OldestMessage(ctx context.Context, chatJID string) (model.Message, error) {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	var m model.Message

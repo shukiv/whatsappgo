@@ -285,6 +285,10 @@ func (c *Client) SendText(ctx context.Context, req gateway.TextRequest) (model.M
 		return model.Message{}, err
 	}
 	result := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}
+	// A reply sent from here describes what it answers, the same way a
+	// received one does; without this the reader's own reply is the one bubble
+	// with nothing above it.
+	result = c.withReplyPreview(ctx, result)
 	return c.withCachedOutgoingLinkPreview(result, req.Preview), nil
 }
 
@@ -570,7 +574,7 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store sent attachment: " + err.Error()}})
 		}
 	}
-	return model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), ForwardingScore: req.ForwardingScore}, nil
+	return c.withReplyPreview(ctx, model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), ForwardingScore: req.ForwardingScore}), nil
 }
 
 func (c *Client) cacheOutgoing(sourcePath, chatJID, messageID, kind string) (string, error) {

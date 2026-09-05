@@ -478,6 +478,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	}
 	msg = c.withCachedThumbnail(msg, evt.Message)
 	msg = c.withCachedLinkPreview(msg, evt.Message)
+	msg = c.withReplyPreview(context.Background(), msg)
 	title := evt.Info.PushName
 	if evt.Info.IsGroup {
 		title = ""
@@ -860,6 +861,26 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 	return msg, nil
 }
 
+// withReplyPreview fills in what a reply shows about the message it answers.
+// The stored copy is better than the one attached to the reply: it carries the
+// sender's real name rather than a phone number, and it reflects an edit or a
+// deletion that happened after the reply was written.
+func (c *Client) withReplyPreview(ctx context.Context, m model.Message) model.Message {
+	if m.ReplyTo == "" {
+		return m
+	}
+	text, sender, fromMe, ok := c.store.ReplyPreview(ctx, m.ChatJID, m.ReplyTo)
+	if !ok {
+		return m
+	}
+	m.ReplyPreview = text
+	m.ReplyFromMe = fromMe
+	if sender != "" {
+		m.ReplySender = sender
+	}
+	return m
+}
+
 // withSenderName fills in the name shown above an incoming group message.
 // WhatsApp Web always labels those bubbles; history sync frequently omits the
 // push name, which left every synced group message unlabelled. The address
@@ -1076,9 +1097,46 @@ func applyLinkPreview(m *model.Message, v *waE2E.ExtendedTextMessage) {
 	m.LinkDescription = strings.TrimSpace(v.GetDescription())
 }
 
+// quotedPreview describes the copy of the quoted message WhatsApp attaches to
+// a reply. It is the only description available when the quoted message itself
+// is older than this device's history.
+func quotedPreview(msg *waE2E.Message) string {
+	if msg == nil {
+		return ""
+	}
+	switch {
+	case strings.TrimSpace(msg.GetConversation()) != "":
+		return strings.TrimSpace(msg.GetConversation())
+	case msg.GetExtendedTextMessage() != nil:
+		return strings.TrimSpace(msg.GetExtendedTextMessage().GetText())
+	case msg.GetImageMessage() != nil:
+		return firstNonEmpty(strings.TrimSpace(msg.GetImageMessage().GetCaption()), "Image")
+	case msg.GetVideoMessage() != nil:
+		return firstNonEmpty(strings.TrimSpace(msg.GetVideoMessage().GetCaption()), "Video")
+	case msg.GetAudioMessage() != nil:
+		return "Audio"
+	case msg.GetDocumentMessage() != nil:
+		return firstNonEmpty(strings.TrimSpace(msg.GetDocumentMessage().GetFileName()), "Document")
+	case msg.GetStickerMessage() != nil:
+		return "Sticker"
+	case msg.GetContactMessage() != nil:
+		return firstNonEmpty(strings.TrimSpace(msg.GetContactMessage().GetDisplayName()), "Contact")
+	case msg.GetLocationMessage() != nil:
+		return firstNonEmpty(strings.TrimSpace(msg.GetLocationMessage().GetName()), "Location")
+	}
+	return ""
+}
+
 func applyContext(m *model.Message, ctx *waE2E.ContextInfo) {
 	if ctx != nil {
 		m.ReplyTo = ctx.GetStanzaID()
+		// A reply carries its own copy of what it answers, which is what the
+		// preview shows until - and unless - the quoted message itself is
+		// found in this device's history.
+		m.ReplyPreview = quotedPreview(ctx.GetQuotedMessage())
+		if participant := ctx.GetParticipant(); participant != "" {
+			m.ReplySender = displayJID(participant)
+		}
 		// A forward chain carries its length in the context. WhatsApp marks
 		// the message as forwarded without a score for the first hop, so the
 		// flag alone still has to count as one.
