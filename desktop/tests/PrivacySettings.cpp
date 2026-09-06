@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <functional>
 
 int testPrivacySettings()
@@ -58,7 +59,10 @@ int testPrivacySettings()
                     const auto method = object.value(QStringLiteral("method")).toString();
                     Request request{socket, object.value(QStringLiteral("id"))};
                     if (method == QStringLiteral("privacy.get")) {
-                        pending.append(request);
+                        // Deliver asynchronously so a read issued just before
+                        // reconnect cannot masquerade as the new connection's
+                        // refresh (Windows named pipes exposed this ordering).
+                        QTimer::singleShot(20, socket, [&, request] { pending.append(request); });
                         continue;
                     }
                     answer(request, method == QStringLiteral("status.get")
@@ -110,16 +114,20 @@ int testPrivacySettings()
     if (!waitFor([&] { return client.privacySettings() == everyone.toVariantMap(); }))
         return testFatal("a privacy change event did not update settings");
     answer(pending.takeFirst(), nobody);
-    // A later status.get response proves the preceding stale read was handled.
-    bool statusReturned = false;
-    QObject::connect(&client, &RpcClient::statusChanged, &client, [&] { statusReturned = true; });
-    client.refreshStatus();
-    if (!waitFor([&] { return statusReturned; }) || client.privacySettings() != everyone.toVariantMap())
+    // A later response on the same socket proves the stale read was handled.
+    // Do not use status.get as a barrier: it starts another privacy.get, which
+    // can reach the stub after reconnect and be mistaken for the new refresh.
+    bool chatsReturned = false;
+    QObject::connect(&client, &RpcClient::chatsChanged, &client, [&] { chatsReturned = true; });
+    client.refreshChats();
+    if (!waitFor([&] { return chatsReturned; }) || client.privacySettings() != everyone.toVariantMap())
         return testFatal("a stale read overwrote a newer privacy event");
-    pending.clear();
+    const auto previousSocket = active;
     client.reconnect();
-    if (!waitFor([&] { return !pending.isEmpty(); }))
+    if (!waitFor([&] { return active && active != previousSocket && !pending.isEmpty(); }))
         return testFatal("privacy was not fetched on reconnect");
+    if (pending.first().socket != active)
+        return testFatal("the reconnect assertion tried to answer an old socket's privacy read");
     answer(pending.takeFirst(), nobody);
     if (!waitFor([&] { return client.privacySettings() == nobody.toVariantMap(); }))
         return testFatal("privacy remained stale after reconnecting");
