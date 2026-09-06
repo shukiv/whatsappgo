@@ -1213,10 +1213,20 @@ func TestAppStateHashMismatchAsksThePhoneAndStaysQuiet(t *testing.T) {
 	}
 
 	// A phone that has not answered yet must not be asked again on every
-	// reconnection.
+	// reconnection, and the collection must not be torn down and half-applied
+	// again either: that is how pinned conversations went missing.
+	fetches := 0
+	previous := c.fetchAppState
+	c.fetchAppState = func(ctx context.Context, name appstate.WAPatchName, full, only bool) error {
+		fetches++
+		return previous(ctx, name, full, only)
+	}
 	c.backfillCallLogs()
 	if requests != 1 {
 		t.Fatalf("the phone was asked again within the day: %d requests", requests)
+	}
+	if fetches != 0 {
+		t.Fatalf("the collection was fetched again while the phone had not answered: %d", fetches)
 	}
 
 	value, _, err := st.Metadata(context.Background(), appStateRecoveryMetadataKey(appstate.WAPatchRegular))

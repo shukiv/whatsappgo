@@ -211,6 +211,14 @@ func (c *Client) backfillAppState(name appstate.WAPatchName, metadataKey, label,
 	if _, done, err := c.store.Metadata(ctx, metadataKey); err != nil || done {
 		return
 	}
+	// A full sync deletes the cached collection and applies every mutation the
+	// server sends on the way through, so a collection that fails to verify
+	// halfway leaves the settings it did apply behind - pins have gone missing
+	// this way. Once the phone has been asked for a clean copy, wait for its
+	// answer instead of tearing the collection down again on every connection.
+	if c.awaitingAppStateRecovery(ctx, name) {
+		return
+	}
 	fetch := c.fetchAppState
 	if fetch == nil {
 		fetch = c.wa.FetchAppState
@@ -246,20 +254,26 @@ func appStateRecoveryMetadataKey(name appstate.WAPatchName) string {
 
 const appStateRecoveryInterval = 24 * time.Hour
 
+// awaitingAppStateRecovery reports whether the phone has been asked for this
+// collection recently enough that its answer is still worth waiting for.
+func (c *Client) awaitingAppStateRecovery(ctx context.Context, name appstate.WAPatchName) bool {
+	value, _, err := c.store.Metadata(ctx, appStateRecoveryMetadataKey(name))
+	if err != nil || value == "" {
+		return false
+	}
+	asked, parseErr := time.Parse(time.RFC3339, value)
+	return parseErr == nil && time.Since(asked) < appStateRecoveryInterval
+}
+
 // recoverAppState asks the phone for an unencrypted copy of one app-state
 // collection. The reply arrives as a peer message that whatsmeow applies on its
 // own; it finishes as an AppStateSyncComplete, which is where the backfill is
 // marked done.
 func (c *Client) recoverAppState(ctx context.Context, name appstate.WAPatchName, label string) {
+	if c.awaitingAppStateRecovery(ctx, name) {
+		return
+	}
 	key := appStateRecoveryMetadataKey(name)
-	value, _, err := c.store.Metadata(ctx, key)
-	if err != nil {
-		return
-	}
-	if asked, parseErr := time.Parse(time.RFC3339, value); parseErr == nil &&
-		time.Since(asked) < appStateRecoveryInterval {
-		return
-	}
 	send := c.sendPeerMessage
 	if send == nil {
 		send = c.wa.SendPeerMessage
