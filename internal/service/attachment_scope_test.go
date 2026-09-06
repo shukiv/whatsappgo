@@ -34,17 +34,16 @@ func TestSendMediaPreservesDocumentChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Inspect the gateway request without contacting WhatsApp or opening a file.
-	encoded, err := json.Marshal(gw.request)
-	if err != nil {
-		t.Fatal(err)
+	if !gw.request.Document || gw.request.ReplyTo != "quoted" || gw.request.Caption != "original file" {
+		t.Fatalf("document choice or reply was lost: %#v", gw.request)
 	}
-	var fields map[string]any
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatal(err)
+	_, err = svc.Handle(context.Background(), "message.send_media", json.RawMessage(`{"chat_jid":"123@lid","path":"/fixture/photo.jpg"}`))
+	if err != nil || gw.request.Document {
+		t.Fatalf("default media send was forced to a document: request=%#v err=%v", gw.request, err)
 	}
-	if fields["Document"] != true || gw.request.ReplyTo != "quoted" || gw.request.Caption != "original file" {
-		t.Fatalf("document choice or reply was lost: %s", encoded)
+	_, err = svc.Handle(context.Background(), "message.send_media", json.RawMessage(`{"chat_jid":"123@lid","path":"/fixture/voice.ogg","document":true,"voice":true}`))
+	if err == nil {
+		t.Fatal("conflicting document and voice options were accepted")
 	}
 }
 

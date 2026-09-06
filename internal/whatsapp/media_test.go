@@ -14,6 +14,27 @@ import (
 	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
+func TestDocumentChoiceControlsUploadAndWireMessageType(t *testing.T) {
+	for _, mimeType := range []string{"image/jpeg", "video/mp4", "audio/ogg", "application/pdf"} {
+		kind, uploadType := classifyMedia(mimeType, true)
+		if kind != "document" || uploadType != whatsmeow.MediaDocument {
+			t.Fatalf("%s was not uploaded as a document: %s %s", mimeType, kind, uploadType)
+		}
+		payload := buildMediaPayload(kind, mimeType, "original.file", "caption", whatsmeow.UploadResponse{}, nil, false)
+		if payload.GetDocumentMessage() == nil || payload.GetDocumentMessage().GetMimetype() != mimeType || payload.GetDocumentMessage().GetFileName() != "original.file" {
+			t.Fatalf("%s lost document semantics: %v", mimeType, payload)
+		}
+	}
+	for _, tc := range []struct{ mime, kind string }{
+		{"image/jpeg", "image"}, {"video/mp4", "video"}, {"audio/ogg", "audio"}, {"application/pdf", "document"},
+	} {
+		kind, _ := classifyMedia(tc.mime, false)
+		if kind != tc.kind {
+			t.Fatalf("normal %s changed type to %s", tc.mime, kind)
+		}
+	}
+}
+
 func TestMediaCursorRoundTrip(t *testing.T) {
 	cursor := localstore.MessageCursor{Timestamp: 1788103290123, MessageID: "3EB0F1388807E98A42"}
 	if got := parseMediaCursor(formatMediaCursor(cursor)); got != cursor {

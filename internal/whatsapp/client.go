@@ -403,7 +403,18 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 	// being fetched from WhatsApp again, which may no longer be possible.
 	if c.media != nil {
 		path := c.cachePath(msg)
-		if restored, restoreErr := c.media.Materialise(ctx, msg.ChatJID, msg.ID, path); restoreErr == nil && restored {
+		identities, err := c.store.ChatIdentityJIDs(ctx, msg.ChatJID)
+		if err != nil {
+			return model.Message{}, err
+		}
+		for _, identity := range identities {
+			restored, restoreErr := c.media.Materialise(ctx, identity, msg.ID, path)
+			if restoreErr != nil {
+				return model.Message{}, restoreErr
+			}
+			if !restored {
+				continue
+			}
 			msg.MediaPath = path
 			if info, statErr := os.Stat(path); statErr == nil {
 				msg.MediaSize = info.Size()

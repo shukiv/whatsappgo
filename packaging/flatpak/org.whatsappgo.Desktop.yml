@@ -35,8 +35,8 @@ modules:
     buildsystem: simple
     build-commands:
       # CMake installs the backend and command-line client beside whatsappgo.
-      - CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags '-s -w -X main.version=0.1.0' -o bin/whatsappd ./cmd/whatsappd
-      - CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags '-s -w -X main.version=0.1.0' -o bin/whatsappctl ./cmd/whatsappctl
+      - CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags '-s -w -X main.version=0.1.5' -o bin/whatsappd ./cmd/whatsappd
+      - CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags '-s -w -X main.version=0.1.5' -o bin/whatsappctl ./cmd/whatsappctl
       - cmake -S desktop -B _flatpak_build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app
       - cmake --build _flatpak_build
       - cmake --install _flatpak_build

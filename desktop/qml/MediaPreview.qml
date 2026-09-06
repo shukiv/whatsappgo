@@ -9,18 +9,22 @@ Item {
 
     property url imageUrl: ""
     property real imageRotation: 0
+    property bool sending: false
+    property bool sendAllowed: true
     readonly property bool previewActive: String(imageUrl).length > 0
     signal sendRequested(url imageUrl, string caption, int rotation)
     signal canceled(url imageUrl)
     signal addRequested()
 
     visible: previewActive
+    onVisibleChanged: if (!visible) previewEmoji.close()
+    onSendingChanged: if (sending) previewEmoji.close()
     Accessible.name: qsTr("Image preview")
 
     // Escape backs out of the preview, the way it closes every other overlay.
     Shortcut {
         sequences: [StandardKey.Cancel]
-        enabled: root.previewActive
+        enabled: root.visible && !root.sending
         onActivated: root.closePreview()
     }
 
@@ -32,6 +36,8 @@ Item {
     }
 
     function closePreview() {
+        if (sending)
+            return
         const discardedUrl = imageUrl
         imageUrl = ""
         canceled(discardedUrl)
@@ -44,6 +50,7 @@ Item {
 
     Rectangle {
         id: toolbar
+        enabled: !root.sending
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
@@ -153,6 +160,7 @@ Item {
 
                 TextArea {
                     id: caption
+                    readOnly: root.sending
                     objectName: "mediaPreviewCaption"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -175,6 +183,7 @@ Item {
                 }
 
                 ThemedToolButton {
+                    enabled: !root.sending
                     Layout.preferredWidth: 44
                     Layout.preferredHeight: 44
                     iconSource: Qt.resolvedUrl("icons/smile.svg")
@@ -209,6 +218,7 @@ Item {
             }
 
             Button {
+                enabled: !root.sending
                 width: 66
                 height: 66
                 text: "+"
@@ -241,15 +251,17 @@ Item {
             anchors.bottomMargin: 16
             width: 64
             height: 64
-            enabled: root.previewActive
+            enabled: root.visible && root.previewActive && root.sendAllowed && !root.sending
             Accessible.name: qsTr("Send image")
             onClicked: {
+                if (!enabled)
+                    return
                 const sentUrl = root.imageUrl
                 const sentCaption = caption.text
                 // What the reader turned is what gets sent; the preview used to
                 // be the only place the turn existed.
                 const turned = root.imageRotation
-                root.imageUrl = ""
+                root.sending = true
                 root.sendRequested(sentUrl, sentCaption, turned)
             }
             background: Rectangle {
@@ -271,6 +283,8 @@ Item {
         x: Math.max(12, (root.width - width) / 2)
         y: Math.max(76, footer.y - height - 8)
         onEmojiChosen: emoji => {
+            if (root.sending)
+                return
             const position = Math.max(0, caption.cursorPosition)
             caption.insert(position, emoji)
             caption.cursorPosition = position + emoji.length

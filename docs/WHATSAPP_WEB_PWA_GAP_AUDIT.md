@@ -1209,6 +1209,13 @@ now offers Off / 24 hours / 7 days / 90 days, the timer is stored per chat
 currently has, so saving without touching anything changes nothing. New RPC
 `chat.disappearing`.
 
+Local history retention is an intentional exception to parity: the product
+requirement is to keep as much available conversation history as possible.
+The timer must not trigger automatic deletion or hiding of already stored
+messages and attachments. Retaining this history after the timer elapses is
+not a bug to fix. Explicit deletion/revocation behavior and Status-story
+visibility are separate. See the [local history retention policy](ARCHITECTURE.md#local-history-retention-policy).
+
 ### Removing an account
 
 Requested: the account switcher could add and rename accounts but never remove

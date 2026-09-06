@@ -329,7 +329,7 @@ FocusScope {
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             onWheel: event => {
                 const delta = event.angleDelta.y !== 0 ? event.angleDelta.y : event.pixelDelta.y
-                root.adjustZoomFromWheel(delta, event.position.x, event.position.y)
+                root.adjustZoomFromWheel(delta, event.x, event.y)
                 event.accepted = true
             }
         }

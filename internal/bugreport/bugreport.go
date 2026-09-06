@@ -1,34 +1,29 @@
-// Package bugreport turns a user's description of a problem into a GitHub
-// issue, with the environment details that make it diagnosable.
+// Package bugreport submits user-reviewed reports to the Jabali Bugs Intake.
 package bugreport
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// Repository is where reports are filed. It is the project's own repository,
-// not anything the caller can choose: a report is only ever sent to one place.
+// Repository is the release source used by the updater, not the report intake.
 const Repository = "shukiv/whatsappgo"
 
 const (
 	maxSubject = 120
 	maxBody    = 8000
-	submitWait = 30 * time.Second
 )
 
 // Environment is the technical context attached to a report.
 //
 // Every field is listed explicitly and the desktop shows the whole block to the
 // user before anything is sent. Nothing here identifies a person: no phone
-// number, no chat identifier, no message text, no profile name. A report is a
-// public issue on a public repository, so anything that leaks into it stays
-// leaked.
+// number, no chat identifier, no message text, no profile name.
 type Environment struct {
 	Version      string `json:"version"`
 	OS           string `json:"os"`
@@ -75,25 +70,9 @@ type Submitter interface {
 	Submit(ctx context.Context, subject, body string) (string, error)
 }
 
-// CLISubmitter files the issue with the GitHub CLI.
-//
-// The CLI holds the user's own credentials, so this application never sees,
-// stores or transmits a token. That is the entire reason for the choice: a
-// token embedded in the client would be a shared secret shipped to every
-// installation.
-type CLISubmitter struct {
-	// Command runs an external program. Tests replace it; nothing else does.
-	Command func(ctx context.Context, name string, args ...string) *exec.Cmd
-}
-
-func NewCLISubmitter() *CLISubmitter {
-	return &CLISubmitter{Command: exec.CommandContext}
-}
-
 var (
 	ErrNoSubject = errors.New("a bug report needs a subject")
 	ErrNoBody    = errors.New("a bug report needs a description")
-	ErrNoCLI     = errors.New("the GitHub CLI is not installed; install gh and run 'gh auth login' to send reports")
 )
 
 // Validate reports whether the text a user typed can be sent, and returns it
@@ -107,51 +86,19 @@ func Validate(subject, body string) (string, string, error) {
 	if body == "" {
 		return "", "", ErrNoBody
 	}
-	// A title is a single line. A newline in it would end the argument and the
-	// rest would be lost silently, so it is folded rather than dropped.
+	// A title is a single line; fold whitespace without losing words.
 	subject = strings.Join(strings.Fields(subject), " ")
-	if len(subject) > maxSubject {
-		subject = subject[:maxSubject]
-	}
-	if len(body) > maxBody {
-		body = body[:maxBody]
-	}
+	subject = truncateUTF8(subject, maxSubject)
+	body = truncateUTF8(body, maxBody)
 	return subject, body, nil
 }
 
-func (s *CLISubmitter) Submit(ctx context.Context, subject, body string) (string, error) {
-	if _, err := exec.LookPath("gh"); err != nil {
-		return "", ErrNoCLI
+func truncateUTF8(text string, limit int) string {
+	if len(text) <= limit {
+		return text
 	}
-	ctx, cancel := context.WithTimeout(ctx, submitWait)
-	defer cancel()
-	// Arguments are passed as a vector, never as a command line: a subject or
-	// body is arbitrary user text and must not be able to become a shell word.
-	command := s.Command(ctx, "gh", "issue", "create",
-		"--repo", Repository,
-		"--title", subject,
-		"--body", body)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("send the report: %s", firstMeaningfulLine(string(output), err))
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
 	}
-	return firstIssueURL(string(output)), nil
-}
-
-func firstMeaningfulLine(output string, fallback error) string {
-	for _, line := range strings.Split(output, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			return trimmed
-		}
-	}
-	return fallback.Error()
-}
-
-func firstIssueURL(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "https://") {
-			return trimmed
-		}
-	}
-	return ""
+	return text[:limit]
 }

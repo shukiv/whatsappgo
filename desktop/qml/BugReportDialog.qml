@@ -3,11 +3,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.whatsappgo
 
-// Reports a problem as a GitHub issue on the project's repository.
+// Reports a problem to the WhatsAppGo project in the Jabali Bugs Intake.
 //
 // The environment block is shown before anything is sent, not hidden behind a
-// disclosure: an issue is public, and somebody about to publish should be able
-// to read what they are publishing.
+// disclosure: the user can review exactly what leaves their device.
 WhatsAppDialog {
     id: root
 
@@ -17,7 +16,7 @@ WhatsAppDialog {
     property bool sending: false
 
     title: qsTr("Report a problem")
-    subtitle: qsTr("This opens a public issue on the project's GitHub repository.")
+    subtitle: qsTr("Sends a report to the whatsappgo project at bugs.jabali-panel.com.")
     acceptText: root.sending ? qsTr("Sending…") : qsTr("Send report")
     acceptName: "bugReportSendButton"
     acceptEnabled: !root.sending

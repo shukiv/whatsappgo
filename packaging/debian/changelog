@@ -1,3 +1,12 @@
+whatsappgo (0.1.5-1) unstable; urgency=medium
+
+  * Preserve drafts, edits, deletions, metadata and archived media.
+  * Fix image wheel zoom, privacy synchronization and scoped media actions.
+  * Route bug reports to the authenticated WhatsAppGo intake.
+  * Correct mark-all-read pagination and extend regression coverage.
+
+ -- WhatsAppGo Contributors <maintainers@whatsappgo.org>  Sun, 06 Sep 2026 00:00:00 +0300
+
 whatsappgo (0.1.0-1) unstable; urgency=medium
 
   * Initial native Linux client preview.

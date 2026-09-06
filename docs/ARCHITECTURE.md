@@ -108,6 +108,25 @@ at most 50 messages by default. The desktop opens at the newest page, requests
 older local pages, and asks WhatsApp for more linked-device history at a local
 boundary. WhatsAppGo can store only history WhatsApp sends to the linked device.
 
+### Local history retention policy
+
+The product requirement is to preserve as much available conversation history
+as possible. WhatsApp disappearing-message timers are conversation settings,
+not local retention deadlines: messages already received and stored by
+WhatsAppGo remain in local history after the timer elapses. This is intentional
+behavior, not a missing expiration-cleanup feature.
+
+Do not add timer-based deletion, expiry filtering in history/search, or
+automatic removal of stored attachments solely because a conversation's
+disappearing-message timer elapsed. Changing that timer must not retroactively
+prune local history. Explicit deletion actions and the existing handling of
+message revocations are separate and are not changed by this policy. The
+24-hour visibility of Status stories is also separate from conversation history.
+
+Retention cannot recover messages or attachments that WhatsApp never supplied
+to this device. See [Security and privacy](SECURITY.md) for the implications of
+keeping local copies beyond a disappearing-message timer.
+
 ### Conversation settings
 
 Mute, pin, and archive state belongs to WhatsApp. Only an initial, recent, or
@@ -130,6 +149,31 @@ materialisation that exists because the desktop reads files, not blobs. Opening
 an attachment whose cached file is missing restores it from the database instead
 of asking WhatsApp for it again, which old media no longer allows. Attachment
 bytes never travel over the RPC socket; only paths do.
+
+Identity consolidation merges all message metadata transactionally. A tombstone
+wins over either live copy; an edited revision wins over unedited history, and
+preview fields stay with their body and URL. Receipt milestones do not regress.
+The separate media archive is not rewritten: cache recovery checks the canonical
+JID and its recorded aliases. This also repairs lookup for profiles merged by
+older versions without copying or deleting durable attachment bytes. Metadata
+already discarded by an older merge cannot be reconstructed by this change.
+
+### Send acknowledgements
+
+The composer parks text/reply drafts until the daemon acknowledges a send.
+Completion signals carry the captured profile, chat, text and quote; QML clears
+only an unchanged matching draft. Clipboard images stay in the scoped preview
+on failure; successful sends clean up temporary files. Rotated send copies are
+discarded after completion while the original remains available for retry on
+failure. Pending previews cannot be sent to a newly selected conversation.
+
+### Bug-report intake
+
+`internal/bugreport` performs authenticated HTTPS submission to the fixed Jabali
+endpoint with `program: "whatsappgo"`. The service exposes safe environment
+disclosure and submission through the local RPC. Keys are runtime configuration,
+never RPC arguments or bundled credentials. See [bug reporting](BUG_REPORTING.md)
+for the request/response contract and operational setup.
 
 ### Shared contacts and places
 

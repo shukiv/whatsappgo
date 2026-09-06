@@ -25,7 +25,8 @@ ColumnLayout {
     function isSelected(item) {
         const id = String(item.id || "")
         for (let i = 0; i < root.selectedItems.length; ++i) {
-            if (String(root.selectedItems[i].id) === id)
+            if (String(root.selectedItems[i].id) === id
+                    && String(root.selectedItems[i].chat_jid) === String(item.chat_jid || ""))
                 return true
         }
         return false
@@ -36,7 +37,8 @@ ColumnLayout {
         const next = []
         let found = false
         for (let i = 0; i < root.selectedItems.length; ++i) {
-            if (String(root.selectedItems[i].id) === id) {
+            if (String(root.selectedItems[i].id) === id
+                    && String(root.selectedItems[i].chat_jid) === String(item.chat_jid || "")) {
                 found = true
                 continue
             }

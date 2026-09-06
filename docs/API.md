@@ -131,6 +131,8 @@ All parameter objects reject unknown fields.
 | --- | --- | --- |
 | `rpc.discover` | `{}` | API metadata |
 | `status.get` | `{}` | Connection status |
+| `bugreport.environment` | `{}` | Safe environment `fields`, `rendered` text, fixed `program: "whatsappgo"`, and intake `endpoint` |
+| `bugreport.submit` | `subject`, `body` | Submit to Jabali Bugs Intake and return `{ "url": "..." }`; requires a daemon-side intake key. See [bug reporting](BUG_REPORTING.md) |
 | `update.status` | `{}` | The installed version, any newer release, and whether this build can install one |
 | `update.check` | `{}` | Ask GitHub now instead of waiting for the next three-hourly look |
 | `update.download` | `{}` | Start downloading this platform's artifact; reports itself with `update.progress`, `update.ready` and `update.failed` |
@@ -158,13 +160,13 @@ All parameter objects reject unknown fields.
 | `message.get` | `chat_jid`, `message_id` | One stored message with its reactions and quoted line, for applying a small change without reloading a page |
 | `message.download` | `chat_jid`, `message_id` | Download/cache media and return its local path |
 | `message.send` | `chat_jid`, `text`, `reply_to`, `reply_chat_jid`, `link_preview` | Sent message; `reply_chat_jid` identifies a quoted message stored in a different chat |
-| `message.send_media` | `chat_jid`, `path`, `caption`, `reply_to`, `voice` | Sent media message; path must be local to WhatsAppGo |
+| `message.send_media` | `chat_jid`, `path`, `caption`, `reply_to`, `voice`, `document` | Sent media message; path must be local to WhatsAppGo. Optional `document: true` sends even photos/videos as files; cannot be combined with `voice: true`. Both default to false. |
 | `message.react` | `chat_jid`, `message_id`, `sender_jid`, `emoji` | Add reaction; empty emoji removes it |
 | `message.pin` | `chat_jid`, `message_id`, `sender_jid`, `duration_seconds` | Pin for 86400, 604800, or 2592000 seconds |
 | `message.unpin` | `chat_jid`, `message_id`, `sender_jid` | Remove the chat's pinned message |
 | `message.star` | `chat_jid`, `message_id`, `sender_jid`, `from_me`, `starred` | Star or unstar for the whole account |
-| `messages.starred` | `limit` | Starred messages across every chat, newest first |
-| `message.forward` | `chat_jid`, `message_id`, `to_chat_jid` | Re-send into another chat, marked as forwarded |
+| `messages.starred` | `limit`, optional `chat_jid` | Starred messages newest first; omit `chat_jid` or leave it empty for all chats. The chat filter resolves aliases and is applied before the limit. |
+| `message.forward` | `chat_jid`, `message_id`, `to_chat_jid` | Re-send into another chat, marked as forwarded. Media must be downloaded first; a missing attachment returns an error, never a caption-only text forward. |
 | `message.edit` | `chat_jid`, `message_id`, `text` | Edit eligible sent text |
 | `message.delete` | `chat_jid`, `message_id`, `sender_jid` | Delete an eligible message for everyone |
 | `contact.resolve` | `phone` | Validate number and return/create its chat |

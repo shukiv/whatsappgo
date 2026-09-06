@@ -419,7 +419,8 @@ int main(int argc, char *argv[])
     // machine it finds the real daemon instead and reads the real account. A
     // stub answers just enough for the window to come up.
     QLocalServer stubDaemon;
-    if (searchResultsTest) {
+    int rejectedDraftSends = 0;
+    if (searchResultsTest || composerDraftTest) {
         const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
 #ifndef Q_OS_WIN
         QDir().mkpath(QFileInfo(stubPath).absolutePath());
@@ -430,9 +431,9 @@ int main(int argc, char *argv[])
                                         .arg(stubPath, stubDaemon.errorString());
             return WHATSAPPGO_TEST_FAILURE();
         }
-        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon] {
+        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, &rejectedDraftSends] {
             auto *socket = stubDaemon.nextPendingConnection();
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket] {
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, &rejectedDraftSends] {
                 while (socket->canReadLine()) {
                     const auto request = QJsonDocument::fromJson(socket->readLine()).object();
                     QJsonValue result = QJsonObject{};
@@ -440,9 +441,15 @@ int main(int argc, char *argv[])
                         result = QJsonObject{{QStringLiteral("logged_in"), true},
                                              {QStringLiteral("state"), QStringLiteral("connected")}};
                     }
-                    const QJsonObject response{{QStringLiteral("version"), 1},
+                    QJsonObject response{{QStringLiteral("version"), 1},
                                                {QStringLiteral("id"), request.value(QStringLiteral("id"))},
                                                {QStringLiteral("result"), result}};
+                    const auto method = request.value(QStringLiteral("method")).toString();
+                    if (composerDraftTest && (method == QStringLiteral("message.send") || method == QStringLiteral("message.send_media"))) {
+                        ++rejectedDraftSends;
+                        response.remove(QStringLiteral("result"));
+                        response.insert(QStringLiteral("error"), QJsonObject{{QStringLiteral("message"), QStringLiteral("Fixture: WhatsApp is offline")}});
+                    }
                     socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
                 }
             });
@@ -765,6 +772,19 @@ int main(int argc, char *argv[])
             return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
         auto *list = page->findChild<QObject *>(QStringLiteral("statusGroupList"));
+        // Pausing for a reply must preserve both the progress and its clock.
+        QEventLoop statusProgressLoop;
+        QTimer::singleShot(180, &statusProgressLoop, &QEventLoop::quit);
+        statusProgressLoop.exec();
+        const auto progressBeforeReply = viewer->property("progress").toReal();
+        viewer->setProperty("replyPending", true);
+        QTimer::singleShot(80, &statusProgressLoop, &QEventLoop::quit);
+        statusProgressLoop.exec();
+        const bool stayedPaused = qAbs(viewer->property("progress").toReal() - progressBeforeReply) < 0.001;
+        viewer->setProperty("replyPending", false);
+        QCoreApplication::processEvents();
+        const bool resumedWithoutReset = progressBeforeReply > 0.005 && stayedPaused
+            && viewer->property("progress").toReal() >= progressBeforeReply - 0.001;
         auto *statusAvatar = qobject_cast<QQuickItem *>(chatStatus->findChild<QObject *>(QStringLiteral("chatStatusAvatar")));
         auto *statusButton = qobject_cast<QQuickItem *>(chatStatus->findChild<QObject *>(QStringLiteral("chatStatusButton")));
         const bool openedStatusFromChat = statusButton && QMetaObject::invokeMethod(statusButton, "click");
@@ -800,7 +820,7 @@ int main(int argc, char *argv[])
                 && statusAvatar && statusAvatar->isVisible()
                 && statusButton->width() >= 44 && statusButton->height() >= 44
                 && openedStatusFromChat && chatStatus->property("statusGroupIndex").toInt() == 1
-                && statusLinkIsClickable
+                && statusLinkIsClickable && resumedWithoutReset
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
     if (resizeRenderingTest) {
@@ -2374,18 +2394,27 @@ QtObject {
             && paintedHeight <= stageItem->height() + 0.5
             && bottomColor.isValid() && bottomColor.green() > bottomColor.red()
             && bottomColor.green() > bottomColor.blue();
+        // Deliver physical wheel events through the window: invoking the zoom
+        // helper directly misses broken QML event properties and hit testing.
+        const QPointF imagePointer = stageItem
+            ? QPointF(stageItem->width() / 2.0 - 60.0, stageItem->height() / 2.0 - 80.0)
+            : QPointF();
+        const auto sendViewerWheel = [&](QPoint angleDelta, QPoint pixelDelta = QPoint()) {
+            if (!viewerWindow || !stageItem)
+                return false;
+            const QPointF position = stageItem->mapToScene(imagePointer);
+            qt_handleWheelEvent(viewerWindow, position,
+                                viewerWindow->mapToGlobal(position.toPoint()),
+                                pixelDelta, angleDelta, Qt::NoModifier, Qt::NoScrollPhase);
+            QCoreApplication::processEvents();
+            return true;
+        };
         const auto initialZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
-        const bool zoomedIn = nativeViewer && QMetaObject::invokeMethod(
-            nativeViewer, "adjustZoomFromWheel",
-            Q_ARG(QVariant, 120.0), Q_ARG(QVariant, 160.0), Q_ARG(QVariant, 120.0));
-        QCoreApplication::processEvents();
+        const bool zoomedIn = sendViewerWheel(QPoint(0, 120));
         const auto enlargedZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
         const auto anchoredPanX = nativeViewer ? nativeViewer->property("panX").toReal() : 0.0;
         const auto anchoredPanY = nativeViewer ? nativeViewer->property("panY").toReal() : 0.0;
-        const bool zoomedOut = nativeViewer && QMetaObject::invokeMethod(
-            nativeViewer, "adjustZoomFromWheel",
-            Q_ARG(QVariant, -120.0), Q_ARG(QVariant, 160.0), Q_ARG(QVariant, 120.0));
-        QCoreApplication::processEvents();
+        const bool zoomedOut = sendViewerWheel(QPoint(0, -120));
         const auto restoredZoom = nativeViewer ? nativeViewer->property("zoomFactor").toReal() : 0.0;
         const bool nativeZoomReady = zoomIn && zoomOut && zoomWheel && zoomSurface
             && zoomIn->width() >= 44 && zoomIn->height() >= 44
@@ -2397,10 +2426,44 @@ QtObject {
             && fullImageFitsAtMinimumZoom
             && qFuzzyCompare(initialZoom, 1.0) && zoomedIn
             && enlargedZoom > 1.15 && enlargedZoom < 1.25
-            && (!qFuzzyIsNull(anchoredPanX) || !qFuzzyIsNull(anchoredPanY))
+            && qAbs(anchoredPanX - 60.0 * (enlargedZoom - 1.0)) < 0.01
+            && qAbs(anchoredPanY - 80.0 * (enlargedZoom - 1.0)) < 0.01
             && zoomedOut && qAbs(restoredZoom - 1.0) < 0.01
             && qFuzzyIsNull(nativeViewer->property("panX").toReal())
             && qFuzzyIsNull(nativeViewer->property("panY").toReal());
+        if (!nativeZoomReady)
+            qWarning() << "Image viewer wheel zoom failed: initial/enlarged/restored"
+                       << initialZoom << enlargedZoom << restoredZoom
+                       << "pointer anchor" << anchoredPanX << anchoredPanY;
+        bool wheelLimitsReady = false;
+        if (nativeViewer) {
+            // Pixel-only trackpad deltas must work too; horizontal/empty events
+            // must not change zoom, and repeated ticks must respect both limits.
+            sendViewerWheel(QPoint(), QPoint(0, 40));
+            const qreal pixelZoom = nativeViewer->property("zoomFactor").toReal();
+            sendViewerWheel(QPoint(), QPoint(0, -40));
+            sendViewerWheel(QPoint(120, 0));
+            sendViewerWheel(QPoint());
+            const qreal neutralZoom = nativeViewer->property("zoomFactor").toReal();
+            sendViewerWheel(QPoint(0, 9600));
+            const qreal maximumZoom = nativeViewer->property("zoomFactor").toReal();
+            const qreal maximumPanX = nativeViewer->property("panX").toReal();
+            const qreal maximumPanY = nativeViewer->property("panY").toReal();
+            sendViewerWheel(QPoint(0, 120));
+            const bool stayedAtMaximum = qFuzzyCompare(nativeViewer->property("zoomFactor").toReal(), 5.0)
+                && qFuzzyCompare(nativeViewer->property("panX").toReal(), maximumPanX)
+                && qFuzzyCompare(nativeViewer->property("panY").toReal(), maximumPanY);
+            sendViewerWheel(QPoint(0, -9600));
+            sendViewerWheel(QPoint(0, -120));
+            wheelLimitsReady = pixelZoom > 1.05 && pixelZoom < 1.07
+                && qFuzzyCompare(neutralZoom, 1.0) && qFuzzyCompare(maximumZoom, 5.0)
+                && stayedAtMaximum && qFuzzyCompare(nativeViewer->property("zoomFactor").toReal(), 1.0)
+                && qFuzzyIsNull(nativeViewer->property("panX").toReal())
+                && qFuzzyIsNull(nativeViewer->property("panY").toReal());
+            if (!wheelLimitsReady)
+                qWarning() << "Image viewer wheel delta/limit checks failed"
+                           << pixelZoom << neutralZoom << maximumZoom << stayedAtMaximum;
+        }
         const bool nativeViewerClosed = nativeClose && QMetaObject::invokeMethod(nativeClose, "click");
         QCoreApplication::processEvents();
         QFile::remove(receivedImagePath);
@@ -2408,7 +2471,7 @@ QtObject {
         QFile::remove(savedImagePath);
         if (!nativeViewerReady || !startedWithThumbnail || !completedDownload || !upgradedToFullImage
                 || !imageActionsReady || !viewerCopyWorked || !viewerSaveWorked
-                || !nativeZoomReady || !nativeViewerClosed
+                || !nativeZoomReady || !wheelLimitsReady || !nativeViewerClosed
                 || nativeViewer->property("previewActive").toBool())
             return WHATSAPPGO_TEST_FAILURE();
         if (screenshotPath.isEmpty())
@@ -2664,6 +2727,28 @@ QtObject {
         auto *pane = root->findChild<QObject *>(QStringLiteral("settingsPane"));
         if (pane == nullptr)
             return WHATSAPPGO_TEST_FAILURE();
+        root->setProperty("activeSection", QStringLiteral("profile"));
+        pane->setProperty("openSection", QStringLiteral("privacy"));
+        QCoreApplication::processEvents();
+        // Repeater delegates belong to the visual tree, not the pane's QObject tree.
+        const auto findChoice = [](auto &&self, QQuickItem *item, const QString &name) -> QQuickItem * {
+            if (!item || item->objectName() == name)
+                return item;
+            for (auto *child : item->childItems()) {
+                if (auto *found = self(self, child, name))
+                    return found;
+            }
+            return nullptr;
+        };
+        auto *lastSeenChoice = findChoice(findChoice, qobject_cast<QQuickItem *>(pane), QStringLiteral("settingsPrivacy_last_seen"));
+        auto *onlineChoice = findChoice(findChoice, qobject_cast<QQuickItem *>(pane), QStringLiteral("settingsPrivacy_online"));
+        if (!lastSeenChoice || !onlineChoice
+                || lastSeenChoice->property("text").toString() == QStringLiteral("Last seen and online")
+                || !QQmlExpression(qmlContext(onlineChoice), onlineChoice,
+                    QStringLiteral("choices.indexOf('match_last_seen') >= 0 && choices.indexOf('all') >= 0")).evaluate().toBool()) {
+            qInfo() << "FAIL: online visibility has no independent privacy control";
+            return WHATSAPPGO_TEST_FAILURE();
+        }
         pane->setProperty("openSection", QStringLiteral("help"));
         QCoreApplication::processEvents();
 
@@ -2732,7 +2817,7 @@ QtObject {
                 || root->property("replyPreview").toString() != QStringLiteral("Alice said this"))
             return WHATSAPPGO_TEST_FAILURE();
 
-        // Sending clears the conversation's draft rather than parking it.
+        // Explicit clearing (used after acknowledgement) removes the parked draft.
         QMetaObject::invokeMethod(root, "clearDraft");
         QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("alice@lid")));
         QCoreApplication::processEvents();
@@ -2782,11 +2867,99 @@ QtObject {
 
         // A metadata refresh emits selectedChatChanged even without moving to
         // another chat. It must not throw away an in-progress bulk selection.
-        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));
+        // An offline send must leave the complete draft available for retry.
+        QElapsedTimer waitForDraftAccount;
+        waitForDraftAccount.start();
+        while (!backend.loggedIn() && waitForDraftAccount.elapsed() < 2000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        if (!backend.loggedIn())
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto awaitRejectedDraftSend = [&](int count) {
+            QElapsedTimer clock;
+            clock.start();
+            while ((rejectedDraftSends < count || backend.busy()) && clock.elapsed() < 2000)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            return rejectedDraftSends == count && !backend.busy();
+        };
+        composer->setProperty("text", QStringLiteral("retry this text"));
+        root->setProperty("replyTargetId", QStringLiteral("retry-reply"));
+        auto *sendControl = root->findChild<QObject *>(QStringLiteral("messageSendButton"));
+        if (!sendControl || !QMetaObject::invokeMethod(sendControl, "clicked"))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!awaitRejectedDraftSend(1)
+                || composer->property("text").toString() != QStringLiteral("retry this text")
+                || root->property("replyTargetId").toString() != QStringLiteral("retry-reply"))
+            return WHATSAPPGO_TEST_FAILURE(); // Failed send discarded text or quote.
+
+        QImage retryImage(10, 10, QImage::Format_RGB32);
+        retryImage.fill(Qt::red);
+        QGuiApplication::clipboard()->setImage(retryImage);
+        QMetaObject::invokeMethod(root, "prepareClipboardPaste");
+        auto *retryPreview = root->findChild<QObject *>(QStringLiteral("mediaPreviewOverlay"));
+        auto *retryCaption = root->findChild<QObject *>(QStringLiteral("mediaPreviewCaption"));
+        auto *retrySend = root->findChild<QObject *>(QStringLiteral("mediaPreviewSendButton"));
+        if (!retryPreview || !retryCaption || !retrySend)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto retryUrl = retryPreview->property("imageUrl").toUrl();
+        retryCaption->setProperty("text", QStringLiteral("keep this caption"));
+        if (!retryPreview->property("visible").toBool() || !retrySend->property("enabled").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        QMetaObject::invokeMethod(retrySend, "clicked");
+        if (!awaitRejectedDraftSend(2)
+                || retryPreview->property("sending").toBool()
+                || retryPreview->property("imageUrl").toUrl() != retryUrl
+                || !QFile::exists(retryUrl.toLocalFile())
+                || retryCaption->property("text").toString() != QStringLiteral("keep this caption")
+                || root->property("replyTargetId").toString() != QStringLiteral("retry-reply"))
+            return WHATSAPPGO_TEST_FAILURE(); // Failed send discarded image/caption/quote.
+        QMetaObject::invokeMethod(retryPreview, "closePreview");
+
+        // Drive the completion signal the RPC callback emits. The successful
+        // revision is consumed, not new typing or a different account's draft.
+        const auto finishText = [&](const QString &profile, const QString &chat, const QString &text, const QString &quote) {
+            return QMetaObject::invokeMethod(&backend, "textSendFinished",
+                Q_ARG(QString, profile), Q_ARG(QString, chat), Q_ARG(QString, text),
+                Q_ARG(QString, quote), Q_ARG(bool, true));
+        };
+        composer->setProperty("text", QStringLiteral("new typing"));
+        if (!finishText(backend.profile(), QStringLiteral("bob@lid"), QStringLiteral("retry this text"), QStringLiteral("retry-reply"))
+                || composer->property("text").toString() != QStringLiteral("new typing"))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!finishText(QStringLiteral("another-account"), QStringLiteral("bob@lid"), QStringLiteral("new typing"), QStringLiteral("retry-reply"))
+                || composer->property("text").toString() != QStringLiteral("new typing"))
+            return WHATSAPPGO_TEST_FAILURE();
+        backend.openChat(QStringLiteral("alice@lid"), QStringLiteral("Alice"));
+        composer->setProperty("text", QStringLiteral("Alice's new draft"));
+        if (!finishText(backend.profile(), QStringLiteral("bob@lid"), QStringLiteral("new typing"), QStringLiteral("retry-reply"))
+                || composer->property("text").toString() != QStringLiteral("Alice's new draft"))
+            return WHATSAPPGO_TEST_FAILURE();
+        backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));
+        if (!composer->property("text").toString().isEmpty() || !root->property("replyTargetId").toString().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE(); // The acknowledged parked draft remained.
+
+        QGuiApplication::clipboard()->setImage(retryImage);
+        QMetaObject::invokeMethod(root, "prepareClipboardPaste");
+        const auto ownedImage = retryPreview->property("imageUrl").toUrl();
+        backend.openChat(QStringLiteral("alice@lid"), QStringLiteral("Alice"));
+        if (retryPreview->property("visible").toBool() || !QFile::exists(ownedImage.toLocalFile()))
+            return WHATSAPPGO_TEST_FAILURE(); // Preview leaked to another recipient or lost its bytes.
+        backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));
+        if (!retryPreview->property("visible").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        retryPreview->setProperty("pendingUrl", ownedImage.toString());
+        retryPreview->setProperty("sending", true);
+        if (!QMetaObject::invokeMethod(&backend, "clipboardSendFinished",
+                Q_ARG(QString, backend.profile()), Q_ARG(QString, QStringLiteral("bob@lid")),
+                Q_ARG(QString, ownedImage.toString()), Q_ARG(QString, QString()), Q_ARG(bool, true)))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (retryPreview->property("previewActive").toBool() || QFile::exists(ownedImage.toLocalFile()))
+            return WHATSAPPGO_TEST_FAILURE(); // Acknowledged preview or temporary original not cleaned up.
+
         QMetaObject::invokeMethod(root, "beginMessageSelection");
         const QVariant pickedMessage = QVariantMap{{QStringLiteral("id"), QStringLiteral("picked")}};
         QMetaObject::invokeMethod(root, "toggleMessageSelection", Q_ARG(QVariant, pickedMessage));
-        QMetaObject::invokeMethod(root, "handleChatSwitched", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QMetaObject::invokeMethod(&backend, "selectedChatChanged");
         if (!root->property("messageSelectionActive").toBool())
             return WHATSAPPGO_TEST_FAILURE(); // Same-chat refresh canceled selection.
         QVariant picked;
@@ -2795,32 +2968,76 @@ QtObject {
         if (!picked.toBool())
             return WHATSAPPGO_TEST_FAILURE(); // Same-chat refresh lost selected IDs.
 
+        // No microphone is opened: seed the context a started recording owns.
+        // Metadata refreshes keep it; navigation cancels it, including callbacks
+        // from a stop that finishes after navigation.
+        const QVariant recordingContext = QVariantMap{
+            {QStringLiteral("chatJid"), QStringLiteral("bob@lid")},
+            {QStringLiteral("profile"), backend.profile()},
+            {QStringLiteral("replyTo"), QStringLiteral("bob-voice-reply")}};
+        root->setProperty("voiceRecordingContext", recordingContext);
+        QMetaObject::invokeMethod(&backend, "selectedChatChanged");
+        if (root->property("voiceRecordingContext").isNull())
+            return WHATSAPPGO_TEST_FAILURE(); // A metadata refresh canceled recording.
+
         // Messages picked in one conversation are not a selection in the next
         // one, and a jump asked for in the conversation being opened has to
         // survive the switch that opens it.
         QMetaObject::invokeMethod(root, "beginMessageSelection");
         root->setProperty("pendingMessageJumpChat", QStringLiteral("carol@lid"));
         root->setProperty("pendingMessageJumpId", QStringLiteral("carol-message"));
-        QMetaObject::invokeMethod(root, "handleChatSwitched", Q_ARG(QVariant, QStringLiteral("carol@lid")));
+        backend.openChat(QStringLiteral("carol@lid"), QStringLiteral("Carol"));
         QCoreApplication::processEvents();
         if (root->property("messageSelectionActive").toBool())
             return WHATSAPPGO_TEST_FAILURE();
+        if (!root->property("voiceRecordingContext").isNull())
+            return WHATSAPPGO_TEST_FAILURE(); // A recording survived navigation.
+        root->setProperty("replyTargetId", QStringLiteral("carol-reply"));
+        QMetaObject::invokeMethod(root, "sendRecordedVoice", Q_ARG(QVariant, QStringLiteral("file:///fixture/voice.ogg")));
+        if (root->property("replyTargetId").toString() != QStringLiteral("carol-reply"))
+            return WHATSAPPGO_TEST_FAILURE(); // A late callback consumed another chat's reply.
         if (root->property("pendingMessageJumpId").toString() != QStringLiteral("carol-message"))
             return WHATSAPPGO_TEST_FAILURE();
         // Opening any other conversation does put the target down.
-        QMetaObject::invokeMethod(root, "handleChatSwitched", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));
         QCoreApplication::processEvents();
         if (!root->property("pendingMessageJumpId").toString().isEmpty())
             return WHATSAPPGO_TEST_FAILURE();
 
         // The media browser names an individual message, not just a chat.
         auto *library = root->findChild<QObject *>(QStringLiteral("mediaLibraryPane"));
+        if (library) {
+            QQmlExpression selections(qmlContext(library), library, QStringLiteral(
+                "(function() { endSelection(); "
+                "var a = {id: 'same-id', chat_jid: 'a@lid'}; "
+                "var b = {id: 'same-id', chat_jid: 'b@lid'}; "
+                "toggleSelection(a); if (!isSelected(a) || isSelected(b)) return false; "
+                "toggleSelection(b); if (selectedItems.length !== 2) return false; "
+                "toggleSelection(a); var ok = !isSelected(a) && isSelected(b); "
+                "endSelection(); return ok; })()"));
+            if (!selections.evaluate().toBool() || selections.hasError()) {
+                qInfo() << "FAIL: media selections collide across chats";
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+        }
         if (!library || !QMetaObject::invokeMethod(library, "messageRequested",
                 Q_ARG(QString, QStringLiteral("alice@lid")), Q_ARG(QString, QStringLiteral("old-photo"))))
             return WHATSAPPGO_TEST_FAILURE();
         if (root->property("pendingMessageJumpChat").toString() != QStringLiteral("alice@lid")
                 || root->property("pendingMessageJumpId").toString() != QStringLiteral("old-photo"))
             return WHATSAPPGO_TEST_FAILURE(); // Library discarded the selected ID.
+
+        // Contact and account-wide stars share a dialog, not a query scope.
+        auto *starredDialog = root->findChild<QObject *>(QStringLiteral("starredMessagesDialog"));
+        if (!starredDialog || !QMetaObject::invokeMethod(starredDialog, "openForChat",
+                Q_ARG(QVariant, QStringLiteral("alice@lid"))))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (starredDialog->property("chatJid").toString() != QStringLiteral("alice@lid"))
+            return WHATSAPPGO_TEST_FAILURE();
+        QMetaObject::invokeMethod(starredDialog, "close");
+        QMetaObject::invokeMethod(starredDialog, "openForChat", Q_ARG(QVariant, QString()));
+        if (!starredDialog->property("chatJid").toString().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE(); // The global list retained a contact filter.
         return EXIT_SUCCESS;
     }
 
@@ -2844,8 +3061,9 @@ QtObject {
         if (!dialog->property("visible").toBool())
             return WHATSAPPGO_TEST_FAILURE();
 
-        // An empty report must not be sendable: it costs the reader a public
-        // issue and tells nobody anything.
+        if (!dialog->property("subtitle").toString().contains(QStringLiteral("bugs.jabali-panel.com")))
+            return WHATSAPPGO_TEST_FAILURE();
+        // An empty report must not create an unhelpful intake item.
         if (dialog->property("acceptEnabled").toBool())
             return WHATSAPPGO_TEST_FAILURE();
         dialog->setProperty("subject", QStringLiteral("Videos play as a black screen"));
@@ -2857,8 +3075,7 @@ QtObject {
         if (!dialog->property("acceptEnabled").toBool())
             return WHATSAPPGO_TEST_FAILURE();
 
-        // The environment is disclosed in the dialog rather than hidden: a
-        // GitHub issue is public and the reader is the one publishing it.
+        // The environment is disclosed before it leaves the user's device.
         auto *environment = root->findChild<QObject *>(QStringLiteral("bugReportEnvironmentText"));
         if (environment == nullptr || !environment->property("visible").toBool())
             return WHATSAPPGO_TEST_FAILURE();

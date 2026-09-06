@@ -311,3 +311,32 @@ func TestRefreshLinkPreviewUpgradesTinyCachedImage(t *testing.T) {
 		t.Fatalf("upgraded image is %dx%d", width, height)
 	}
 }
+
+func TestRefreshLinkPreviewCannotRestoreAPreEditMessage(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	client := &Client{store: st, mediaDir: t.TempDir()}
+	message := model.Message{ID: "link-edit", ChatJID: "alice@lid", Timestamp: 1, Kind: "text",
+		Body: "https://example.com/old", LinkURL: "https://example.com/old"}
+	if err := st.UpsertMessage(ctx, message, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	client.resolveLinkPreview = func(context.Context, string) (model.LinkPreview, error) {
+		// Simulate editing while the HTTP request is in flight.
+		if err := st.EditMessage(ctx, message.ChatJID, message.ID, "Corrected text without a URL"); err != nil {
+			t.Fatal(err)
+		}
+		return model.LinkPreview{URL: message.LinkURL, Title: "Old page", Thumbnail: jpegSized(t, 640, 360)}, nil
+	}
+	result, err := client.RefreshLinkPreview(ctx, message.ChatJID, message.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Body != "Corrected text without a URL" || !result.Edited || result.LinkURL != "" || result.LinkThumbnail != "" {
+		t.Fatalf("the late preview returned obsolete message data: %#v", result)
+	}
+}

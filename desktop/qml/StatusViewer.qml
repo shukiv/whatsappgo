@@ -46,19 +46,33 @@ Item {
     }
 
     function close() {
-        storyTimer.stop()
+        opened = false
         progressAnimation.stop()
         statusPlayer.stop()
         statusEmojiPicker.close()
-        opened = false
         closeRequested()
     }
 
     function pausePlayback() {
-        storyTimer.stop()
-        progressAnimation.stop()
+        if (progressAnimation.running && !progressAnimation.paused)
+            progressAnimation.pause()
         if (statusPlayer.playbackState === MediaPlayer.PlayingState)
             statusPlayer.pause()
+    }
+
+    function resumePlayback() {
+        if (!opened || interactionPaused)
+            return
+        if (videoReady) {
+            const source = mediaUrl(currentItem.media_path)
+            if (String(statusPlayer.source) !== source)
+                statusPlayer.source = source
+            statusPlayer.play()
+        } else if (progressAnimation.paused) {
+            progressAnimation.resume()
+        } else if (!progressAnimation.running) {
+            progressAnimation.start()
+        }
     }
 
     function submitReply() {
@@ -123,7 +137,6 @@ Item {
     }
 
     function restartPlayback() {
-        storyTimer.stop()
         progressAnimation.stop()
         statusPlayer.stop()
         progress = 0
@@ -132,19 +145,18 @@ Item {
         if (currentItem.id && (currentItem.kind === "image" || currentItem.kind === "video") && !currentItem.media_path)
             mediaRequested(currentItem.id)
         Qt.callLater(function() {
-            if (!root.opened || root.interactionPaused)
-                return
-            if (root.videoReady) {
-                statusPlayer.source = root.mediaUrl(root.currentItem.media_path)
-                statusPlayer.play()
-            } else {
-                progressAnimation.start()
-                storyTimer.restart()
-            }
+            root.resumePlayback()
         })
     }
 
-    onOpenedChanged: if (opened) restartPlayback(); else statusPlayer.stop()
+    onOpenedChanged: {
+        if (opened) {
+            restartPlayback()
+        } else {
+            progressAnimation.stop()
+            statusPlayer.stop()
+        }
+    }
     onCurrentItemChanged: {
         replyText = ""
         replyPending = false
@@ -156,7 +168,7 @@ Item {
         if (opened)
             restartPlayback()
     }
-    onInteractionPausedChanged: interactionPaused ? pausePlayback() : restartPlayback()
+    onInteractionPausedChanged: interactionPaused ? pausePlayback() : resumePlayback()
 
     Keys.onEscapePressed: close()
     Keys.onLeftPressed: previous()
@@ -455,7 +467,6 @@ Item {
         MouseArea { id: nextArea; anchors.fill: parent; hoverEnabled: true; onClicked: root.advance() }
     }
 
-    Timer { id: storyTimer; interval: 5500; onTriggered: root.advance() }
     Timer { id: replyFeedbackTimer; interval: 2800; onTriggered: root.replyFeedback = "" }
     NumberAnimation {
         id: progressAnimation
@@ -463,6 +474,7 @@ Item {
         property: "progress"
         from: 0
         to: 1
-        duration: storyTimer.interval
+        duration: 5500
+        onFinished: if (root.opened && !root.interactionPaused) root.advance()
     }
 }

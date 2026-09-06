@@ -277,6 +277,8 @@ signals:
     void busyChanged();
     void errorOccurred(const QString &message);
     void messageSent();
+    void textSendFinished(const QString &profile, const QString &chatJid, const QString &text, const QString &replyTo, bool success);
+    void clipboardSendFinished(const QString &profile, const QString &chatJid, const QString &localUrl, const QString &replyTo, bool success);
     void statusReplyFinished(const QString &recipientJid, const QString &statusMessageId, bool success, const QString &message);
     void profileChanged();
     void profilesChanged();
@@ -382,6 +384,7 @@ private:
     QVariantMap m_chatInfo;
     QStringList m_blockedContacts;
     QVariantMap m_privacySettings;
+    quint64 m_privacyRequestGeneration = 0;
     QVariantList m_chatLabels;
     QVariantList m_mediaLibrary;
     bool m_mediaLibraryHasMore = false;

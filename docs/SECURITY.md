@@ -12,6 +12,15 @@ The current preview protects those files with Unix user permissions, not with a
 second application-level encryption layer. Anyone who can read the user's
 account or an unlocked disk can read the local cache.
 
+Local conversation history is intentionally retained to preserve as much
+available history as possible. A WhatsApp disappearing-message timer is **not**
+a deletion guarantee for this app: stored messages and attachments can remain
+on this computer after that timer elapses. Do not rely on the timer to erase
+these local copies. This policy does not change explicit deletion actions or
+the existing handling of message revocations. Protect local databases, media,
+and backups accordingly. The [architecture retention policy](ARCHITECTURE.md#local-history-retention-policy)
+records this deliberate difference from timer-based history expiration.
+
 Most link previews are rendered from data the sender included, and are shown
 without contacting anyone. WhatsAppGo makes outbound requests to sites named in
 messages in three cases, all of which reveal this computer's public IP address
@@ -43,3 +52,19 @@ not run untrusted programs under the logged-in account. See the
 Before reporting a vulnerability, avoid attaching device databases, QR payloads,
 pairing codes, message contents, or logs containing JIDs. Rotate the linked
 device from the official WhatsApp application if credentials may be exposed.
+
+## Bug-report intake
+
+Reports are sent only on explicit submission to `bugs.jabali-panel.com`, program
+`whatsappgo`. The displayed technical environment accompanies the user's text;
+private logs, media, account names, and chat identifiers are not automatically
+collected. Do not put secrets in the description. The intake redacts known
+secret patterns, but that is not a guarantee that all private information will
+be removed.
+
+An operator-issued key is read by the daemon from `WHATSAPPGO_BUGREPORT_TOKEN`
+or `WHATSAPPGO_BUGREPORT_TOKEN_FILE`; prefer an owner-only file outside the
+repository. Authentication is sent as a Bearer header over HTTPS. Redirects are
+refused, keys are never returned over RPC, and arbitrary server error bodies are
+not echoed into the UI. No shared token is included in the app. See
+[key setup and retry behavior](BUG_REPORTING.md).

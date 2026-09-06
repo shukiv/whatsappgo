@@ -46,13 +46,44 @@ go vet ./...
 ctest --test-dir desktop/build --output-on-failure
 ```
 
-The desktop suite currently contains 26 tests. It covers QML startup, clean
+The desktop suite covers QML startup, clean
 stderr, themes, search and quoted-message navigation, selectable/linkified
 messages, clipboard images, message and chat-list wheel scrolling during model
 updates, presence, status-notification suppression, media preview/playback,
 played receipts, filters, compact geometry, menu edge clamping, automatic
 pairing, backend ownership, and bubble-tail rendering. Tests use offscreen Qt
 and isolated XDG paths when they persist data.
+
+`desktop-media-preview` delivers mouse-wheel events through the offscreen Qt
+window, rather than calling the viewer's zoom helper directly. It checks
+pointer-anchored zoom in both directions without modifiers, pixel-only deltas,
+horizontal/empty events, and the 100%–500% limits. QML `WheelEvent` coordinates
+are `x` and `y`, unlike the `position` point used by `TapHandler` events.
+
+`desktop-composer-drafts` also checks same-chat selection preservation, voice
+recording cancellation on navigation, and media-library message targets.
+`desktop-conversation-updates` uses a local stub daemon to verify document and
+voice-send parameters and out-of-order starred-message responses. Neither test
+records microphone input or sends messages to WhatsApp. Go tests cover document
+upload/wire types, scoped stars (including aliases and limits), and refusal to
+forward undownloaded attachments as caption-only text.
+
+`desktop-privacy-settings` verifies initial loading, account isolation,
+reconnects, and privacy events racing with older reads using isolated stub
+daemons. The settings, status-story, and composer tests also cover separate
+online visibility controls, paused story progress, and media selection keyed
+by both chat and message. Go regressions cover edited link previews, replayed
+history, and preview requests that finish after an edit. None of these tests
+uses a live WhatsApp account.
+
+Alias-merge regressions preserve deleted/edited copies and rich metadata. The
+media recovery test deletes the cache boundary by starting with archive-only
+bytes under a pre-merge identity. Mark-all-read tests span 1,202 active/archived
+chats and inject an individual failure. Composer tests exercise failed sends,
+late acknowledgements, new typing, and account/chat isolation without sending
+real messages. Intake tests use `httptest` and must never file test tickets in
+the production tracker. See [bug reporting](BUG_REPORTING.md) for runtime key
+configuration and the corrected findings.
 
 When fixing a bug, add a focused regression that fails before the production
 change. Storage tests use in-memory SQLite. WhatsApp adapter tests exercise
@@ -195,3 +226,21 @@ download a toolchain, so `GOTOOLCHAIN=auto` is not a packaging solution.
 
 After changing Go dependencies, regenerate the Flatpak module source list as
 described in the root README.
+
+## Cutting a release
+
+1. Choose the next `vMAJOR.MINOR.PATCH` tag and update package metadata in
+   `desktop/CMakeLists.txt`, the Windows installer, Flatpak build commands,
+   Debian changelog, RPM spec, and AppStream release history.
+2. Record release notes in `docs/releases/<tag>.md`. Keep credential requirements,
+   unsigned-build warnings and known limitations explicit.
+3. Commit the reviewed changes, push the branch, and wait for that exact commit
+   to pass the complete CI workflow, including desktop tests on all platforms.
+4. Create an annotated tag at the tested commit and push it. The Release workflow
+   builds Linux, Windows and Apple Silicon artifacts and generates `SHA256SUMS`.
+5. Apply the prepared notes to the draft release and verify all platform assets
+   and checksums. Leave the release as a draft until a human reviews and publishes
+   it; creating a tag does not itself authorize automatic publication.
+
+Release builds receive `WHATSAPPGO_VERSION` from the tag. Do not cut a tag from
+a dirty worktree or silently omit uncommitted fixes from its source snapshot.

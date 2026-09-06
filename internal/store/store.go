@@ -353,6 +353,29 @@ func (s *Store) CanonicalChatJID(ctx context.Context, jid string) string {
 	return s.canonicalChatJID(ctx, jid)
 }
 
+// ChatIdentityJIDs includes historical keys used by the separate attachment
+// archive. Keeping these aliases lets already-merged profiles recover old bytes
+// without copying or rewriting their media database.
+func (s *Store) ChatIdentityJIDs(ctx context.Context, jid string) ([]string, error) {
+	canonical := s.canonicalChatJID(ctx, jid)
+	rows, err := s.db.QueryContext(ctx, `SELECT alias_jid FROM chat_aliases WHERE canonical_jid=? ORDER BY alias_jid`, canonical)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jids := []string{canonical}
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return nil, err
+		}
+		if alias != canonical {
+			jids = append(jids, alias)
+		}
+	}
+	return jids, rows.Err()
+}
+
 // LinkChatAliases consolidates WhatsApp's privacy-preserving LID and legacy
 // phone-number JID into one local conversation without deleting history.
 func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID string) error {
@@ -395,10 +418,7 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO messages
-	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at)
-	 SELECT id,?,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at
-	 FROM messages WHERE chat_jid=?`, canonicalJID, aliasJID); err != nil {
+	if _, err := tx.ExecContext(ctx, mergeAliasMessagesSQL, canonicalJID, aliasJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO media_payloads(chat_jid,message_id,payload)
@@ -430,6 +450,68 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	}
 	return tx.Commit()
 }
+
+// Duplicate identities can hold different revisions of one message. Deletions
+// win in either direction; an edited copy wins over unedited history, and its
+// link card travels with that revision. Other metadata fills gaps instead of
+// being discarded by INSERT OR IGNORE before the alias chat is removed.
+const mergeAliasMessagesSQL = `INSERT INTO messages
+ (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,
+ media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at,
+ link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,starred,
+ forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude)
+ SELECT id,?,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,
+ media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at,
+ link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,starred,
+ forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude
+ FROM messages WHERE chat_jid=?
+ ON CONFLICT(chat_jid,id) DO UPDATE SET
+ sender_jid=COALESCE(NULLIF(messages.sender_jid,''),excluded.sender_jid),
+ sender_name=COALESCE(NULLIF(messages.sender_name,''),excluded.sender_name),
+ kind=CASE WHEN messages.revoked OR excluded.revoked THEN 'revoked'
+   WHEN messages.kind IN ('','unknown') THEN excluded.kind ELSE messages.kind END,
+ body=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+   WHEN messages.edited THEN messages.body WHEN excluded.edited THEN excluded.body
+   ELSE COALESCE(NULLIF(messages.body,''),excluded.body) END,
+ edited=MAX(messages.edited,excluded.edited),revoked=MAX(messages.revoked,excluded.revoked),
+ from_me=MAX(messages.from_me,excluded.from_me),
+ status=CASE WHEN messages.status='played' OR excluded.status='played' THEN 'played'
+   WHEN messages.status='read' OR excluded.status='read' THEN 'read'
+   WHEN messages.status='delivered' OR excluded.status='delivered' THEN 'delivered'
+   WHEN messages.status='sent' OR excluded.status='sent' THEN 'sent' ELSE messages.status END,
+ reply_to=COALESCE(NULLIF(messages.reply_to,''),excluded.reply_to),
+ media_mime=COALESCE(NULLIF(messages.media_mime,''),excluded.media_mime),
+ media_name=COALESCE(NULLIF(messages.media_name,''),excluded.media_name),
+ media_path=COALESCE(NULLIF(messages.media_path,''),excluded.media_path),
+ media_thumbnail=COALESCE(NULLIF(messages.media_thumbnail,''),excluded.media_thumbnail),
+ media_size=MAX(messages.media_size,excluded.media_size),
+ media_duration=MAX(messages.media_duration,excluded.media_duration),
+ audio_waveform=COALESCE(messages.audio_waveform,excluded.audio_waveform),
+ starred=MAX(messages.starred,excluded.starred),forwarding_score=MAX(messages.forwarding_score,excluded.forwarding_score),
+ contact_name=COALESCE(NULLIF(messages.contact_name,''),excluded.contact_name),
+ contact_phone=COALESCE(NULLIF(messages.contact_phone,''),excluded.contact_phone),
+ contact_count=MAX(messages.contact_count,excluded.contact_count),
+ latitude=CASE WHEN messages.latitude=0 AND messages.longitude=0 THEN excluded.latitude ELSE messages.latitude END,
+ longitude=CASE WHEN messages.latitude=0 AND messages.longitude=0 THEN excluded.longitude ELSE messages.longitude END,
+ delivered_at=CASE WHEN messages.delivered_at=0 THEN excluded.delivered_at WHEN excluded.delivered_at=0 THEN messages.delivered_at ELSE MIN(messages.delivered_at,excluded.delivered_at) END,
+ read_at=CASE WHEN messages.read_at=0 THEN excluded.read_at WHEN excluded.read_at=0 THEN messages.read_at ELSE MIN(messages.read_at,excluded.read_at) END,
+ played_at=CASE WHEN messages.played_at=0 THEN excluded.played_at WHEN excluded.played_at=0 THEN messages.played_at ELSE MIN(messages.played_at,excluded.played_at) END,
+ link_url=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+   WHEN messages.edited>excluded.edited THEN messages.link_url WHEN excluded.edited>messages.edited THEN excluded.link_url
+   WHEN messages.body='' AND messages.edited=0 THEN excluded.link_url
+   WHEN messages.body=excluded.body THEN COALESCE(NULLIF(messages.link_url,''),excluded.link_url) ELSE messages.link_url END,
+ link_title=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+   WHEN messages.edited>excluded.edited THEN messages.link_title WHEN excluded.edited>messages.edited THEN excluded.link_title
+   WHEN (messages.body='' AND messages.edited=0) OR (messages.body=excluded.body AND messages.link_url='') THEN excluded.link_title
+   WHEN messages.body=excluded.body AND messages.link_url=excluded.link_url THEN COALESCE(NULLIF(messages.link_title,''),excluded.link_title) ELSE messages.link_title END,
+ link_description=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+   WHEN messages.edited>excluded.edited THEN messages.link_description WHEN excluded.edited>messages.edited THEN excluded.link_description
+   WHEN (messages.body='' AND messages.edited=0) OR (messages.body=excluded.body AND messages.link_url='') THEN excluded.link_description
+   WHEN messages.body=excluded.body AND messages.link_url=excluded.link_url THEN COALESCE(NULLIF(messages.link_description,''),excluded.link_description) ELSE messages.link_description END,
+ link_thumbnail=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+   WHEN messages.edited>excluded.edited THEN messages.link_thumbnail WHEN excluded.edited>messages.edited THEN excluded.link_thumbnail
+   WHEN (messages.body='' AND messages.edited=0) OR (messages.body=excluded.body AND messages.link_url='') THEN excluded.link_thumbnail
+   WHEN messages.body=excluded.body AND messages.link_url=excluded.link_url THEN COALESCE(NULLIF(messages.link_thumbnail,''),excluded.link_thumbnail) ELSE messages.link_thumbnail END`
 
 func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle string, incrementUnread bool) error {
 	msg.ChatJID = s.canonicalChatJID(ctx, msg.ChatJID)
@@ -497,10 +579,20 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
   media_path=CASE WHEN excluded.media_path<>'' THEN excluded.media_path ELSE messages.media_path END,
   media_thumbnail=CASE WHEN excluded.media_thumbnail<>'' THEN excluded.media_thumbnail ELSE messages.media_thumbnail END,
   media_size=CASE WHEN excluded.media_size>0 THEN excluded.media_size ELSE messages.media_size END,
-  link_url=CASE WHEN excluded.link_url<>'' THEN excluded.link_url ELSE messages.link_url END,
-  link_title=CASE WHEN excluded.link_url<>'' THEN excluded.link_title ELSE messages.link_title END,
-  link_description=CASE WHEN excluded.link_url<>'' THEN excluded.link_description ELSE messages.link_description END,
-  link_thumbnail=CASE WHEN excluded.link_thumbnail<>'' THEN excluded.link_thumbnail ELSE messages.link_thumbnail END,
+  -- The card belongs to the same revision as its text, not an older history copy.
+  link_url=CASE WHEN messages.revoked=1 OR (messages.edited=1 AND excluded.edited=0) THEN messages.link_url
+   WHEN excluded.edited=1 AND messages.body<>excluded.body THEN excluded.link_url
+   WHEN excluded.link_url<>'' THEN excluded.link_url ELSE messages.link_url END,
+  link_title=CASE WHEN messages.revoked=1 OR (messages.edited=1 AND excluded.edited=0) THEN messages.link_title
+   WHEN excluded.edited=1 AND messages.body<>excluded.body THEN excluded.link_title
+   WHEN excluded.link_url<>'' THEN excluded.link_title ELSE messages.link_title END,
+  link_description=CASE WHEN messages.revoked=1 OR (messages.edited=1 AND excluded.edited=0) THEN messages.link_description
+   WHEN excluded.edited=1 AND messages.body<>excluded.body THEN excluded.link_description
+   WHEN excluded.link_url<>'' THEN excluded.link_description ELSE messages.link_description END,
+  link_thumbnail=CASE WHEN messages.revoked=1 OR (messages.edited=1 AND excluded.edited=0) THEN messages.link_thumbnail
+   WHEN excluded.edited=1 AND messages.body<>excluded.body THEN excluded.link_thumbnail
+   WHEN excluded.link_url<>'' AND excluded.link_url<>messages.link_url THEN excluded.link_thumbnail
+   WHEN excluded.link_thumbnail<>'' THEN excluded.link_thumbnail ELSE messages.link_thumbnail END,
   media_duration=CASE WHEN excluded.media_duration>0 THEN excluded.media_duration ELSE messages.media_duration END,
   audio_waveform=CASE WHEN excluded.audio_waveform IS NOT NULL THEN excluded.audio_waveform ELSE messages.audio_waveform END,
   contact_name=CASE WHEN excluded.contact_name<>'' THEN excluded.contact_name ELSE messages.contact_name END,
@@ -1734,7 +1826,9 @@ func (s *Store) MarkRevoked(ctx context.Context, chatJID, messageID string) erro
 
 func (s *Store) EditMessage(ctx context.Context, chatJID, messageID, body string) error {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
-	result, err := s.db.ExecContext(ctx, `UPDATE messages SET body=?,edited=1 WHERE chat_jid=? AND id=? AND revoked=0`, body, chatJID, messageID)
+	result, err := s.db.ExecContext(ctx, `UPDATE messages SET body=?,edited=1,
+ link_url='',link_title='',link_description='',link_thumbnail=''
+ WHERE chat_jid=? AND id=? AND revoked=0`, body, chatJID, messageID)
 	if err != nil {
 		return err
 	}
@@ -1997,15 +2091,34 @@ func (s *Store) MessagesForLinkPreviewBackfill(ctx context.Context, after MediaC
 // UpdateLinkPreview replaces a message's cached card without changing its
 // body, timestamp, delivery state, or conversation ordering.
 func (s *Store) UpdateLinkPreview(ctx context.Context, chatJID, messageID, rawURL, title, description, thumbnail string) error {
+	_, err := s.updateLinkPreview(ctx, chatJID, messageID, rawURL, title, description, thumbnail, nil)
+	return err
+}
+
+// UpdateLinkPreviewForBody commits a resolved card only while the text that
+// requested it is still current. A network response may arrive after an edit.
+func (s *Store) UpdateLinkPreviewForBody(ctx context.Context, chatJID, messageID, body, rawURL, title, description, thumbnail string) (bool, error) {
+	return s.updateLinkPreview(ctx, chatJID, messageID, rawURL, title, description, thumbnail, &body)
+}
+
+func (s *Store) updateLinkPreview(ctx context.Context, chatJID, messageID, rawURL, title, description, thumbnail string, expectedBody *string) (bool, error) {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET
+	body := ""
+	if expectedBody != nil {
+		body = *expectedBody
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE messages SET
  link_url=CASE WHEN ?<>'' THEN ? ELSE link_url END,
  link_title=CASE WHEN ?<>'' THEN ? ELSE link_title END,
  link_description=CASE WHEN ?<>'' THEN ? ELSE link_description END,
  link_thumbnail=CASE WHEN ?<>'' THEN ? ELSE link_thumbnail END
- WHERE chat_jid=? AND id=?`, rawURL, rawURL, title, title, description, description,
-		thumbnail, thumbnail, chatJID, messageID)
-	return err
+ WHERE chat_jid=? AND id=? AND revoked=0 AND (? OR body=?)`, rawURL, rawURL, title, title, description, description,
+		thumbnail, thumbnail, chatJID, messageID, expectedBody == nil, body)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
 }
 
 // MessageCursor marks how far a newest-first scan has progressed.

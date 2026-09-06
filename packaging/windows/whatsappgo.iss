@@ -10,7 +10,7 @@
 [Setup]
 AppId={{7F2B4E4B-9E2E-4D0F-9C3B-2C0B9F1D6A11}
 AppName=WhatsAppGo
-AppVersion=0.1.0
+AppVersion=0.1.5
 AppPublisher=WhatsAppGo
 DefaultDirName={autopf}\WhatsAppGo
 DefaultGroupName=WhatsAppGo

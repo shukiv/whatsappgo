@@ -96,8 +96,10 @@ ColumnLayout {
     }
 
     readonly property var privacyRows: [
-        { key: "last_seen", label: qsTr("Last seen and online"),
+        { key: "last_seen", label: qsTr("Last seen"),
           choices: ["all", "contacts", "contact_blacklist", "none"] },
+        { key: "online", label: qsTr("Online"),
+          choices: ["all", "match_last_seen"] },
         { key: "profile_photo", label: qsTr("Profile photo"),
           choices: ["all", "contacts", "contact_blacklist", "none"] },
         { key: "status", label: qsTr("Status"),
@@ -120,9 +122,11 @@ ColumnLayout {
     }
 
     Component.onCompleted: {
-        backend.refreshPrivacySettings()
         backend.refreshBlockedContacts()
     }
+
+    onVisibleChanged: if (visible) backend.refreshPrivacySettings()
+    onOpenSectionChanged: if (visible && openSection === "privacy") backend.refreshPrivacySettings()
 
     Rectangle {
         Layout.fillWidth: true

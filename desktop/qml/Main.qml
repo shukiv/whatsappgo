@@ -76,6 +76,36 @@ ApplicationWindow {
         if (window.draftChatJid !== "")
             delete window.chatDrafts[window.draftHeldKey || window.draftKey(window.draftChatJid)]
     }
+    // Only an acknowledgement may consume the draft, and only the revision
+    // that was actually sent. A late answer must not erase newer typing.
+    function finishTextSend(profile, jid, text, replyTo, success) {
+        if (!success)
+            return
+        const key = String(profile) + "\u0000" + String(jid)
+        if (key === window.draftHeldKey)
+            window.rememberDraft()
+        const draft = window.chatDrafts[key]
+        if (!draft || draft.text !== text || draft.replyTargetId !== replyTo)
+            return
+        delete window.chatDrafts[key]
+        if (key === window.draftHeldKey) {
+            window.clearDraft()
+            backend.clearComposerLinkPreview()
+        }
+    }
+    function finishImageReply(key, replyTo) {
+        if (key === window.draftHeldKey)
+            window.rememberDraft()
+        const draft = window.chatDrafts[key]
+        if (!draft || draft.replyTargetId !== replyTo)
+            return
+        draft.replyTargetId = ""
+        draft.replyPreview = ""
+        if (key === window.draftHeldKey) {
+            window.replyTargetId = ""
+            window.replyPreview = ""
+        }
+    }
     property string pendingMessageJumpId: ""
     property int pendingMessageJumpAttempts: 0
     property string highlightedMessageId: ""
@@ -493,11 +523,14 @@ ApplicationWindow {
     }
 
     function prepareClipboardPaste() {
+        if (mediaPreview.sending)
+            return
         const imageUrl = backend.prepareClipboardImage()
         if (!imageUrl)
             return
         if (mediaPreview.previewActive)
             backend.discardClipboardImage(mediaPreview.imageUrl)
+        mediaPreview.ownerKey = window.draftHeldKey
         mediaPreview.openImage(imageUrl)
     }
 
@@ -666,6 +699,10 @@ ApplicationWindow {
 
     Connections {
         target: backend
+        function onProfileChanged() {
+            starredMessagesDialog.close()
+            starredMessagesDialog.chatJid = ""
+        }
         function onErrorOccurred(message) {
             window.transientError = message
             errorTimer.restart()
@@ -2224,6 +2261,24 @@ ApplicationWindow {
 
                     Connections {
                         target: backend
+                        function onTextSendFinished(profile, chatJid, text, replyTo, success) {
+                            window.finishTextSend(profile, chatJid, text, replyTo, success)
+                        }
+                        function onClipboardSendFinished(profile, chatJid, localUrl, replyTo, success) {
+                            const key = String(profile) + "\u0000" + String(chatJid)
+                            if (key !== mediaPreview.ownerKey || String(localUrl) !== mediaPreview.pendingUrl)
+                                return
+                            // The original stays available for retry, including
+                            // the chosen rotation; temporary rotated copies do not.
+                            if (String(localUrl) !== String(mediaPreview.imageUrl))
+                                backend.discardClipboardImage(localUrl)
+                            mediaPreview.pendingUrl = ""
+                            mediaPreview.sending = false
+                            if (success) {
+                                window.finishImageReply(key, replyTo)
+                                mediaPreview.closePreview()
+                            }
+                        }
                         function onSelectedChatChanged() {
                             if (!window.handleChatSwitched(String(backend.selectedChat.jid || "")))
                                 return
@@ -2451,6 +2506,7 @@ ApplicationWindow {
 
                                 ThemedToolButton {
                                     id: sendButton
+                                    objectName: "messageSendButton"
                                     Layout.preferredWidth: 44
                                     Layout.preferredHeight: 44
                                     iconSource: composer.text.trim().length > 0 ? Qt.resolvedUrl("icons/send.svg") : (window.recordingVoice ? Qt.resolvedUrl("icons/stop.svg") : Qt.resolvedUrl("icons/mic.svg"))
@@ -2462,10 +2518,12 @@ ApplicationWindow {
                                         color: composer.text.trim().length > 0 ? Theme.primary : parent.hovered ? Theme.hoverRow : "transparent"
                                     }
                                     onClicked: {
+                                        if (!enabled)
+                                            return
                                         if (composer.text.trim().length > 0) {
                                             const body = composer.text
                                             const replyTo = window.replyTargetId
-                                            window.clearDraft()
+                                            window.rememberDraft()
                                             backend.sendMessage(body, replyTo)
                                             backend.setTyping(false)
                                         } else if (window.recordingVoice) {
@@ -2487,15 +2545,20 @@ ApplicationWindow {
 
             MediaPreview {
                 id: mediaPreview
+                property string ownerKey: ""
+                property string pendingUrl: ""
+                // A preview belongs to its original account/chat. Hide it on
+                // navigation; returning there restores it, even after failure.
+                visible: previewActive && ownerKey === window.draftHeldKey
+                sendAllowed: !backend.busy
                 anchors.fill: parent
                 anchors.topMargin: 64
                 z: 20
                 onSendRequested: (imageUrl, caption, rotation) => {
                     const replyTo = window.replyTargetId
-                    window.replyTargetId = ""
-                    window.replyPreview = ""
                     window.rememberDraft()
-                    backend.sendClipboardImage(backend.rotatedImage(imageUrl, rotation), caption, replyTo)
+                    pendingUrl = backend.rotatedImage(imageUrl, rotation)
+                    backend.sendClipboardImage(pendingUrl, caption, replyTo)
                 }
                 onCanceled: imageUrl => backend.discardClipboardImage(imageUrl)
                 onAddRequested: window.prepareClipboardPaste()
@@ -3259,7 +3322,7 @@ ApplicationWindow {
             chatJid = String(jid || "")
             open()
         }
-        onOpened: backend.loadStarredMessages(chatJid)
+        onAboutToShow: backend.loadStarredMessages(chatJid)
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true

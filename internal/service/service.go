@@ -40,7 +40,7 @@ func New(st *store.Store, gw gateway.Gateway, broker *events.Broker) *Service {
 		version:  "dev",
 		accounts: 1,
 		started:  time.Now(),
-		reporter: bugreport.NewCLISubmitter(),
+		reporter: bugreport.NewIntakeSubmitter(),
 	}
 	s.unsubscribe = gw.Subscribe(func(evt gateway.Event) { broker.Publish(events.Event{Name: evt.Name, Data: evt.Data}) })
 	return s
@@ -254,7 +254,7 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		// nobody files a report without seeing what travels with it.
 		environment := s.bugReportEnvironment()
 		return map[string]any{"fields": environment, "rendered": environment.Render(),
-			"repository": bugreport.Repository}, nil
+			"program": bugreport.Program, "endpoint": bugreport.Endpoint}, nil
 	case "bugreport.submit":
 		var params struct {
 			Subject string `json:"subject"`

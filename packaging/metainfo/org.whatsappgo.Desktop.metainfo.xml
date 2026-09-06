@@ -12,9 +12,14 @@
   </description>
   <launchable type="desktop-id">org.whatsappgo.Desktop.desktop</launchable>
   <url type="homepage">https://github.com/shukiv/whatsappgo</url>
-  <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
+  <url type="bugtracker">https://bugs.jabali-panel.com/</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
+    <release version="0.1.5" date="2026-09-06">
+      <description>
+        <p>Preserve failed-send drafts, edits, deletions, rich metadata and older attachments. Fix image zoom, privacy synchronization and mark-all-read pagination. Submit bug reports to the WhatsAppGo intake.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-08-30">
       <description><p>Initial native client preview.</p></description>
     </release>

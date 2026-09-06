@@ -135,20 +135,17 @@ func (c *Client) RefreshLinkPreview(ctx context.Context, chatJID, messageID stri
 	if path == "" {
 		return model.Message{}, errors.New("link preview has no usable image")
 	}
-	if err := c.store.UpdateLinkPreview(ctx, message.ChatJID, message.ID, preview.URL, preview.Title, preview.Description, path); err != nil {
+	updated, err := c.store.UpdateLinkPreviewForBody(ctx, message.ChatJID, message.ID, message.Body, preview.URL, preview.Title, preview.Description, path)
+	if err != nil {
 		return model.Message{}, err
 	}
-	if preview.URL != "" {
-		message.LinkURL = preview.URL
+	message, err = c.store.GetMessage(ctx, message.ChatJID, message.ID)
+	if err != nil {
+		return model.Message{}, err
 	}
-	if preview.Title != "" {
-		message.LinkTitle = preview.Title
+	if updated {
+		c.emit(gateway.Event{Name: "message.upsert", Data: message})
 	}
-	if preview.Description != "" {
-		message.LinkDescription = preview.Description
-	}
-	message.LinkThumbnail = path
-	c.emit(gateway.Event{Name: "message.upsert", Data: message})
 	return message, nil
 }
 
@@ -288,11 +285,14 @@ func (c *Client) backfillLinkPreviews() {
 					// in-memory copy immediately when the message refresh event arrives.
 					path := c.writeThumbnailReplacing(item.ChatJID+"-"+item.MessageID+"-link-hq", preview.Thumbnail, ".jpg")
 					if path != "" {
-						if err := c.store.UpdateLinkPreview(ctx, item.ChatJID, item.MessageID, preview.URL, preview.Title, preview.Description, path); err != nil {
+						changed, err := c.store.UpdateLinkPreviewForBody(ctx, item.ChatJID, item.MessageID, item.Body, preview.URL, preview.Title, preview.Description, path)
+						if err != nil {
 							return
 						}
-						updated++
-						updatedChats[item.ChatJID] = struct{}{}
+						if changed {
+							updated++
+							updatedChats[item.ChatJID] = struct{}{}
+						}
 					}
 				}
 			}

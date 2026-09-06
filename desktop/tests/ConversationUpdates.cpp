@@ -57,9 +57,13 @@ QJsonObject message(const QString &id, const QString &chat, qint64 timestamp, bo
 // What a conversation does with answers that arrive late, with a daemon that
 // goes away mid-request, and with the small changes - a reaction, a star, a new
 // message - that must not cost the reader their place.
+int testPrivacySettings();
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    if (app.arguments().contains(QStringLiteral("--privacy-settings")))
+        return testPrivacySettings();
     QTemporaryDir runtime(shortTempTemplate(QStringLiteral("wag-convo")));
     if (!runtime.isValid())
         return testFatal("could not create a temporary runtime directory");
@@ -93,6 +97,8 @@ int main(int argc, char **argv)
     int presenceRequests = 0;
     int sendRequests = 0;
     QString heldSendId;
+    QList<QJsonObject> mediaSends;
+    QList<QJsonObject> starredRequests;
 
     const auto reply = [&](const QJsonValue &id, const QJsonValue &result) {
         if (!connection)
@@ -130,6 +136,12 @@ int main(int argc, char **argv)
                     ++sendRequests;
                     heldSendId = id.toString();
                     continue;
+                }
+                if (method == QStringLiteral("message.send_media"))
+                    mediaSends.append(params);
+                if (method == QStringLiteral("messages.starred")) {
+                    starredRequests.append(request);
+                    continue; // Deliver out of order to exercise scope races.
                 }
                 QJsonValue result = QJsonObject{};
                 if (method == QStringLiteral("status.get")) {
@@ -334,9 +346,75 @@ int main(int argc, char **argv)
     if (presenceRequests == 0)
         return testFatal("the presence subscription was not renewed after reconnecting");
 
+    // Attachment intent survives the desktop RPC boundary. These are fixture
+    // URLs; the stub never opens files or sends anything to WhatsApp.
+    const auto photoUrl = QUrl::fromLocalFile(QDir(runtime.path()).filePath(QStringLiteral("photo.jpg"))).toString();
+    client.sendFile(photoUrl, QStringLiteral("original"), QStringLiteral("quoted"), true);
+    if (!waitFor([&] { return mediaSends.size() == 1 && !client.busy(); }))
+        return testFatal("the document send never reached the stub");
+    if (!mediaSends.last().value(QStringLiteral("document")).toBool()
+            || mediaSends.last().value(QStringLiteral("reply_to")).toString() != QStringLiteral("quoted"))
+        return testFatal("the desktop discarded document or reply intent");
+    client.sendFile(photoUrl);
+    if (!waitFor([&] { return mediaSends.size() == 2 && !client.busy(); }))
+        return testFatal("the normal photo send never reached the stub");
+    if (mediaSends.last().value(QStringLiteral("document")).toBool())
+        return testFatal("a normal photo was forced to a document");
+
+    // A recorder callback supplies its captured recipient even when the
+    // selected chat has changed; a callback from another profile is refused.
+    client.sendVoice(photoUrl, alice, client.profile(), QStringLiteral("voice-reply"));
+    if (!waitFor([&] { return mediaSends.size() == 3 && !client.busy(); }))
+        return testFatal("the voice callback never reached the stub");
+    if (mediaSends.last().value(QStringLiteral("chat_jid")).toString() != alice
+            || !mediaSends.last().value(QStringLiteral("voice")).toBool()
+            || mediaSends.last().value(QStringLiteral("reply_to")).toString() != QStringLiteral("voice-reply"))
+        return testFatal("voice completion used the current chat instead of its recorded recipient");
+    client.sendVoice(photoUrl, alice, QStringLiteral("another-account"));
+    settle();
+    if (mediaSends.size() != 3 || client.busy())
+        return testFatal("a voice callback crossed accounts");
+
+    client.loadStarredMessages();
+    client.loadStarredMessages(alice);
+    if (!waitFor([&] { return starredRequests.size() == 2; }))
+        return testFatal("the starred-message requests never arrived");
+    if (!starredRequests[0].value(QStringLiteral("params")).toObject().value(QStringLiteral("chat_jid")).toString().isEmpty()
+            || starredRequests[1].value(QStringLiteral("params")).toObject().value(QStringLiteral("chat_jid")).toString() != alice)
+        return testFatal("global and contact stars used the same scope");
+    reply(starredRequests[1].value(QStringLiteral("id")), QJsonObject{
+        {QStringLiteral("items"), QJsonArray{message(QStringLiteral("alice-star"), alice, 1)}}});
+    if (!waitFor([&] { return !client.starredMessagesLoading() && client.starredMessages().size() == 1; }))
+        return testFatal("contact stars never loaded");
+    reply(starredRequests[0].value(QStringLiteral("id")), QJsonObject{
+        {QStringLiteral("items"), QJsonArray{message(QStringLiteral("bob-star"), bob, 2)}}});
+    settle();
+    if (client.starredMessages().first().toMap().value(QStringLiteral("chat_jid")).toString() != alice)
+        return testFatal("a late global answer replaced the contact's stars");
+
+    // Completion carries the original identity, not whichever chat is selected
+    // when the daemon eventually acknowledges the send.
+    QVariantMap completedSend;
+    QObject::connect(&client, &RpcClient::textSendFinished, &client,
+        [&](const QString &profile, const QString &chat, const QString &text, const QString &quote, bool success) {
+            completedSend = {{"profile", profile}, {"chat", chat}, {"text", text}, {"quote", quote}, {"success", success}};
+        });
+    const auto sentChat = client.selectedChat().value(QStringLiteral("jid")).toString();
+    client.sendMessage(QStringLiteral("late acknowledgement"), QStringLiteral("original-reply"));
+    if (!waitFor([&] { return sendRequests == 1 && client.busy(); }))
+        return testFatal("the held send never reached the daemon");
+    client.openChat(sentChat == alice ? bob : alice, QStringLiteral("Other chat"));
+    reply(heldSendId, QJsonObject{});
+    if (!waitFor([&] { return completedSend.value("success").toBool(); })
+            || completedSend.value("chat").toString() != sentChat
+            || completedSend.value("profile").toString() != client.profile()
+            || completedSend.value("text").toString() != QStringLiteral("late acknowledgement")
+            || completedSend.value("quote").toString() != QStringLiteral("original-reply"))
+        return testFatal("the send acknowledgement lost its original draft identity");
+
     // 8. A send whose daemon disappears mid-request leaves the composer usable.
     client.sendMessage(QStringLiteral("hello"), QString());
-    if (!waitFor([&] { return sendRequests == 1 && client.busy(); }))
+    if (!waitFor([&] { return sendRequests == 2 && client.busy(); }))
         return testFatal("the send never reached the daemon");
     server.close();
     if (connection)
@@ -370,6 +448,10 @@ int main(int argc, char **argv)
         return testFatal("the picture was copied without being turned");
 
     // A request made with no daemon answers its caller too.
+    client.sendClipboardImage(turnedUrl, QStringLiteral("keep caption"), QStringLiteral("keep-reply"));
+    settle();
+    if (!QFile::exists(QUrl(turnedUrl).toLocalFile()))
+        return testFatal("failed clipboard send destroyed the image needed for retry");
     client.sendMessage(QStringLiteral("hello again"), QString());
     settle();
     if (client.busy())

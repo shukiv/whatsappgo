@@ -46,6 +46,11 @@ The internal profile key identifies local storage and does not change the
 WhatsApp account name. Use the pen beside an account in the switcher to give it
 a local display name; this label may contain spaces and non-Latin characters.
 
+In **Settings → Privacy**, **Last seen** and **Online** are separate choices.
+To hide both, set **Last seen** to **Nobody** and **Online** to **Same as last
+seen**. Privacy settings are refreshed for the selected account after connecting
+or switching accounts and when the settings page is reopened.
+
 ## Chats and history
 
 The chat list supports **All**, **Unread**, **Favorites**, and **Groups**
@@ -65,8 +70,23 @@ LID identity. WhatsAppGo consolidates verified pairs automatically so their
 history appears as one conversation. It never merges contacts merely because
 their names match.
 
+Consolidation preserves deletions, edits, stars, and attachment metadata. Old
+attachments remain recoverable from their original archive identity even after
+their cached files have been removed. **Mark all as read** covers all stored
+active and archived conversations, not just the first page.
+
 The linked-device protocol controls how much old history is supplied. Messages
 that WhatsApp never sends to this device cannot be reconstructed locally.
+
+WhatsAppGo intentionally keeps as much local conversation history as possible.
+Disappearing-message timers do **not** automatically delete messages already
+stored by this app, hide them from local history/search, or expire stored
+attachments. The **Disappearing messages** setting changes the WhatsApp chat
+timer, not WhatsAppGo's local retention policy. This is intentional, not a bug.
+Explicit deletion actions and message revocations remain separate; this policy
+does not change them or the 24-hour visibility of Status stories. See
+[Security and privacy](SECURITY.md) before relying on disappearing messages to
+remove local copies.
 
 Click the avatar or contact name in the conversation header to open **Contact
 info**. It shows the locally known avatar, phone number, shared-content count,
@@ -78,8 +98,11 @@ Linux application, uncached media is downloaded first, and links open in the
 system browser. Press **Escape** or use the close/back button to leave the
 drawer.
 
+**Starred messages** in Contact info shows stars from that conversation only.
+The main menu's **Starred messages** shows stars across the current account.
+
 Mute and archive changes are synchronized with WhatsApp. Calling, blocking,
-reporting, disappearing-message settings, and editing Favorites are not exposed
+reporting, and editing Favorites are not exposed
 reliably by the linked-device API, so the drawer identifies or omits those
 actions instead of displaying controls that would fail silently.
 
@@ -91,7 +114,10 @@ actions instead of displaying controls that would fail silently.
   sticker are listed but report that the linked-device workflow is not supported
   yet.
 - The smile button opens the native emoji picker.
-- The microphone records and sends a voice note.
+- **Document** sends the selected file as a document even when it is a photo
+  or video. **Photos and videos** retains the normal inline media presentation.
+- The microphone records a voice note; stop it to send. Switching conversations
+  or accounts cancels the recording without sending it.
 - Right-click a message to copy, reply, react, edit eligible sent text, or
   delete an eligible sent message for everyone.
 - Select text inside a bubble and copy it normally. HTTP and HTTPS links open
@@ -124,8 +150,16 @@ loads. WhatsApp sends a small preview inside the message itself, so the image
 is visible before the full file is fetched. **Download** on the preview gets the
 full-size file; afterwards, clicking the picture opens the native aspect-fit
 viewer. At 100% the whole source remains visible, including tall and wide
-screenshots. Use the viewer controls or the mouse wheel to zoom. Clicking an
+screenshots. Scroll up over an opened image to zoom in and down to zoom out;
+no modifier key is needed. Wheel zoom stays anchored at the pointer and ranges
+from 100% to 500%. The toolbar zoom buttons remain available, and scrolling
+over chat lists or message thumbnails keeps its normal behavior. Clicking an
 open image exposes **Copy image** and **Save image** actions.
+
+Selecting an item in the account-wide media library opens its conversation and
+jumps to that message, loading older history as needed. To forward an attachment,
+download it first. If its file is unavailable, forwarding reports that it needs
+downloading rather than sending only its caption.
 
 A message containing a link shows a preview card with the page title,
 description, and picture. Normally WhatsApp resolves that preview on the
@@ -183,6 +217,12 @@ supports a caption and basic rotation before sending. Downloaded documents and
 media are cached on disk. **Download** fetches an attachment that has not yet
 been cached; **Open** launches the cached file with its default Linux
 application.
+
+Text, quoted-reply context, and pasted-image previews remain available if a send
+fails. A successful acknowledgement clears only the draft that was sent, not
+newer typing or another chat's draft. An image preview is hidden when leaving its
+account/chat and shown again on return. These are in-session drafts, not a
+persistent outbox; check delivery before retrying after a connection loss.
 
 Copying an image from a message places decoded image data on the desktop
 clipboard, not merely its local filename.
@@ -244,6 +284,14 @@ image opens for you to drag across.
 A build made from source reports itself as built from source and is never
 offered an update, because a working copy is not behind anything. `git pull` is
 the update there.
+
+## Reporting a problem
+
+**Report a problem** submits your description and the displayed environment
+details to the `whatsappgo` project at `bugs.jabali-panel.com`. Reports require
+an intake key configured for the app's backend; GitHub CLI/login is no longer
+used. Errors leave the report editable. No chat logs or account identities are
+automatically attached. See [bug reporting and key setup](BUG_REPORTING.md).
 
 ## Logging out and local data
 

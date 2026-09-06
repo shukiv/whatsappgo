@@ -252,6 +252,9 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         }
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
+        ++m_privacyRequestGeneration;
+        m_privacySettings.clear();
+        emit privacySettingsChanged();
         abandonPendingRequests(tr("The background service disconnected."), true);
         if (!m_selectedPresence.isEmpty()) {
             m_selectedPresence.clear();
@@ -591,8 +594,15 @@ void RpcClient::processLine(const QByteArray &line)
 void RpcClient::processEvent(const QString &name, const QJsonValue &data)
 {
     if (name == QStringLiteral("connection.changed")) {
+        const bool wasConnected = m_status.value(QStringLiteral("connected")).toBool();
         m_status = data.toObject().toVariantMap();
         emit statusChanged();
+        if (m_status.value(QStringLiteral("connected")).toBool() && !wasConnected)
+            refreshPrivacySettings();
+    } else if (name == QStringLiteral("privacy.changed")) {
+        ++m_privacyRequestGeneration;
+        m_privacySettings = data.toObject().value(QStringLiteral("settings")).toObject().toVariantMap();
+        emit privacySettingsChanged();
     } else if (name == QStringLiteral("contact.presence")) {
         const auto payload = data.toObject();
         if (bareJid(payload.value(QStringLiteral("jid")).toString())
@@ -755,6 +765,9 @@ void RpcClient::refreshStatus()
             return;
         m_status = result.toObject().toVariantMap();
         emit statusChanged();
+
+        if (m_status.value(QStringLiteral("connected")).toBool())
+            refreshPrivacySettings();
 		// On first launch the QML page is often created before the daemon socket
 		// connects. Start pairing after status confirms this profile is unlinked,
 		// so the first QR code appears without requiring a button click.
@@ -1326,23 +1339,29 @@ void RpcClient::refreshBlockedContacts()
 
 void RpcClient::refreshPrivacySettings()
 {
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool())
+        return;
+    const auto generation = ++m_privacyRequestGeneration;
     sendRequest(QStringLiteral("privacy.get"), {},
-                [this](const QJsonValue &result, const QJsonObject &error) {
-                    if (!error.isEmpty())
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || generation != m_privacyRequestGeneration)
                         return;
                     const auto settings = result.toObject().toVariantMap();
                     if (settings == m_privacySettings)
                         return;
                     m_privacySettings = settings;
                     emit privacySettingsChanged();
-                });
+                }, OnFailure::StayQuiet);
 }
 
 void RpcClient::setPrivacySetting(const QString &name, const QString &value)
 {
+    const auto generation = ++m_privacyRequestGeneration;
     sendRequest(QStringLiteral("privacy.set"),
                 {{QStringLiteral("name"), name}, {QStringLiteral("value"), value}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_privacyRequestGeneration)
+                        return;
                     if (!error.isEmpty()) {
                         emit errorOccurred(error.value(QStringLiteral("message")).toString());
                         // WhatsApp owns these, so a rejected change is followed by
@@ -1722,6 +1741,8 @@ void RpcClient::sendMessage(const QString &text, const QString &replyTo)
     if (text.trimmed().isEmpty() || m_selectedChat.isEmpty())
         return;
     setBusy(true);
+    const auto sentProfile = m_profile;
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
     QJsonObject params{
         {QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
         {QStringLiteral("text"), text},
@@ -1734,10 +1755,10 @@ void RpcClient::sendMessage(const QString &text, const QString &replyTo)
         params.insert(QStringLiteral("link_preview"), QJsonObject::fromVariantMap(wirePreview));
     }
     sendRequest(QStringLiteral("message.send"), params,
-                [this](const QJsonValue &, const QJsonObject &error) {
+                [this, sentProfile, chatJid, text, replyTo](const QJsonValue &, const QJsonObject &error) {
                     setBusy(false);
+                    emit textSendFinished(sentProfile, chatJid, text, replyTo, error.isEmpty());
                     if (error.isEmpty()) {
-                        clearComposerLinkPreview();
                         emit messageSent();
                     }
                 });
@@ -2056,6 +2077,9 @@ void RpcClient::switchProfile(const QString &profile)
     abandonPendingRequests(tr("The account was changed."), false);
     m_profile = profile;
     m_status.clear();
+    ++m_privacyRequestGeneration;
+    m_privacySettings.clear();
+    emit privacySettingsChanged();
     m_chats.clear();
     m_chatQuery.clear();
     m_chatSearchHits.clear();
@@ -2635,11 +2659,16 @@ QString RpcClient::rotatedImage(const QString &localUrl, int degrees)
 
 void RpcClient::sendClipboardImage(const QString &localUrl, const QString &caption, const QString &replyTo)
 {
-	if (m_selectedChat.isEmpty())
+	const auto sentProfile = m_profile;
+	const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+	if (chatJid.isEmpty()) {
+		emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, false);
 		return;
+	}
 	const auto path = QUrl(localUrl).toLocalFile();
 	if (path.isEmpty() || !isClipboardFile(path)) {
 		emit errorOccurred(tr("The pasted image is no longer available."));
+		emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, false);
 		return;
 	}
 	setBusy(true);
@@ -2647,13 +2676,14 @@ void RpcClient::sendClipboardImage(const QString &localUrl, const QString &capti
 		{{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
 		 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
 		 {QStringLiteral("reply_to"), replyTo}},
-		[this, path](const QJsonValue &, const QJsonObject &error) {
+		[this, path, sentProfile, chatJid, localUrl, replyTo](const QJsonValue &, const QJsonObject &error) {
 			setBusy(false);
-			QFile::remove(path);
 			if (error.isEmpty()) {
+				QFile::remove(path);
 				emit noticeOccurred(tr("Image sent"));
 				emit messageSent();
 			}
+			emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, error.isEmpty());
 		});
 }
 

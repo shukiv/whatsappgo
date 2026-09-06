@@ -20,6 +20,7 @@ import (
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/model"
+	localstore "github.com/shukiv/whatsappgo/internal/store"
 )
 
 // mutedForever is what WhatsApp stores when a conversation is muted with no
@@ -378,21 +379,39 @@ func (c *Client) CreateGroup(ctx context.Context, name string, participants []st
 }
 
 func (c *Client) MarkAllChatsRead(ctx context.Context) (int, error) {
-	chats, err := c.store.ListChats(ctx, 1000, 0, "")
-	if err != nil {
-		return 0, err
-	}
-	archived, err := c.store.ListArchivedChats(ctx, 1000, 0, "")
-	if err != nil {
-		return 0, err
+	return markAllChatsRead(ctx, c.store, c.SetChatRead)
+}
+
+func markAllChatsRead(ctx context.Context, st *localstore.Store, markRead func(context.Context, string, bool) error) (int, error) {
+	// Gather both shelves before applying changes. Every request stays within
+	// the store's page limit; read-state changes cannot shift the scan's pages.
+	const pageSize = 500
+	var targets []string
+	seen := make(map[string]bool)
+	for _, list := range []func(context.Context, int, int, string) ([]model.Chat, error){st.ListChats, st.ListArchivedChats} {
+		for offset := 0; ; offset += pageSize {
+			chats, err := list(ctx, pageSize, offset, "")
+			if err != nil {
+				return 0, err
+			}
+			for _, chat := range chats {
+				if chat.UnreadCount > 0 && !seen[chat.JID] {
+					targets = append(targets, chat.JID)
+					seen[chat.JID] = true
+				}
+			}
+			if len(chats) < pageSize {
+				break
+			}
+		}
 	}
 	cleared := 0
 	var firstErr error
-	for _, chat := range append(chats, archived...) {
-		if chat.UnreadCount <= 0 {
-			continue
+	for _, jid := range targets {
+		if err := ctx.Err(); err != nil {
+			return cleared, err
 		}
-		if err := c.SetChatRead(ctx, chat.JID, true); err != nil {
+		if err := markRead(ctx, jid, true); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}

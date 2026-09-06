@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(WhatsAppGo VERSION 0.1.0 LANGUAGES CXX)
+project(WhatsAppGo VERSION 0.1.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -341,6 +341,7 @@ if(BUILD_TESTING)
 
     qt_add_executable(conversation-updates-test
         tests/ConversationUpdates.cpp
+        tests/PrivacySettings.cpp
         src/messagemodel.cpp
         src/messagemodel.h
         src/profilemonitor.cpp
@@ -418,6 +419,8 @@ if(BUILD_TESTING)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME desktop-profile-display-names COMMAND profile-display-names-test)
     add_test(NAME desktop-conversation-updates COMMAND conversation-updates-test)
+    add_test(NAME desktop-privacy-settings COMMAND conversation-updates-test --privacy-settings)
+    set_tests_properties(desktop-privacy-settings PROPERTIES TIMEOUT 20)
     add_test(NAME desktop-video-surface COMMAND video-surface-test)
     set_tests_properties(desktop-video-surface PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-notification-routing COMMAND notification-routing-test)

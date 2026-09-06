@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.0
+Version:        0.1.5
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -43,5 +43,10 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Sun Sep 06 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.5-1
+- Preserve drafts, message metadata and archived media during failures and identity merges
+- Fix image wheel zoom, privacy synchronization and scoped media actions
+- Route bug reports to the authenticated WhatsAppGo intake
+
 * Sun Aug 30 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.0-1
 - Initial package
