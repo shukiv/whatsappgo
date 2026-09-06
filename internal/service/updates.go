@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -153,15 +154,24 @@ func (s *Service) startUpdateDownload() (map[string]any, error) {
 		})
 		s.updates.mu.Lock()
 		s.updates.downloading = false
+		// A newer release can be found while this transfer runs, and the
+		// artifacts share a name. A file fetched for the release before the
+		// current one is not the one anybody would be offered, so it is thrown
+		// away rather than presented under the newer version's label.
+		superseded := err == nil && s.updates.latest.Version != release.Version
 		if err != nil {
 			s.updates.lastError = err.Error()
-		} else {
+		} else if !superseded {
 			s.updates.lastError = ""
 			s.updates.downloaded = path
 		}
 		s.updates.mu.Unlock()
 		if err != nil {
 			s.events.Publish(events.Event{Name: "update.failed", Data: map[string]any{"error": err.Error()}})
+			return
+		}
+		if superseded {
+			_ = os.Remove(path)
 			return
 		}
 		s.events.Publish(events.Event{Name: "update.ready", Data: map[string]any{

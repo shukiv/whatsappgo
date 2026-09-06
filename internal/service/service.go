@@ -708,6 +708,23 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			p.Limit = 50
 		}
 		return okResult(), s.gateway.RefreshHistory(ctx, p.ChatJID, p.Limit)
+	case "message.get":
+		var p downloadParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		message, err := s.store.MessageDetail(ctx, p.ChatJID, p.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		// normalizeStickerMessages works on the slice it is given, so the
+		// answer has to come back out of that slice.
+		items := []model.Message{message}
+		s.normalizeStickerMessages(ctx, items)
+		return items[0], nil
 	case "message.download":
 		var p downloadParams
 		if err := decode(raw, &p); err != nil {

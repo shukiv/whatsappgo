@@ -1852,3 +1852,81 @@ func TestReactionsCarryTheNameOfWhoLeftThem(t *testing.T) {
 		t.Fatalf("the reaction did not carry the picture of who left it: %q", avatars["bob@s.whatsapp.net"])
 	}
 }
+
+func TestReplayedHistoryDoesNotUndoAnEdit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	original := model.Message{ID: "m1", ChatJID: "c@s.whatsapp.net", Timestamp: 10, Kind: "text", Body: "original", Status: "received"}
+	if err := s.UpsertMessage(ctx, original, "Contact", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EditMessage(ctx, "c@s.whatsapp.net", "m1", "corrected"); err != nil {
+		t.Fatal(err)
+	}
+	// History redelivers the message as it was first sent.
+	if err := s.UpsertMessage(ctx, original, "Contact", false); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetMessage(ctx, "c@s.whatsapp.net", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Body != "corrected" || !stored.Edited {
+		t.Fatalf("an older copy put the replaced text back: body=%q edited=%v", stored.Body, stored.Edited)
+	}
+
+	// A later edit still applies.
+	if err := s.EditMessage(ctx, "c@s.whatsapp.net", "m1", "corrected twice"); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err = s.GetMessage(ctx, "c@s.whatsapp.net", "m1"); err != nil || stored.Body != "corrected twice" {
+		t.Fatalf("a later edit did not apply: body=%q err=%v", stored.Body, err)
+	}
+}
+
+func TestOlderReactionDoesNotReplaceTheCurrentOne(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertMessage(ctx, model.Message{ID: "m1", ChatJID: "c@s.whatsapp.net", Timestamp: 10, Kind: "text", Body: "hi", Status: "received"}, "Contact", false); err != nil {
+		t.Fatal(err)
+	}
+	current := model.Reaction{ChatJID: "c@s.whatsapp.net", MessageID: "m1", SenderJID: "friend@s.whatsapp.net", Emoji: "❤️", Timestamp: 200}
+	if err := s.UpsertReaction(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	stale := model.Reaction{ChatJID: "c@s.whatsapp.net", MessageID: "m1", SenderJID: "friend@s.whatsapp.net", Emoji: "👍", Timestamp: 100}
+	if err := s.UpsertReaction(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := s.MessageDetail(ctx, "c@s.whatsapp.net", "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Reactions) != 1 || detail.Reactions[0].Emoji != "❤️" {
+		t.Fatalf("history replaced the current reaction: %#v", detail.Reactions)
+	}
+
+	// A stale removal must not clear a reaction left since.
+	if err := s.UpsertReaction(ctx, model.Reaction{ChatJID: "c@s.whatsapp.net", MessageID: "m1", SenderJID: "friend@s.whatsapp.net", Timestamp: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if detail, err = s.MessageDetail(ctx, "c@s.whatsapp.net", "m1"); err != nil || len(detail.Reactions) != 1 {
+		t.Fatalf("a stale removal took the current reaction away: %#v err=%v", detail.Reactions, err)
+	}
+
+	// Taking it back now does clear it.
+	if err := s.UpsertReaction(ctx, model.Reaction{ChatJID: "c@s.whatsapp.net", MessageID: "m1", SenderJID: "friend@s.whatsapp.net", Timestamp: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if detail, err = s.MessageDetail(ctx, "c@s.whatsapp.net", "m1"); err != nil || len(detail.Reactions) != 0 {
+		t.Fatalf("taking a reaction back left it on the message: %#v err=%v", detail.Reactions, err)
+	}
+
+	// A newer reaction still applies.
+	if err := s.UpsertReaction(ctx, model.Reaction{ChatJID: "c@s.whatsapp.net", MessageID: "m1", SenderJID: "friend@s.whatsapp.net", Emoji: "😀", Timestamp: 400}); err != nil {
+		t.Fatal(err)
+	}
+	if detail, err = s.MessageDetail(ctx, "c@s.whatsapp.net", "m1"); err != nil || len(detail.Reactions) != 1 || detail.Reactions[0].Emoji != "😀" {
+		t.Fatalf("a newer reaction did not apply: %#v err=%v", detail.Reactions, err)
+	}
+}

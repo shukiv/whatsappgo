@@ -77,6 +77,7 @@ var apiMethods = []MethodDescription{
 	method("link.preview.refresh", "Replace a small cached link image with its full preview", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID"}),
 	method("history.request", "Request an older history page", true, map[string]any{"chat_jid": "123@lid", "limit": 50}),
 	method("history.refresh", "Request a recent history page", true, map[string]any{"chat_jid": "123@lid", "limit": 50}),
+	method("message.get", "One stored message with its reactions and quoted line", false, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID"}),
 	method("message.download", "Download and cache message media", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID"}),
 	method("message.played", "Mark an incoming voice or video message as played", true, map[string]any{"chat_jid": "123@lid", "sender_jid": "456@lid", "message_id": "MESSAGE_ID", "timestamp": 0}),
 	method("message.send", "Send a text message", true, map[string]any{"chat_jid": "123@lid", "text": "Hello", "reply_to": "", "reply_chat_jid": "", "link_preview": map[string]any{}}),

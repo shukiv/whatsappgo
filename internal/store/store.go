@@ -474,14 +474,20 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 	  -- original message, so an unguarded update here would restore the text
 	  -- of a message the sender deleted for everyone.
 	  kind=CASE WHEN messages.revoked=1 THEN messages.kind ELSE excluded.kind END,
-	  body=CASE WHEN messages.revoked=1 THEN messages.body ELSE excluded.body END,
+	  -- An edit is newer than the copy history keeps. Redelivering the
+	  -- original would otherwise put the text the sender replaced back on
+	  -- screen, so a stored edit stands until another edit arrives.
+	  body=CASE WHEN messages.revoked=1 THEN messages.body
+	   WHEN messages.edited=1 AND excluded.edited=0 THEN messages.body
+	   ELSE excluded.body END,
 	  from_me=excluded.from_me,
 	  status=CASE
 	   WHEN messages.status='played' THEN messages.status
 	   WHEN messages.status='read' AND excluded.status IN ('sent','delivered','received') THEN messages.status
 	   WHEN messages.status='delivered' AND excluded.status IN ('sent','received') THEN messages.status
 	   ELSE excluded.status END,
-  reply_to=excluded.reply_to,edited=excluded.edited,
+  reply_to=excluded.reply_to,
+  edited=CASE WHEN messages.edited=1 THEN 1 ELSE excluded.edited END,
   revoked=CASE WHEN messages.revoked=1 THEN 1 ELSE excluded.revoked END,
   media_mime=CASE WHEN excluded.media_mime<>'' THEN excluded.media_mime ELSE messages.media_mime END,
   media_name=CASE WHEN excluded.media_name<>'' THEN excluded.media_name ELSE messages.media_name END,
@@ -999,6 +1005,29 @@ func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (mode
 		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore)
 	m.AudioWaveform = unpackWaveform(waveform)
 	return m, err
+}
+
+// MessageDetail returns one message the way a conversation page carries it:
+// with its reactions and the line its reply quotes. A small change - a
+// reaction, an edit, a deletion - can then be applied to the open conversation
+// without reloading the page the reader is looking at.
+func (s *Store) MessageDetail(ctx context.Context, chatJID, messageID string) (model.Message, error) {
+	message, err := s.GetMessage(ctx, chatJID, messageID)
+	if err != nil {
+		return model.Message{}, err
+	}
+	if message.ReplyTo != "" {
+		if text, sender, fromMe, ok := s.ReplyPreview(ctx, message.ChatJID, message.ReplyTo); ok {
+			message.ReplyPreview = text
+			message.ReplySender = sender
+			message.ReplyFromMe = fromMe
+		}
+	}
+	items := []model.Message{message}
+	if err := s.attachReactions(ctx, message.ChatJID, items); err != nil {
+		return model.Message{}, err
+	}
+	return items[0], nil
 }
 
 // ReplyPreview describes a quoted message the way a reply bubble shows it: who
@@ -1658,14 +1687,25 @@ func (s *Store) SetMetadata(ctx context.Context, key, value string) error {
 	return err
 }
 
+// UpsertReaction records what one person left on one message.
+//
+// History synchronisation replays reactions that have since been changed or
+// taken back, and it arrives long after the live event did. An older reaction
+// therefore never replaces a newer one, in either direction: a stale emoji does
+// not overwrite the current one, and a stale removal does not clear it. A
+// reaction with no timestamp is treated as current, because that is what a live
+// event without one means.
 func (s *Store) UpsertReaction(ctx context.Context, r model.Reaction) error {
 	r.ChatJID = s.canonicalChatJID(ctx, r.ChatJID)
 	if r.Emoji == "" {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM reactions WHERE chat_jid=? AND message_id=? AND sender_jid=?`, r.ChatJID, r.MessageID, r.SenderJID)
+		_, err := s.db.ExecContext(ctx, `DELETE FROM reactions
+ WHERE chat_jid=? AND message_id=? AND sender_jid=? AND (?=0 OR timestamp<=?)`,
+			r.ChatJID, r.MessageID, r.SenderJID, r.Timestamp, r.Timestamp)
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO reactions(chat_jid,message_id,sender_jid,emoji,timestamp) VALUES(?,?,?,?,?)
- ON CONFLICT(chat_jid,message_id,sender_jid) DO UPDATE SET emoji=excluded.emoji,timestamp=excluded.timestamp`,
+ ON CONFLICT(chat_jid,message_id,sender_jid) DO UPDATE SET emoji=excluded.emoji,timestamp=excluded.timestamp
+ WHERE excluded.timestamp=0 OR excluded.timestamp>=reactions.timestamp`,
 		r.ChatJID, r.MessageID, r.SenderJID, r.Emoji, r.Timestamp)
 	return err
 }

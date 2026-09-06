@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -324,5 +326,50 @@ func TestUpdateDownloadStartsOnceWhenAskedAtOnce(t *testing.T) {
 	close(release)
 	if got != 1 {
 		t.Fatalf("the download started %d times", got)
+	}
+}
+
+// A download that finishes after a newer release has been found belongs to
+// neither: the artifacts share a name, so offering it under the newer version's
+// label would install the older one.
+func TestFinishedDownloadOfASupersededReleaseIsDiscarded(t *testing.T) {
+	svc, stream := updateService(t, "v1.0.0")
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		return updates.Release{Version: "v1.1.0", URL: "https://example.test/v1.1.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+
+	artifact := filepath.Join(t.TempDir(), "WhatsAppGo-x86_64.AppImage")
+	if err := os.WriteFile(artifact, []byte("older release"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	svc.AllowUpdateDownloads(func(context.Context, updates.Release, func(int64, int64)) (string, error) {
+		<-release
+		return artifact, nil
+	})
+	if _, err := svc.Handle(context.Background(), "update.download", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	// A newer release turns up while the transfer is still running.
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		return updates.Release{Version: "v1.2.0", URL: "https://example.test/v1.2.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+	close(release)
+
+	if _, saw := awaitEvent(stream, "update.ready", time.Second); saw {
+		t.Fatal("a file fetched for the previous release was announced as ready")
+	}
+	status := svc.updateStatus()
+	if status["latest"] != "v1.2.0" {
+		t.Fatalf("the newer release was lost: %#v", status)
+	}
+	if downloaded, _ := status["downloaded"].(string); downloaded != "" {
+		t.Fatalf("the superseded artifact is still on offer: %q", downloaded)
+	}
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Fatalf("the superseded artifact was left on disk: %v", err)
 	}
 }

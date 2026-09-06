@@ -155,6 +155,7 @@ All parameter objects reject unknown fields.
 | `messages.search` | `query`, `limit` | Local text-search results |
 | `link.preview` | `text` | Open Graph metadata and thumbnail bytes |
 | `history.request` / `history.refresh` | `chat_jid`, `limit` | Ask WhatsApp for older/recent linked-device history |
+| `message.get` | `chat_jid`, `message_id` | One stored message with its reactions and quoted line, for applying a small change without reloading a page |
 | `message.download` | `chat_jid`, `message_id` | Download/cache media and return its local path |
 | `message.send` | `chat_jid`, `text`, `reply_to`, `reply_chat_jid`, `link_preview` | Sent message; `reply_chat_jid` identifies a quoted message stored in a different chat |
 | `message.send_media` | `chat_jid`, `path`, `caption`, `reply_to`, `voice` | Sent media message; path must be local to WhatsAppGo |
