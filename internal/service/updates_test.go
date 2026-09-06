@@ -359,7 +359,30 @@ func TestFinishedDownloadOfASupersededReleaseIsDiscarded(t *testing.T) {
 	svc.checkForUpdate(context.Background())
 	close(release)
 
-	if _, saw := awaitEvent(stream, "update.ready", time.Second); saw {
+	// The window is told what is on offer instead, so it stops showing a
+	// transfer that no longer exists. The first announcement is the one that
+	// found v1.2.0 while the transfer was still running; the one after the
+	// transfer ends is the one being checked here.
+	var fields map[string]any
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		announced, saw := awaitEvent(stream, "update.available", time.Second)
+		if !saw {
+			break
+		}
+		candidate, _ := announced.Data.(map[string]any)
+		if candidate["latest"] == "v1.2.0" && candidate["downloading"] == false {
+			fields = candidate
+			break
+		}
+	}
+	if fields == nil {
+		t.Fatal("nothing told the window that the transfer had been discarded")
+	}
+	if fields["downloaded"] != "" || fields["latest"] != "v1.2.0" {
+		t.Fatalf("the window was left with a transfer it cannot finish: %#v", fields)
+	}
+	if _, saw := awaitEvent(stream, "update.ready", 200*time.Millisecond); saw {
 		t.Fatal("a file fetched for the previous release was announced as ready")
 	}
 	status := svc.updateStatus()

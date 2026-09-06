@@ -172,6 +172,10 @@ func (s *Service) startUpdateDownload() (map[string]any, error) {
 		}
 		if superseded {
 			_ = os.Remove(path)
+			// The window is still showing a transfer that has just been thrown
+			// away. Saying what is on offer now both stops that and re-offers
+			// the release this one was overtaken by.
+			s.events.Publish(events.Event{Name: "update.available", Data: s.updateStatus()})
 			return
 		}
 		s.events.Publish(events.Event{Name: "update.ready", Data: map[string]any{
