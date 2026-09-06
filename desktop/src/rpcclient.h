@@ -96,6 +96,9 @@ public:
     QAbstractItemModel *archivedChatListModel() { return &m_archivedChatList; }
     int archivedCount() const { return m_archivedCount; }
     QAbstractItemModel *messages() { return &m_messages; }
+    // The conversation as the model that holds it, for callers that need more
+    // than a view: the tests, which read messages back by identity.
+    MessageListModel *messageList() { return &m_messages; }
     QVariantMap selectedChat() const { return m_selectedChat; }
     QVariantMap selectedPresence() const { return m_selectedPresence; }
     QVariantMap chatInfo() const { return m_chatInfo; }
@@ -314,12 +317,18 @@ private:
     void processEvent(const QString &name, const QJsonValue &data);
     void setBusy(bool value);
     void upsertMessage(const QVariantMap &message);
+    bool belongsToOpenChat(const QVariantMap &message) const;
+    void refreshOneMessage(const QString &messageId);
+    void acknowledgeIncoming(const QVariantMap &message);
     void rememberMessages(const QString &chatJid, const QVariantList &messages);
     void upgradeSmallLinkPreviews(const QVariantList &messages);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
     void refreshOpenMessages();
     void pumpMediaQueue();
+    // Answers every request that will never come back, so a caller waiting on
+    // one is not left waiting for ever, and forgets the media queue's places.
+    void abandonPendingRequests(const QString &reason, bool announce);
     void syncChatListModel();
     void runSidebarSearch(const QString &query);
     void applyChatAvatar(const QString &jid, const QString &path);

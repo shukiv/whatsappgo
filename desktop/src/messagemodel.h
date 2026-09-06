@@ -89,6 +89,9 @@ public:
     Q_INVOKABLE QVariantMap lastOwnEditableMessage() const;
     QVariantList items() const { return m_messages; }
     int viewRowForId(const QString &messageId) const;
+    // The message with this id, or an empty map. Callers that hold an id must
+    // use this rather than mixing the view's row numbers with the storage's.
+    QVariantMap byId(const QString &messageId) const;
 
 signals:
     void countChanged();

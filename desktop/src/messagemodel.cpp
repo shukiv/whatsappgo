@@ -366,6 +366,14 @@ QVariantMap MessageListModel::lastOwnEditableMessage() const
     return {};
 }
 
+QVariantMap MessageListModel::byId(const QString &id) const
+{
+    const auto found = m_rowById.constFind(id);
+    if (found == m_rowById.constEnd() || found.value() < 0 || found.value() >= count())
+        return {};
+    return m_messages.at(found.value()).toMap();
+}
+
 int MessageListModel::viewRowForId(const QString &id) const
 {
     const auto found = m_rowById.constFind(id);

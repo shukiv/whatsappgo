@@ -239,7 +239,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         }
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
-        m_pending.clear();
+        abandonPendingRequests(tr("The background service disconnected."), true);
         if (!m_selectedPresence.isEmpty()) {
             m_selectedPresence.clear();
             emit selectedPresenceChanged();
@@ -488,12 +488,44 @@ void RpcClient::reconnect()
     connectSocket();
 }
 
+// A request that is dropped still has to answer its caller. Sending was left
+// disabled after a disconnection because only the send's own callback clears
+// the busy flag, and automatic downloads stopped for good after an account
+// switch because the count of transfers in flight is only decremented by the
+// callbacks that were thrown away.
+void RpcClient::abandonPendingRequests(const QString &reason, bool announce)
+{
+    const auto abandoned = std::exchange(m_pending, {});
+    const auto quiet = std::exchange(m_quietRequests, {});
+    m_mediaQueue.clear();
+    m_mediaInFlight = 0;
+    const QJsonObject error{{QStringLiteral("code"), QStringLiteral("disconnected")},
+                            {QStringLiteral("message"), reason}};
+    bool anybodyWasWaiting = false;
+    for (auto it = abandoned.cbegin(); it != abandoned.cend(); ++it) {
+        if (!quiet.contains(it.key()))
+            anybodyWasWaiting = true;
+        if (it.value())
+            it.value()(QJsonValue(), error);
+    }
+    // One line, however many requests were dropped: a daemon restart abandons
+    // a handful at once and nobody needs to be told about each of them.
+    if (announce && anybodyWasWaiting)
+        emit errorOccurred(reason);
+}
+
 void RpcClient::sendRequest(const QString &method, const QJsonObject &params, Callback callback,
                             OnFailure onFailure)
 {
     if (!daemonConnected()) {
         if (onFailure == OnFailure::Report) {
             emit errorOccurred(tr("The background service is not connected yet."));
+        }
+        // The caller is waiting on this answer as much as on a delivered one:
+        // a send that is refused here used to leave the composer disabled.
+        if (callback) {
+            callback(QJsonValue(), QJsonObject{{QStringLiteral("code"), QStringLiteral("not_connected")},
+                                               {QStringLiteral("message"), tr("The background service is not connected yet.")}});
         }
         reconnect();
         return;
@@ -613,8 +645,13 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         const auto message = data.toObject().toVariantMap();
         if (message.value(QStringLiteral("chat_jid")).toString() == QStringLiteral("status@broadcast"))
             refreshStatuses();
-        if (message.value(QStringLiteral("chat_jid")) == m_selectedChat.value(QStringLiteral("jid")))
+        if (message.value(QStringLiteral("chat_jid")) == m_selectedChat.value(QStringLiteral("jid"))) {
             upsertMessage(message);
+            // The reader is looking at it. Only the page that opens a chat used
+            // to send receipts, so a message that arrived while the
+            // conversation was open stayed unread until it was reopened.
+            acknowledgeIncoming(message);
+        }
         const auto cached = message.value(QStringLiteral("media_path")).toString();
         if (!cached.isEmpty())
             emit mediaReady(message.value(QStringLiteral("id")).toString(), cached);
@@ -637,8 +674,11 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         }
         refreshChats();
     } else if (name == QStringLiteral("message.revoked") || name == QStringLiteral("message.reaction") || name == QStringLiteral("message.edited")) {
-        if (data.toObject().value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
-            openChat(m_selectedChat.value(QStringLiteral("jid")).toString(), m_selectedChat.value(QStringLiteral("title")).toString());
+        // Reloading the conversation for a reaction threw away every older page
+        // the reader had loaded and dropped them back at the newest one.
+        const auto payload = data.toObject();
+        if (payload.value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
+            refreshOneMessage(payload.value(QStringLiteral("message_id")).toString());
     } else if (name == QStringLiteral("message.starred")) {
         // A star set on the phone reaches us only as this event, so the open
         // conversation has to answer to it as well as to our own action.
@@ -1794,10 +1834,12 @@ void RpcClient::starMessage(const QString &messageId, const QString &senderJid, 
 
 void RpcClient::applyStarToOpenConversation(const QString &messageId, bool starred)
 {
-    const int row = m_messages.viewRowForId(messageId);
-    if (row < 0)
+    // By identity, not by row: the model stores a conversation chronologically
+    // and hands the view the reverse, so a row number from one is a different
+    // message in the other. Starring the first message marked the last.
+    auto message = m_messages.byId(messageId);
+    if (message.isEmpty())
         return;
-    auto message = m_messages.at(row);
     message.insert(QStringLiteral("starred"), starred);
     m_messages.upsert(message);
 }
@@ -1934,7 +1976,7 @@ void RpcClient::switchProfile(const QString &profile)
         return;
     m_reconnectTimer.stop();
     m_socket.abort();
-    m_pending.clear();
+    abandonPendingRequests(tr("The account was changed."), false);
     m_profile = profile;
     m_status.clear();
     m_chats.clear();
@@ -2380,10 +2422,12 @@ void RpcClient::pumpMediaQueue()
                 --m_mediaInFlight;
                 if (error.isEmpty()) {
                     const auto message = result.toObject().toVariantMap();
-                    upsertMessage(message);
-                    const auto path = message.value(QStringLiteral("media_path")).toString();
-                    if (!path.isEmpty())
-                        emit mediaReady(message.value(QStringLiteral("id")).toString(), path);
+                    if (belongsToOpenChat(message)) {
+                        upsertMessage(message);
+                        const auto path = message.value(QStringLiteral("media_path")).toString();
+                        if (!path.isEmpty())
+                            emit mediaReady(message.value(QStringLiteral("id")).toString(), path);
+                    }
                 }
                 pumpMediaQueue();
             },
@@ -2407,6 +2451,11 @@ void RpcClient::downloadMedia(const QString &messageId)
 			if (!error.isEmpty())
 				return;
 			const auto message = result.toObject().toVariantMap();
+			// A download outlives the conversation it was started in. Its
+			// answer used to be inserted wherever the reader had moved to,
+			// which put one person's picture in somebody else's conversation.
+			if (!belongsToOpenChat(message))
+				return;
 			upsertMessage(message);
 			// Downloading only makes the file available. What happens next is
 			// the caller's decision: audio and video play inside the window,
@@ -2710,4 +2759,60 @@ void RpcClient::setBusy(bool value)
 void RpcClient::upsertMessage(const QVariantMap &message)
 {
     m_messages.upsert(message);
+}
+
+// belongsToOpenChat answers whether a message is part of the conversation on
+// screen. Anything that arrives through a callback has to ask: the reader can
+// open another chat between the request and its answer.
+// refreshOneMessage re-reads a single message from the daemon and puts it back
+// into the open conversation, leaving every loaded page and the reader's place
+// where they were.
+void RpcClient::refreshOneMessage(const QString &messageId)
+{
+    const auto jid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    if (jid.isEmpty() || messageId.isEmpty())
+        return;
+    if (m_messages.byId(messageId).isEmpty()) {
+        // Not a message on screen: the change belongs to a page that was never
+        // loaded, and there is nothing to update.
+        refreshChats();
+        return;
+    }
+    sendRequest(QStringLiteral("message.get"),
+                {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("message_id"), messageId}},
+                [this, jid](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != jid)
+                        return;
+                    const auto message = result.toObject().toVariantMap();
+                    if (!message.value(QStringLiteral("id")).toString().isEmpty())
+                        upsertMessage(message);
+                    refreshChats();
+                },
+                OnFailure::StayQuiet);
+}
+
+// acknowledgeIncoming sends the read receipt for one message the reader can see.
+void RpcClient::acknowledgeIncoming(const QVariantMap &message)
+{
+    if (message.value(QStringLiteral("from_me")).toBool())
+        return;
+    const auto chat = message.value(QStringLiteral("chat_jid")).toString();
+    const auto id = message.value(QStringLiteral("id")).toString();
+    if (chat.isEmpty() || id.isEmpty())
+        return;
+    sendRequest(QStringLiteral("chat.read"),
+                {{QStringLiteral("chat_jid"), chat},
+                 {QStringLiteral("sender_jid"), message.value(QStringLiteral("sender_jid")).toString()},
+                 {QStringLiteral("message_ids"), QJsonArray{id}},
+                 {QStringLiteral("timestamp"), message.value(QStringLiteral("timestamp")).toLongLong()}},
+                {}, OnFailure::StayQuiet);
+}
+
+bool RpcClient::belongsToOpenChat(const QVariantMap &message) const
+{
+    const auto open = m_selectedChat.value(QStringLiteral("jid")).toString();
+    if (open.isEmpty())
+        return false;
+    const auto chat = message.value(QStringLiteral("chat_jid")).toString();
+    return chat.isEmpty() || chat == open;
 }

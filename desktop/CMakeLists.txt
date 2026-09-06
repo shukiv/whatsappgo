@@ -339,6 +339,20 @@ if(BUILD_TESTING)
     target_include_directories(chat-list-updates-test PRIVATE src)
     target_link_libraries(chat-list-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
 
+    qt_add_executable(conversation-updates-test
+        tests/ConversationUpdates.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
+    )
+    target_include_directories(conversation-updates-test PRIVATE src)
+    target_link_libraries(conversation-updates-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+
     qt_add_executable(video-surface-test
         tests/VideoSurface.cpp
         src/videosurface.cpp
@@ -403,6 +417,7 @@ if(BUILD_TESTING)
     target_include_directories(profile-display-names-test PRIVATE src)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME desktop-profile-display-names COMMAND profile-display-names-test)
+    add_test(NAME desktop-conversation-updates COMMAND conversation-updates-test)
     add_test(NAME desktop-video-surface COMMAND video-surface-test)
     set_tests_properties(desktop-video-surface PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-notification-routing COMMAND notification-routing-test)
