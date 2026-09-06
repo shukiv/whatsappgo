@@ -548,7 +548,7 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return model.Message{}, err
 	}
-	kind, mediaType := classifyMIME(mimeType)
+	kind, mediaType := classifyMedia(mimeType, req.Document)
 	tmp, err := os.CreateTemp(c.mediaDir, "upload-*")
 	if err != nil {
 		return model.Message{}, err
@@ -1075,7 +1075,10 @@ func detectMIME(f *os.File, path string) string {
 	n, _ := f.Read(buf)
 	return http.DetectContentType(buf[:n])
 }
-func classifyMIME(m string) (string, whatsmeow.MediaType) {
+func classifyMedia(m string, document bool) (string, whatsmeow.MediaType) {
+	if document {
+		return "document", whatsmeow.MediaDocument
+	}
 	switch {
 	case strings.HasPrefix(m, "image/"):
 		return "image", whatsmeow.MediaImage

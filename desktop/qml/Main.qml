@@ -153,12 +153,47 @@ ApplicationWindow {
 
     // sendAttachment sends a file as a reply when the composer is showing one,
     // which is what WhatsApp Web does with an attachment picked while replying.
-    function sendAttachment(fileUrl, caption) {
+    function sendAttachment(fileUrl, caption, document) {
         const replyTo = window.replyTargetId
         window.replyTargetId = ""
         window.replyPreview = ""
         window.rememberDraft()
-        backend.sendFile(fileUrl, caption || "", replyTo)
+        backend.sendFile(fileUrl, caption || "", replyTo, document === true)
+    }
+
+    property var voiceRecordingContext: null
+    function startVoiceRecording() {
+        const jid = String(backend.selectedChat.jid || "")
+        if (!jid || window.voiceRecordingContext)
+            return
+        const context = { chatJid: jid, profile: backend.profile, replyTo: window.replyTargetId }
+        window.voiceRecordingContext = context
+        voiceRecorderLoader.active = true
+        Qt.callLater(function() {
+            // Navigation may cancel the recording before the loader is ready.
+            if (window.voiceRecordingContext === context && voiceRecorderLoader.item)
+                voiceRecorderLoader.item.start()
+        })
+    }
+
+    function cancelVoiceRecording() {
+        window.voiceRecordingContext = null
+        if (voiceRecorderLoader.item)
+            voiceRecorderLoader.item.cancel()
+    }
+
+    function sendRecordedVoice(path) {
+        const context = window.voiceRecordingContext
+        window.voiceRecordingContext = null
+        if (!context || context.profile !== backend.profile
+                || context.chatJid !== String(backend.selectedChat.jid || ""))
+            return
+        backend.sendVoice(path, context.chatJid, context.profile, context.replyTo)
+        if (window.replyTargetId === context.replyTo) {
+            window.replyTargetId = ""
+            window.replyPreview = ""
+            window.rememberDraft()
+        }
     }
 
     // What has to be put down when the reader moves to another conversation.
@@ -166,6 +201,13 @@ ApplicationWindow {
     // the new one is how a draft, a quotation, or a selection reached the wrong
     // person.
     function handleChatSwitched(jid) {
+        if (window.draftKey(jid) === window.draftHeldKey)
+            return false
+        if (window.voiceRecordingContext) {
+            window.cancelVoiceRecording()
+            window.transientNotice = qsTr("Voice recording canceled because the conversation changed.")
+            noticeTimer.restart()
+        }
         // Compared by key, not by conversation: the same person in a second
         // account is a second conversation with a draft of its own.
         if (window.draftKey(jid) !== window.draftHeldKey) {
@@ -189,6 +231,7 @@ ApplicationWindow {
         // chat.
         if (window.messageSelectionActive)
             window.endMessageSelection()
+        return true
     }
 
     function applyUpdateAction() {
@@ -612,8 +655,9 @@ ApplicationWindow {
         id: voiceRecorderLoader
         active: false
         sourceComponent: VoiceRecorder {
-            onFinished: path => backend.sendVoice(path)
+            onFinished: path => window.sendRecordedVoice(path)
             onFailed: message => {
+                window.cancelVoiceRecording()
                 window.transientError = message
                 errorTimer.restart()
             }
@@ -1188,7 +1232,7 @@ ApplicationWindow {
                                     objectName: "starredMessagesMenuItem"
                                     text: qsTr("Starred messages")
                                     iconSource: Qt.resolvedUrl("icons/star.svg")
-                                    onClicked: { sidebarMenu.close(); starredMessagesDialog.open() }
+                                    onClicked: { sidebarMenu.close(); starredMessagesDialog.openForChat("") }
                                 }
                                 WhatsAppMenuItem {
                                     text: qsTr("Add another account")
@@ -2181,7 +2225,8 @@ ApplicationWindow {
                     Connections {
                         target: backend
                         function onSelectedChatChanged() {
-                            window.handleChatSwitched(String(backend.selectedChat.jid || ""))
+                            if (!window.handleChatSwitched(String(backend.selectedChat.jid || "")))
+                                return
                             window.highlightedMessageId = ""
                             messageJumpRetry.stop()
                             messageJumpHighlight.stop()
@@ -2426,8 +2471,7 @@ ApplicationWindow {
                                         } else if (window.recordingVoice) {
                                             voiceRecorderLoader.item.stop()
                                         } else {
-                                            voiceRecorderLoader.active = true
-                                            Qt.callLater(() => voiceRecorderLoader.item.start())
+                                            window.startVoiceRecording()
                                         }
                                     }
                                     ToolTip.visible: hovered
@@ -2501,7 +2545,7 @@ ApplicationWindow {
                 onFavoriteChanged: favorite => backend.setChatFavorite(backend.selectedChat.jid, favorite)
                 onBlockChanged: blocked => backend.setContactBlocked(backend.selectedChat.jid, blocked)
                 onDisappearingRequested: disappearingDialog.open()
-                onStarredRequested: starredMessagesDialog.open()
+                onStarredRequested: starredMessagesDialog.openForChat(backend.selectedChat.jid)
                 onExportRequested: exportChatDialog.open()
                 onClearRequested: conversationClearDialog.open()
                 onDeleteRequested: conversationDeleteDialog.open()
@@ -2569,7 +2613,7 @@ ApplicationWindow {
                 if (chatJid === "")
                     return
                 window.showSection("chats")
-                backend.openChat(chatJid, "")
+                window.jumpToMessageInChat(chatJid, "", messageId)
             }
             onCloseRequested: window.showSection("chats")
             onForwardRequested: items => {
@@ -2836,7 +2880,7 @@ ApplicationWindow {
         id: documentFileDialog
         title: qsTr("Choose a document")
         nameFilters: [qsTr("All files (*)")]
-        onAccepted: window.sendAttachment(selectedFile)
+        onAccepted: window.sendAttachment(selectedFile, "", true)
     }
     FileDialog {
         id: photosVideosFileDialog
@@ -3209,15 +3253,13 @@ ApplicationWindow {
         cancelText: qsTr("Close")
         // The list is read on open rather than kept in sync: stars change
         // rarely, and a stale list would be worse than a short wait.
-        property bool loading: false
-        onOpened: {
-            loading = true
-            backend.loadStarredMessages()
+        property string chatJid: ""
+        readonly property bool loading: backend.starredMessagesLoading
+        function openForChat(jid) {
+            chatJid = String(jid || "")
+            open()
         }
-        Connections {
-            target: backend
-            function onStarredMessagesChanged() { starredMessagesDialog.loading = false }
-        }
+        onOpened: backend.loadStarredMessages(chatJid)
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true

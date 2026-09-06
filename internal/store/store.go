@@ -722,13 +722,26 @@ func (s *Store) SetMessageStarred(ctx context.Context, chatJID, messageID string
 // ListStarredMessages returns starred messages newest first, across every
 // conversation, which is what the starred-messages destination shows.
 func (s *Store) ListStarredMessages(ctx context.Context, limit int) ([]model.Message, error) {
+	return s.ListStarredMessagesInChat(ctx, "", limit)
+}
+
+// An empty chat keeps the account-wide destination. Contact drawers filter in
+// SQL, before LIMIT, so newer stars in other chats cannot hide this chat's stars.
+func (s *Store) ListStarredMessagesInChat(ctx context.Context, chatJID string, limit int) ([]model.Message, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	where := "m.starred=1 AND m.revoked=0"
+	args := []any{}
+	if strings.TrimSpace(chatJID) != "" {
+		where += " AND m.chat_jid=?"
+		args = append(args, s.canonicalChatJID(ctx, chatJID))
+	}
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,
  m.from_me,m.status,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,
  COALESCE(c.title,'') FROM messages m LEFT JOIN chats c ON c.jid=m.chat_jid
- WHERE m.starred=1 AND m.revoked=0 ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, limit)
+ WHERE `+where+` ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

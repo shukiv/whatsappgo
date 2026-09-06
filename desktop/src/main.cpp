@@ -975,6 +975,7 @@ QtObject {
                 height: 600
                 visible: true
                 property var testMessage
+                property var selfReactedMessage
                 property var imageMessage
                 property var forwardedMessage
                 property string previewedMessageId: ""
@@ -1000,6 +1001,14 @@ QtObject {
 					opened: Boolean(harness.infoMessage.id)
 					message: harness.infoMessage
 				}
+                MessageDelegate {
+                    // The same message, reacted to by this account: WhatsApp
+                    // Web draws that badge exactly like anybody else's.
+                    objectName: "selfReactedInteractionDelegate"
+                    width: 800
+                    selfUserPart: "me"
+                    modelData: harness.selfReactedMessage
+                }
                 MessageDelegate {
                     objectName: "forwardedInteractionDelegate"
                     width: 800
@@ -1035,8 +1044,15 @@ QtObject {
                             {QStringLiteral("emoji"), QStringLiteral("👍")}},
             }},
         };
+        QVariantMap selfReacted = message;
+        selfReacted.insert(QStringLiteral("id"), QStringLiteral("self-reacted-test"));
+        selfReacted.insert(QStringLiteral("reactions"), QVariantList{
+            QVariantMap{{QStringLiteral("sender_jid"), QStringLiteral("me@lid")},
+                        {QStringLiteral("emoji"), QStringLiteral("❤️")}},
+        });
         std::unique_ptr<QObject> harness(component.createWithInitialProperties({
             {QStringLiteral("testMessage"), message},
+            {QStringLiteral("selfReactedMessage"), selfReacted},
             {QStringLiteral("forwardedMessage"), QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("forwarded-test")},
                 {QStringLiteral("kind"), QStringLiteral("text")},
@@ -1130,6 +1146,23 @@ QtObject {
             && QMetaObject::invokeMethod(quotedMessagePreview, "click");
         QCoreApplication::processEvents();
 
+        // A reaction the reader left themselves is drawn like everybody
+        // else's: WhatsApp Web says which one is yours in the panel, not by
+        // colouring the badge on the bubble.
+        auto *selfReactedDelegate = harness->findChild<QObject *>(QStringLiteral("selfReactedInteractionDelegate"));
+        auto *selfReactedBadge = selfReactedDelegate == nullptr ? nullptr
+            : qobject_cast<QQuickItem *>(selfReactedDelegate->findChild<QObject *>(QStringLiteral("messageReactionBadge")));
+        const bool ownReactionIsMarked = selfReactedDelegate != nullptr
+            && selfReactedDelegate->property("reactedByMe").toBool();
+        const bool ownBadgeLooksTheSame = selfReactedBadge != nullptr && reactionBadge != nullptr
+            && selfReactedBadge->property("color").value<QColor>() == reactionBadge->property("color").value<QColor>()
+            && QQmlProperty(selfReactedBadge, QStringLiteral("border.color")).read().value<QColor>()
+                == QQmlProperty(reactionBadge, QStringLiteral("border.color")).read().value<QColor>();
+        qInfo().noquote() << QStringLiteral("own reaction: marked=%1 same=%2 colour=%3")
+                                 .arg(ownReactionIsMarked).arg(ownBadgeLooksTheSame)
+                                 .arg(selfReactedBadge ? selfReactedBadge->property("color").value<QColor>().name()
+                                                       : QStringLiteral("missing"));
+
         // WhatsApp Web opens the badge into the list of who reacted, with a
         // heading per emoji that narrows the list to the people who left it.
         const bool detailsOpened = QMetaObject::invokeMethod(delegate, "openReactionDetails");
@@ -1192,7 +1225,10 @@ QtObject {
                 && reactionCount && reactionCount->property("text").toString() == QStringLiteral("3")
                 && detailsOpened && reactionDetails && reactionDetails->property("visible").toBool()
                 && reactionDetailsTitle
-                && reactionDetailsTitle->property("text").toString() == QStringLiteral("3 emoji reactions")
+                && reactionDetailsTitle->property("text").toString() == QStringLiteral("3 reactions")
+                // The account has to recognise its own reaction for the
+                // comparison beside it to mean anything.
+                && ownReactionIsMarked && ownBadgeLooksTheSame
                 && listedEverybody == 3 && listedThumbs == 2
                 && reactionBadge->y() >= bubble->height() - 6 && delegate->property("implicitHeight").toReal() > bubble->height()
                 // Measured off WhatsApp Web: a 30 device-pixel badge carrying a
@@ -2744,6 +2780,21 @@ QtObject {
         backend.switchProfile(QStringLiteral("default"));
         QCoreApplication::processEvents();
 
+        // A metadata refresh emits selectedChatChanged even without moving to
+        // another chat. It must not throw away an in-progress bulk selection.
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QMetaObject::invokeMethod(root, "beginMessageSelection");
+        const QVariant pickedMessage = QVariantMap{{QStringLiteral("id"), QStringLiteral("picked")}};
+        QMetaObject::invokeMethod(root, "toggleMessageSelection", Q_ARG(QVariant, pickedMessage));
+        QMetaObject::invokeMethod(root, "handleChatSwitched", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        if (!root->property("messageSelectionActive").toBool())
+            return WHATSAPPGO_TEST_FAILURE(); // Same-chat refresh canceled selection.
+        QVariant picked;
+        QMetaObject::invokeMethod(root, "isMessageSelected", Q_RETURN_ARG(QVariant, picked),
+                                  Q_ARG(QVariant, QStringLiteral("picked")));
+        if (!picked.toBool())
+            return WHATSAPPGO_TEST_FAILURE(); // Same-chat refresh lost selected IDs.
+
         // Messages picked in one conversation are not a selection in the next
         // one, and a jump asked for in the conversation being opened has to
         // survive the switch that opens it.
@@ -2761,6 +2812,15 @@ QtObject {
         QCoreApplication::processEvents();
         if (!root->property("pendingMessageJumpId").toString().isEmpty())
             return WHATSAPPGO_TEST_FAILURE();
+
+        // The media browser names an individual message, not just a chat.
+        auto *library = root->findChild<QObject *>(QStringLiteral("mediaLibraryPane"));
+        if (!library || !QMetaObject::invokeMethod(library, "messageRequested",
+                Q_ARG(QString, QStringLiteral("alice@lid")), Q_ARG(QString, QStringLiteral("old-photo"))))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (root->property("pendingMessageJumpChat").toString() != QStringLiteral("alice@lid")
+                || root->property("pendingMessageJumpId").toString() != QStringLiteral("old-photo"))
+            return WHATSAPPGO_TEST_FAILURE(); // Library discarded the selected ID.
         return EXIT_SUCCESS;
     }
 

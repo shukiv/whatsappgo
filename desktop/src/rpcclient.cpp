@@ -1811,7 +1811,7 @@ void RpcClient::clearComposerLinkPreview()
     emit composerLinkPreviewChanged();
 }
 
-void RpcClient::sendFile(const QString &localUrl, const QString &caption, const QString &replyTo)
+void RpcClient::sendFile(const QString &localUrl, const QString &caption, const QString &replyTo, bool document)
 {
     if (m_selectedChat.isEmpty())
         return;
@@ -1824,7 +1824,7 @@ void RpcClient::sendFile(const QString &localUrl, const QString &caption, const 
     sendRequest(QStringLiteral("message.send_media"),
                 {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
                  {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
-                 {QStringLiteral("reply_to"), replyTo}},
+                 {QStringLiteral("reply_to"), replyTo}, {QStringLiteral("document"), document}},
                 [this](const QJsonValue &, const QJsonObject &error) {
                     setBusy(false);
                     if (error.isEmpty())
@@ -1832,17 +1832,20 @@ void RpcClient::sendFile(const QString &localUrl, const QString &caption, const 
                 });
 }
 
-void RpcClient::sendVoice(const QString &localUrl)
+void RpcClient::sendVoice(const QString &localUrl, const QString &chatJid, const QString &recordingProfile, const QString &replyTo)
 {
-    if (m_selectedChat.isEmpty())
+    // Completion can arrive after navigation. Never infer a recipient or an
+    // account from the UI that happens to be open at that point.
+    if (chatJid.isEmpty() || recordingProfile != m_profile)
         return;
     const auto path = QUrl(localUrl).toLocalFile();
     if (path.isEmpty())
         return;
     setBusy(true);
     sendRequest(QStringLiteral("message.send_media"),
-                {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
-                 {QStringLiteral("path"), path}, {QStringLiteral("voice"), true}},
+                {{QStringLiteral("chat_jid"), chatJid},
+                 {QStringLiteral("path"), path}, {QStringLiteral("voice"), true},
+                 {QStringLiteral("reply_to"), replyTo}},
                 [this](const QJsonValue &, const QJsonObject &) { setBusy(false); });
 }
 
@@ -2071,6 +2074,10 @@ void RpcClient::switchProfile(const QString &profile)
     m_messageCacheOrder.clear();
     m_selectedChat.clear();
     m_searchResults.clear();
+    ++m_starredRequestGeneration;
+    m_starredMessages.clear();
+    m_starredMessagesLoading = false;
+    emit starredMessagesChanged();
     m_statusUpdates.clear();
     m_requestedLinkPreviews.clear();
     m_requestedStatusAvatars.clear();
@@ -2446,15 +2453,20 @@ void RpcClient::searchMessages(const QString &query)
                 });
 }
 
-// The starred list spans every conversation, so it is fetched whole rather
-// than filtered out of the chat that happens to be open.
-void RpcClient::loadStarredMessages()
+void RpcClient::loadStarredMessages(const QString &chatJid)
 {
-    sendRequest(QStringLiteral("messages.starred"), {{QStringLiteral("limit"), 100}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
-                    if (!error.isEmpty())
+    const auto generation = ++m_starredRequestGeneration;
+    m_starredMessages.clear();
+    m_starredMessagesLoading = true;
+    emit starredMessagesChanged();
+    sendRequest(QStringLiteral("messages.starred"),
+                {{QStringLiteral("limit"), 100}, {QStringLiteral("chat_jid"), chatJid}},
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_starredRequestGeneration)
                         return;
-                    m_starredMessages = result.toObject().value(QStringLiteral("items")).toArray().toVariantList();
+                    m_starredMessagesLoading = false;
+                    if (error.isEmpty())
+                        m_starredMessages = result.toObject().value(QStringLiteral("items")).toArray().toVariantList();
                     emit starredMessagesChanged();
                 });
 }

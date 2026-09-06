@@ -481,6 +481,12 @@ func (c *Client) ForwardMessage(ctx context.Context, fromChatJID, messageID, toC
 	if original.Revoked {
 		return model.Message{}, errors.New("a deleted message cannot be forwarded")
 	}
+	if original.MediaPath == "" {
+		switch original.Kind {
+		case "image", "video", "audio", "document", "sticker":
+			return model.Message{}, errors.New("download this attachment before forwarding it")
+		}
+	}
 	if original.MediaPath != "" {
 		if _, statErr := os.Stat(original.MediaPath); statErr != nil {
 			return model.Message{}, errors.New("download this attachment before forwarding it")
@@ -489,6 +495,7 @@ func (c *Client) ForwardMessage(ctx context.Context, fromChatJID, messageID, toC
 			ChatJID:         toChatJID,
 			Path:            original.MediaPath,
 			Caption:         original.Body,
+			Document:        original.Kind == "document",
 			ForwardingScore: original.ForwardingScore + 1,
 		})
 	}

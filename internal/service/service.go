@@ -123,11 +123,12 @@ type linkPreviewParams struct {
 	Text string `json:"text"`
 }
 type sendMediaParams struct {
-	ChatJID string `json:"chat_jid"`
-	Path    string `json:"path"`
-	Caption string `json:"caption"`
-	ReplyTo string `json:"reply_to"`
-	Voice   bool   `json:"voice"`
+	ChatJID  string `json:"chat_jid"`
+	Path     string `json:"path"`
+	Caption  string `json:"caption"`
+	ReplyTo  string `json:"reply_to"`
+	Voice    bool   `json:"voice"`
+	Document bool   `json:"document"`
 }
 type reactionParams struct {
 	ChatJID   string `json:"chat_jid"`
@@ -154,7 +155,8 @@ type messageForwardParams struct {
 	ToChatJID string `json:"to_chat_jid"`
 }
 type starredListParams struct {
-	Limit int `json:"limit"`
+	Limit   int    `json:"limit"`
+	ChatJID string `json:"chat_jid"`
 }
 type editParams struct {
 	ChatJID   string `json:"chat_jid"`
@@ -786,7 +788,10 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if p.ChatJID == "" || p.Path == "" {
 			return nil, errors.New("chat_jid and path are required")
 		}
-		msg, err := s.gateway.SendMedia(ctx, gateway.MediaRequest{ChatJID: p.ChatJID, Path: p.Path, Caption: p.Caption, ReplyTo: p.ReplyTo, Voice: p.Voice})
+		if p.Document && p.Voice {
+			return nil, errors.New("document and voice cannot both be true")
+		}
+		msg, err := s.gateway.SendMedia(ctx, gateway.MediaRequest{ChatJID: p.ChatJID, Path: p.Path, Caption: p.Caption, ReplyTo: p.ReplyTo, Voice: p.Voice, Document: p.Document})
 		if err != nil {
 			return nil, err
 		}
@@ -845,7 +850,7 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		items, err := s.store.ListStarredMessages(ctx, p.Limit)
+		items, err := s.store.ListStarredMessagesInChat(ctx, p.ChatJID, p.Limit)
 		if err != nil {
 			return nil, err
 		}

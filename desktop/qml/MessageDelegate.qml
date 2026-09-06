@@ -40,7 +40,9 @@ Item {
     // replaced or taken back knowingly. The self reaction is the one whose
     // sender is this account; comparison is on the user part because the same
     // person arrives as a phone JID or a LID depending on the chat.
-    readonly property string selfUserPart: {
+    // Not readonly: a test stands in for the account this is running as, which
+    // is otherwise only known once a daemon has answered.
+    property string selfUserPart: {
         const jid = String(backend.status.user_jid || "")
         return jid === "" ? "" : jid.split("@")[0].split(":")[0]
     }
@@ -1261,8 +1263,15 @@ Item {
         y: bubble.y + bubble.height - 2
         z: 4
         radius: height / 2
-        color: root.reactedByMe ? Theme.selectedRow : Theme.surfaceRaised
-        border.color: root.reactedByMe ? Theme.primary : Theme.border
+        // The reader's own reaction looks like anybody else's here: WhatsApp
+        // Web draws the same white pill whoever left it, and says which one is
+        // yours in the panel the badge opens. A green pill on the bubble read
+        // as a different kind of reaction altogether.
+        color: Theme.surfaceRaised
+        // WhatsApp Web separates the pill from what is behind it with a soft
+        // shadow. Nothing in this application uses an effect, and a hairline
+        // does the same work where the bubble under the badge is white.
+        border.color: Theme.border
         border.width: 1
 
         Row {
@@ -1340,7 +1349,10 @@ Item {
 
             Label {
                 objectName: "reactionDetailsTitle"
-                text: qsTr("%1 emoji reactions").arg(root.reactionTotal)
+                // "1 reaction", "4 reactions": what WhatsApp Web heads the
+                // panel with. "1 emoji reactions" was neither.
+                text: root.reactionTotal === 1
+                    ? qsTr("1 reaction") : qsTr("%1 reactions").arg(root.reactionTotal)
                 color: Theme.text
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
@@ -1350,7 +1362,10 @@ Item {
                 spacing: 6
 
                 Repeater {
-                    model: [{ emoji: "", count: root.reactionTotal }].concat(root.reactionSummary)
+                    // "All" is a choice between emoji, so it appears once
+                    // there is more than one to choose between.
+                    model: (root.reactionSummary.length > 1
+                        ? [{ emoji: "", count: root.reactionTotal }] : []).concat(root.reactionSummary)
                     delegate: Rectangle {
                         required property var modelData
                         readonly property bool current: reactionDetailsPopup.shownEmoji === String(modelData.emoji)

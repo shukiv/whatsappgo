@@ -58,6 +58,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantList contactSearchHits READ contactSearchHits NOTIFY contactSearchHitsChanged)
     Q_PROPERTY(QVariantList messageSearchHits READ messageSearchHits NOTIFY messageSearchHitsChanged)
     Q_PROPERTY(QVariantList starredMessages READ starredMessages NOTIFY starredMessagesChanged)
+    Q_PROPERTY(bool starredMessagesLoading READ starredMessagesLoading NOTIFY starredMessagesChanged)
     Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
     Q_PROPERTY(QVariantList callLogs READ callLogs NOTIFY callLogsChanged)
     Q_PROPERTY(QVariantList channels READ channels NOTIFY channelsChanged)
@@ -127,6 +128,7 @@ public:
     QVariantList contactSearchHits() const { return m_contactSearchHits; }
     QVariantList messageSearchHits() const { return m_messageSearchHits; }
     QVariantList starredMessages() const { return m_starredMessages; }
+    bool starredMessagesLoading() const { return m_starredMessagesLoading; }
     QVariantList statusUpdates() const { return m_statusUpdates; }
     QVariantList callLogs() const { return m_callLogs; }
     QVariantList channels() const { return m_channels; }
@@ -205,8 +207,8 @@ public:
     Q_INVOKABLE void sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text);
     Q_INVOKABLE void requestLinkPreview(const QString &text);
     Q_INVOKABLE void clearComposerLinkPreview();
-    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {});
-    Q_INVOKABLE void sendVoice(const QString &localUrl);
+    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {}, bool document = false);
+    Q_INVOKABLE void sendVoice(const QString &localUrl, const QString &chatJid, const QString &recordingProfile, const QString &replyTo = {});
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
     Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
     Q_INVOKABLE void reactMessage(const QString &messageId, const QString &senderJid, const QString &reaction);
@@ -231,7 +233,7 @@ public:
     // Searches inside the open conversation, which is what the panel in the
     // chat header does; the sidebar keeps its own results elsewhere.
     Q_INVOKABLE void searchMessages(const QString &query);
-    Q_INVOKABLE void loadStarredMessages();
+    Q_INVOKABLE void loadStarredMessages(const QString &chatJid = {});
     Q_INVOKABLE void openFile(const QString &path);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
     // Fetches a picture that has no preview, a few at a time.
@@ -394,6 +396,8 @@ private:
     void applyStarToOpenConversation(const QString &messageId, bool starred);
     QVariantList m_searchResults;
     QVariantList m_starredMessages;
+    bool m_starredMessagesLoading = false;
+    quint64 m_starredRequestGeneration = 0;
     QVariantList m_statusUpdates;
     QVariantList m_callLogs;
     QVariantList m_channels;
