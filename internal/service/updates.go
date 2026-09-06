@@ -21,11 +21,14 @@ type UpdateDownloader func(ctx context.Context, release updates.Release,
 
 // updateState is what the desktop is told about a newer version.
 type updateState struct {
-	mu          sync.Mutex
-	latest      updates.Release
-	checkedAt   time.Time
-	lastError   string
-	check       func(context.Context) (updates.Release, error)
+	mu        sync.Mutex
+	latest    updates.Release
+	checkedAt time.Time
+	lastError string
+	check     func(context.Context) (updates.Release, error)
+	// When GitHub will answer again. Asking inside the window it named
+	// spends nothing and fails the same way, so nothing is asked.
+	retryAt     time.Time
 	download    UpdateDownloader
 	downloading bool
 	downloaded  string
@@ -69,8 +72,19 @@ func (s *Service) checkForUpdate(ctx context.Context) updates.Release {
 	s.updates.mu.Lock()
 	check := s.updates.check
 	previous := s.updates.latest.Version
+	retryAt := s.updates.retryAt
 	s.updates.mu.Unlock()
 	if check == nil {
+		return updates.Release{}
+	}
+	// Both the few-hourly look and the button land here. Neither can be
+	// answered while GitHub is still counting down, so the wait is reported
+	// rather than spent on a request that is refused again.
+	if !retryAt.IsZero() && time.Now().Before(retryAt) {
+		limit := &updates.RateLimitError{Until: retryAt}
+		s.updates.mu.Lock()
+		s.updates.lastError = limit.Error()
+		s.updates.mu.Unlock()
 		return updates.Release{}
 	}
 
@@ -79,6 +93,14 @@ func (s *Service) checkForUpdate(ctx context.Context) updates.Release {
 	s.updates.checkedAt = time.Now()
 	if err != nil {
 		s.updates.lastError = err.Error()
+		if until, limited := updates.RateLimitedUntil(err); limited {
+			// Without a time to wait for, one hour is the window GitHub
+			// counts anonymous requests in.
+			if until.IsZero() {
+				until = time.Now().Add(time.Hour)
+			}
+			s.updates.retryAt = until
+		}
 		s.updates.mu.Unlock()
 		return updates.Release{}
 	}

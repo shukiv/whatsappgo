@@ -69,7 +69,7 @@ func Latest(ctx context.Context, client *http.Client, baseURL, repo string) (Rel
 		return Release{}, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return Release{}, fmt.Errorf("github answered %s", response.Status)
+		return Release{}, describeFailure(response)
 	}
 	var payload struct {
 		TagName     string    `json:"tag_name"`
@@ -106,6 +106,89 @@ func Latest(ctx context.Context, client *http.Client, baseURL, repo string) (Rel
 		})
 	}
 	return release, nil
+}
+
+// RateLimitError says that GitHub is refusing checks from this address for a
+// while. It is not a fault in the application or a reason to alarm anybody:
+// sixty anonymous requests an hour are shared by everyone behind one address,
+// and the only answer is to wait.
+type RateLimitError struct {
+	// Until is when GitHub says it will answer again. Zero when it did not
+	// say, which is treated as a short wait rather than an unknown one.
+	Until time.Time
+}
+
+func (e *RateLimitError) Error() string {
+	wait := time.Until(e.Until).Round(time.Minute)
+	if e.Until.IsZero() || wait <= 0 {
+		return "GitHub is limiting checks from this address; try again shortly"
+	}
+	return fmt.Sprintf("GitHub is limiting checks from this address; try again in about %s",
+		humanDuration(wait))
+}
+
+// RateLimitedUntil reports when a failed check may be retried.
+func RateLimitedUntil(err error) (time.Time, bool) {
+	var limited *RateLimitError
+	if !errors.As(err, &limited) {
+		return time.Time{}, false
+	}
+	return limited.Until, true
+}
+
+func humanDuration(wait time.Duration) string {
+	if wait < time.Hour {
+		minutes := int(wait.Minutes())
+		if minutes <= 1 {
+			return "a minute"
+		}
+		return strconv.Itoa(minutes) + " minutes"
+	}
+	hours := int((wait + 30*time.Minute).Hours())
+	if hours <= 1 {
+		return "an hour"
+	}
+	return strconv.Itoa(hours) + " hours"
+}
+
+// describeFailure turns an answer that is not a release into an error worth
+// showing. GitHub says "403 Forbidden" for an exhausted allowance, which reads
+// like the application was refused rather than asked to wait.
+func describeFailure(response *http.Response) error {
+	if response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests {
+		if until, limited := rateLimitReset(response.Header); limited {
+			return &RateLimitError{Until: until}
+		}
+	}
+	// GitHub explains itself in the body; "403 Forbidden" alone tells the
+	// reader nothing they can act on.
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxReleaseBytes)).Decode(&payload); err == nil {
+		if explanation := strings.TrimSpace(payload.Message); explanation != "" {
+			return fmt.Errorf("github answered %s: %s", response.Status, explanation)
+		}
+	}
+	return fmt.Errorf("github answered %s", response.Status)
+}
+
+// rateLimitReset reads the headers GitHub answers a spent allowance with. The
+// primary limit reports no requests remaining and when the window turns over;
+// the secondary one asks for a number of seconds instead.
+func rateLimitReset(header http.Header) (time.Time, bool) {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(header.Get("Retry-After"))); err == nil && seconds >= 0 {
+		return time.Now().Add(time.Duration(seconds) * time.Second), true
+	}
+	if strings.TrimSpace(header.Get("X-RateLimit-Remaining")) != "0" {
+		return time.Time{}, false
+	}
+	reset, err := strconv.ParseInt(strings.TrimSpace(header.Get("X-RateLimit-Reset")), 10, 64)
+	if err != nil || reset <= 0 {
+		// Refused for running out of requests, without saying when that ends.
+		return time.Time{}, true
+	}
+	return time.Unix(reset, 0), true
 }
 
 // Newer reports whether candidate is a later version than current.

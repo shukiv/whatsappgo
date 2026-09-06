@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewerComparesVersions(t *testing.T) {
@@ -100,5 +103,69 @@ func TestLatestReportsAServerThatFails(t *testing.T) {
 
 	if _, err := Latest(context.Background(), server.Client(), server.URL, "owner/name"); err == nil {
 		t.Fatal("a failing server was reported as success")
+	}
+}
+
+func TestLatestExplainsASpentAllowance(t *testing.T) {
+	reset := time.Now().Add(23 * time.Minute).Unix()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Limit", "60")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset, 10))
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"API rate limit exceeded for 203.0.113.7."}`))
+	}))
+	defer server.Close()
+
+	_, err := Latest(context.Background(), server.Client(), server.URL, "owner/name")
+	if err == nil {
+		t.Fatal("a refused check reported success")
+	}
+	until, limited := RateLimitedUntil(err)
+	if !limited {
+		t.Fatalf("a spent allowance was not recognised: %v", err)
+	}
+	if until.Unix() != reset {
+		t.Fatalf("the wait was read as %v, want %v", until, time.Unix(reset, 0))
+	}
+	// "github answered 403 Forbidden" tells the reader nothing they can do.
+	if !strings.Contains(err.Error(), "try again in about 23 minutes") {
+		t.Fatalf("the wait was not explained: %q", err)
+	}
+}
+
+func TestLatestRepeatsWhatGitHubSaidAboutAFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Repository access blocked"}`))
+	}))
+	defer server.Close()
+
+	_, err := Latest(context.Background(), server.Client(), server.URL, "owner/name")
+	if err == nil {
+		t.Fatal("a refused check reported success")
+	}
+	if _, limited := RateLimitedUntil(err); limited {
+		t.Fatalf("a refusal with no allowance headers was read as a rate limit: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Repository access blocked") {
+		t.Fatalf("github's own explanation was dropped: %q", err)
+	}
+}
+
+func TestLatestHonoursASecondaryLimitsRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	_, err := Latest(context.Background(), server.Client(), server.URL, "owner/name")
+	until, limited := RateLimitedUntil(err)
+	if !limited {
+		t.Fatalf("a secondary limit was not recognised: %v", err)
+	}
+	if wait := time.Until(until); wait < 90*time.Second || wait > 130*time.Second {
+		t.Fatalf("the wait GitHub asked for was not kept: %v", wait)
 	}
 }

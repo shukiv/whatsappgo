@@ -396,3 +396,48 @@ func TestFinishedDownloadOfASupersededReleaseIsDiscarded(t *testing.T) {
 		t.Fatalf("the superseded artifact was left on disk: %v", err)
 	}
 }
+
+func TestCheckWaitsOutARateLimitInsteadOfAskingAgain(t *testing.T) {
+	svc, _ := updateService(t, "v1.0.0")
+	asked := 0
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		asked++
+		return updates.Release{}, &updates.RateLimitError{Until: time.Now().Add(30 * time.Minute)}
+	}
+
+	svc.checkForUpdate(context.Background())
+	if asked != 1 {
+		t.Fatalf("the first check did not reach GitHub: %d requests", asked)
+	}
+	first := svc.updateStatus()["error"]
+	if first == "" {
+		t.Fatal("a refused check said nothing about why")
+	}
+
+	// The few-hourly look and the button both land here, and neither can be
+	// answered while GitHub is still counting down.
+	svc.checkForUpdate(context.Background())
+	if asked != 1 {
+		t.Fatalf("a check was made inside the wait GitHub asked for: %d requests", asked)
+	}
+	if again := svc.updateStatus()["error"]; again == "" {
+		t.Fatalf("the wait stopped being reported: %v", again)
+	}
+
+	// When the wait is over the next check goes out, and a release found
+	// clears the failure.
+	svc.updates.mu.Lock()
+	svc.updates.retryAt = time.Now().Add(-time.Minute)
+	svc.updates.mu.Unlock()
+	svc.updates.check = func(context.Context) (updates.Release, error) {
+		asked++
+		return updates.Release{Version: "v1.1.0", URL: "https://example.test/v1.1.0"}, nil
+	}
+	svc.checkForUpdate(context.Background())
+	if asked != 2 {
+		t.Fatalf("the check was still held back after the wait: %d requests", asked)
+	}
+	if failure := svc.updateStatus()["error"]; failure != "" {
+		t.Fatalf("a successful check kept the old failure: %v", failure)
+	}
+}

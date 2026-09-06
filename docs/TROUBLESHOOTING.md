@@ -150,6 +150,16 @@ Check, in this order:
 reports the running version, the newest release it found, and the error from the
 last check, if any.
 
+## The check says GitHub is limiting checks from this address
+
+GitHub answers sixty anonymous requests an hour per address, and every program
+on that address shares the allowance - a shared office line, a VPN exit, or
+carrier-grade NAT can spend it without WhatsAppGo asking for anything. The
+answer names how long is left; nothing is asked of GitHub again until then, so
+pressing the button meanwhile repeats the same wait rather than making it
+longer. Releases are still installable by hand from the releases page while the
+allowance is spent.
+
 ## The AppImage does not start
 
 It mounts itself with FUSE. Where FUSE is missing or an unprivileged mount is
