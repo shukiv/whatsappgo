@@ -29,10 +29,15 @@ int main(int argc, char **argv)
                 if (request.value(QStringLiteral("method")).toString() != QStringLiteral("chats.unread_count"))
                     QCoreApplication::exit(EXIT_FAILURE);
                 ++requests;
-                const auto count = requests == 1 ? 7 : 8;
-                if (requests == 1) {
+                const auto count = requests == 1 ? 7 : (requests == 2 ? 8 : 0);
+                if (requests <= 2) {
+                    // A message arriving, then this account reading its
+                    // conversations on another device: the second reaches the
+                    // daemon as a receipt, and the badge has to follow it.
                     QJsonObject event{{QStringLiteral("version"), 1},
-                                      {QStringLiteral("event"), QStringLiteral("message.upsert")},
+                                      {QStringLiteral("event"), requests == 1
+                                          ? QStringLiteral("message.upsert")
+                                          : QStringLiteral("message.receipt")},
                                       {QStringLiteral("data"), QJsonObject{}}};
                     socket->write(QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n');
                 }
@@ -49,7 +54,7 @@ int main(int argc, char **argv)
                      [&](const QString &profile, int count) {
                          if (profile != QStringLiteral("work"))
                              QCoreApplication::exit(EXIT_FAILURE);
-                         if (count == 8 && requests >= 2)
+                         if (count == 0 && requests >= 3)
                              QCoreApplication::exit(EXIT_SUCCESS);
                      });
     QTimer::singleShot(3000, &app, [] { QCoreApplication::exit(EXIT_FAILURE); });

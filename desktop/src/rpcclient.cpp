@@ -232,6 +232,18 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         refreshChats();
         refreshArchived();
         refreshUpdateStatus();
+        // Anything that arrived while the connection was down is missing from
+        // the open conversation, and the presence subscription went with the
+        // socket. Reopening the chat by hand used to be the only way back.
+        if (!m_selectedChat.isEmpty()) {
+            const auto jid = m_selectedChat.value(QStringLiteral("jid")).toString();
+            if (!jid.isEmpty() && !jid.endsWith(QStringLiteral("@g.us"))
+                    && !jid.endsWith(QStringLiteral("@broadcast")))
+                sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}},
+                            {}, OnFailure::StayQuiet);
+            refreshOpenMessages();
+            refreshChatInfo();
+        }
         if (!m_initialChat.isEmpty()) {
             const auto chat = m_initialChat;
             m_initialChat.clear();
@@ -755,11 +767,15 @@ void RpcClient::refreshChats()
     // The unfiltered list backs the sidebar, the unread total and the new-chat
     // picker, so a search never narrows it; the query keeps its own results.
     sendRequest(QStringLiteral("chats.list"),
-                {{QStringLiteral("limit"), 200}, {QStringLiteral("offset"), 0}, {QStringLiteral("query"), QString()}},
+                {{QStringLiteral("limit"), chatPageSize}, {QStringLiteral("offset"), 0}, {QStringLiteral("query"), QString()}},
                 [this](const QJsonValue &result, const QJsonObject &error) {
                     if (!error.isEmpty())
                         return;
                     m_chats = result.toArray().toVariantList();
+                    // Whether there is another page to ask for: a full page
+                    // means there may be, a short one means this is the end.
+                    m_moreChats = m_chats.size() >= chatPageSize;
+                    m_loadingChats = false;
                     syncChatListModel();
                     const auto selectedJid = m_selectedChat.value(QStringLiteral("jid")).toString();
                     if (!selectedJid.isEmpty()) {
@@ -1204,6 +1220,35 @@ void RpcClient::closeChat()
     emit searchResultsChanged();
 }
 
+// loadMoreChats asks for the conversations after the ones already listed. The
+// sidebar used to stop at its first page, so an account with more conversations
+// than that could not reach the rest by scrolling.
+void RpcClient::loadMoreChats()
+{
+    if (m_loadingChats || !m_moreChats || m_chats.isEmpty())
+        return;
+    m_loadingChats = true;
+    const int offset = static_cast<int>(m_chats.size());
+    sendRequest(QStringLiteral("chats.list"),
+                {{QStringLiteral("limit"), chatPageSize}, {QStringLiteral("offset"), offset}, {QStringLiteral("query"), QString()}},
+                [this, offset](const QJsonValue &result, const QJsonObject &error) {
+                    m_loadingChats = false;
+                    if (!error.isEmpty())
+                        return;
+                    // Another refresh may have replaced the list while this page
+                    // was on its way; appending it then would duplicate rows.
+                    if (static_cast<int>(m_chats.size()) != offset)
+                        return;
+                    const auto page = result.toArray().toVariantList();
+                    m_moreChats = page.size() >= chatPageSize;
+                    if (page.isEmpty())
+                        return;
+                    m_chats.append(page);
+                    syncChatListModel();
+                    emit chatsChanged();
+                });
+}
+
 void RpcClient::refreshChatInfo()
 {
     if (m_selectedChat.isEmpty())
@@ -1576,6 +1621,12 @@ void RpcClient::loadOlderMessages()
                     m_nextBeforeId = page.value(QStringLiteral("next_before_id")).toString();
 					if (!m_hasMore)
 						requestRemoteHistory();
+                    // Keep going until the reader has back what they had
+                    // loaded before the conversation was refreshed.
+                    if (m_restoreTarget > m_messages.rowCount() && m_hasMore)
+                        loadOlderMessages();
+                    else
+                        m_restoreTarget = 0;
                 });
 }
 
@@ -1634,7 +1685,11 @@ void RpcClient::refreshOpenMessages()
 	if (m_selectedChat.isEmpty())
 		return;
 	const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
-	const auto limit = qMax(50, m_messages.rowCount());
+	// The daemon serves at most 200 messages in one page. Asking for more used
+	// to come back as 50, which threw away everything the reader had loaded.
+	const int loaded = m_messages.rowCount();
+	const auto limit = qBound(50, loaded, 200);
+	m_restoreTarget = loaded;
 	sendRequest(QStringLiteral("messages.list"),
 		{{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), limit}},
 		[this, chatJid](const QJsonValue &result, const QJsonObject &error) {
@@ -1647,6 +1702,13 @@ void RpcClient::refreshOpenMessages()
 			m_hasMore = page.value(QStringLiteral("has_more")).toBool();
 			m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
 			m_nextBeforeId = page.value(QStringLiteral("next_before_id")).toString();
+			// One page is all the daemon serves. A reader who had scrolled
+			// further gets the rest back rather than being dropped at the
+			// newest messages.
+			if (m_restoreTarget > m_messages.rowCount() && m_hasMore)
+				loadOlderMessages();
+			else
+				m_restoreTarget = 0;
 		});
 }
 
@@ -1744,7 +1806,7 @@ void RpcClient::clearComposerLinkPreview()
     emit composerLinkPreviewChanged();
 }
 
-void RpcClient::sendFile(const QString &localUrl, const QString &caption)
+void RpcClient::sendFile(const QString &localUrl, const QString &caption, const QString &replyTo)
 {
     if (m_selectedChat.isEmpty())
         return;
@@ -1752,10 +1814,17 @@ void RpcClient::sendFile(const QString &localUrl, const QString &caption)
     if (path.isEmpty())
         return;
     setBusy(true);
+    // WhatsApp Web quotes a message whatever is attached to the reply, so the
+    // reply the composer is showing travels with the file.
     sendRequest(QStringLiteral("message.send_media"),
                 {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
-                 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption}},
-                [this](const QJsonValue &, const QJsonObject &) { setBusy(false); });
+                 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
+                 {QStringLiteral("reply_to"), replyTo}},
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    setBusy(false);
+                    if (error.isEmpty())
+                        emit messageSent();
+                });
 }
 
 void RpcClient::sendVoice(const QString &localUrl)
@@ -2517,7 +2586,7 @@ QString RpcClient::prepareClipboardImage()
 	return QUrl::fromLocalFile(path).toString();
 }
 
-void RpcClient::sendClipboardImage(const QString &localUrl, const QString &caption)
+void RpcClient::sendClipboardImage(const QString &localUrl, const QString &caption, const QString &replyTo)
 {
 	if (m_selectedChat.isEmpty())
 		return;
@@ -2529,12 +2598,15 @@ void RpcClient::sendClipboardImage(const QString &localUrl, const QString &capti
 	setBusy(true);
 	sendRequest(QStringLiteral("message.send_media"),
 		{{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
-		 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption}},
+		 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
+		 {QStringLiteral("reply_to"), replyTo}},
 		[this, path](const QJsonValue &, const QJsonObject &error) {
 			setBusy(false);
 			QFile::remove(path);
-			if (error.isEmpty())
+			if (error.isEmpty()) {
 				emit noticeOccurred(tr("Image sent"));
+				emit messageSent();
+			}
 		});
 }
 

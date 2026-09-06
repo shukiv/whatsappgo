@@ -93,7 +93,11 @@ void ProfileMonitor::processLine(const QByteArray &line)
     const auto object = document.object();
     if (object.contains(QStringLiteral("event"))) {
         const auto event = object.value(QStringLiteral("event")).toString();
+        // A receipt is how this account learns that it read something on
+        // another device: the daemon recalculates the conversation's unread
+        // count and reports the receipt, and without it the tab kept its badge.
         if (event == QStringLiteral("message.upsert") || event == QStringLiteral("chat.updated")
+            || event == QStringLiteral("message.receipt")
             || event == QStringLiteral("history.synced") || event == QStringLiteral("directory.synced")) {
             if (m_pendingId.isEmpty())
                 m_refreshTimer.start();

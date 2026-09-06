@@ -1,5 +1,7 @@
 #include "messagemodel.h"
 
+#include <QDateTime>
+
 #include <QCoreApplication>
 #include <QDebug>
 #include <QImage>
@@ -231,6 +233,28 @@ int main(int argc, char **argv)
     });
     require(received.lastOwnEditableMessage().isEmpty(),
             QStringLiteral("a conversation this account has not spoken in offered somebody else's message"));
+
+    // The day mark is the model's own working. A message that is replaced -
+    // by a reaction, an edit, a downloaded picture - must keep the date pill
+    // above it.
+    MessageListModel days;
+    const auto onDay = [](const QString &id, qint64 timestamp) {
+        return QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), QStringLiteral("text")},
+                           {QStringLiteral("timestamp"), timestamp}, {QStringLiteral("body"), id}};
+    };
+    // Two days: 2026-09-01 and 2026-09-02, in local time.
+    const qint64 firstDay = QDateTime(QDate(2026, 9, 1), QTime(9, 0)).toMSecsSinceEpoch();
+    const qint64 secondDay = QDateTime(QDate(2026, 9, 2), QTime(9, 0)).toMSecsSinceEpoch();
+    days.reset(QVariantList{onDay(QStringLiteral("d1"), firstDay), onDay(QStringLiteral("d2"), secondDay)});
+    require(days.byId(QStringLiteral("d2")).value(QStringLiteral("starts_day")).toBool(),
+            QStringLiteral("the first message of a day was not marked"));
+    auto replaced = onDay(QStringLiteral("d2"), secondDay);
+    replaced.insert(QStringLiteral("body"), QStringLiteral("edited"));
+    days.upsert(replaced);
+    require(days.byId(QStringLiteral("d2")).value(QStringLiteral("body")).toString() == QStringLiteral("edited"),
+            QStringLiteral("the replacement did not reach the model"));
+    require(days.byId(QStringLiteral("d2")).value(QStringLiteral("starts_day")).toBool(),
+            QStringLiteral("replacing a message took its date away"));
 
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

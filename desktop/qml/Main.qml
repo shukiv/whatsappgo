@@ -32,6 +32,36 @@ ApplicationWindow {
     property bool recordingVoice: Boolean(voiceRecorderLoader.item && voiceRecorderLoader.item.recording)
     property string replyTargetId: ""
     property string replyPreview: ""
+    // A draft belongs to the conversation it was written in, the way WhatsApp
+    // Web keeps one per chat. Without this, switching chats mid-sentence sent
+    // one person's words - and the message they were replying to - to another.
+    property var chatDrafts: ({})
+    property string draftChatJid: ""
+    function rememberDraft() {
+        if (window.draftChatJid === "")
+            return
+        const text = composer.text
+        if (text === "" && window.replyTargetId === "")
+            delete window.chatDrafts[window.draftChatJid]
+        else
+            window.chatDrafts[window.draftChatJid] = {
+                text: text, replyTargetId: window.replyTargetId, replyPreview: window.replyPreview
+            }
+    }
+    function restoreDraft(jid) {
+        const draft = window.chatDrafts[jid] || ({})
+        composer.text = String(draft.text || "")
+        window.replyTargetId = String(draft.replyTargetId || "")
+        window.replyPreview = String(draft.replyPreview || "")
+        window.draftChatJid = String(jid || "")
+    }
+    function clearDraft() {
+        composer.clear()
+        window.replyTargetId = ""
+        window.replyPreview = ""
+        if (window.draftChatJid !== "")
+            delete window.chatDrafts[window.draftChatJid]
+    }
     property string pendingMessageJumpId: ""
     property int pendingMessageJumpAttempts: 0
     property string highlightedMessageId: ""
@@ -105,6 +135,16 @@ ApplicationWindow {
         editField.text = String(message.body || "")
         editDialog.open()
         return true
+    }
+
+    // sendAttachment sends a file as a reply when the composer is showing one,
+    // which is what WhatsApp Web does with an attachment picked while replying.
+    function sendAttachment(fileUrl, caption) {
+        const replyTo = window.replyTargetId
+        window.replyTargetId = ""
+        window.replyPreview = ""
+        window.rememberDraft()
+        backend.sendFile(fileUrl, caption || "", replyTo)
     }
 
     function applyUpdateAction() {
@@ -1327,6 +1367,15 @@ ApplicationWindow {
                         clip: true
                         reuseItems: true
                         boundsBehavior: Flickable.StopAtBounds
+                        // The list arrives a page at a time. Nearing the end of
+                        // what is loaded asks for the next page, so an account
+                        // with more conversations than one page can be scrolled
+                        // through rather than stopping dead.
+                        onContentYChanged: {
+                            if (!window.showArchived && contentHeight > 0
+                                    && contentY + height > contentHeight - 600)
+                                backend.loadMoreChats()
+                        }
                         delegate: ChatListDelegate {
                             current: backend.selectedChat.jid === modelData.jid
                             selectionActive: window.chatSelectionActive
@@ -2088,6 +2137,16 @@ ApplicationWindow {
                     Connections {
                         target: backend
                         function onSelectedChatChanged() {
+                            const jid = String(backend.selectedChat.jid || "")
+                            if (jid !== window.draftChatJid) {
+                                window.rememberDraft()
+                                window.restoreDraft(jid)
+                                // Results found in another conversation are not
+                                // results in this one: clicking one used to
+                                // search this chat for somebody else's message.
+                                if (window.chatSearchOpen)
+                                    window.closeConversationSearch()
+                            }
                             window.pendingMessageJumpId = ""
                             window.pendingMessageJumpAttempts = 0
                             window.highlightedMessageId = ""
@@ -2327,10 +2386,9 @@ ApplicationWindow {
                                     onClicked: {
                                         if (composer.text.trim().length > 0) {
                                             const body = composer.text
-                                            composer.clear()
-                                            backend.sendMessage(body, window.replyTargetId)
-                                            window.replyTargetId = ""
-                                            window.replyPreview = ""
+                                            const replyTo = window.replyTargetId
+                                            window.clearDraft()
+                                            backend.sendMessage(body, replyTo)
                                             backend.setTyping(false)
                                         } else if (window.recordingVoice) {
                                             voiceRecorderLoader.item.stop()
@@ -2355,7 +2413,13 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.topMargin: 64
                 z: 20
-                onSendRequested: (imageUrl, caption) => backend.sendClipboardImage(imageUrl, caption)
+                onSendRequested: (imageUrl, caption) => {
+                    const replyTo = window.replyTargetId
+                    window.replyTargetId = ""
+                    window.replyPreview = ""
+                    window.rememberDraft()
+                    backend.sendClipboardImage(imageUrl, caption, replyTo)
+                }
                 onCanceled: imageUrl => backend.discardClipboardImage(imageUrl)
                 onAddRequested: window.prepareClipboardPaste()
             }
@@ -2739,7 +2803,7 @@ ApplicationWindow {
         id: documentFileDialog
         title: qsTr("Choose a document")
         nameFilters: [qsTr("All files (*)")]
-        onAccepted: backend.sendFile(selectedFile)
+        onAccepted: window.sendAttachment(selectedFile)
     }
     FileDialog {
         id: photosVideosFileDialog
@@ -2748,7 +2812,7 @@ ApplicationWindow {
             qsTr("Photos and videos (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.heic *.heif *.mp4 *.mov *.mkv *.webm *.avi *.3gp)"),
             qsTr("All files (*)")
         ]
-        onAccepted: backend.sendFile(selectedFile)
+        onAccepted: window.sendAttachment(selectedFile)
     }
     FileDialog {
         id: audioFileDialog
@@ -2757,7 +2821,7 @@ ApplicationWindow {
             qsTr("Audio files (*.mp3 *.m4a *.ogg *.opus *.wav *.aac *.flac)"),
             qsTr("All files (*)")
         ]
-        onAccepted: backend.sendFile(selectedFile)
+        onAccepted: window.sendAttachment(selectedFile)
     }
     // The keyboard shortcuts the settings dialog lists. They are declared here so
     // that list describes something real rather than copying the PWA's.
@@ -3941,7 +4005,7 @@ ApplicationWindow {
         function sendNow() {
             const caption = dropSendDialog.files.length === 1 ? dropCaption.text : ""
             for (let i = 0; i < dropSendDialog.files.length; ++i)
-                backend.sendFile(dropSendDialog.files[i], i === 0 ? caption : "")
+                window.sendAttachment(dropSendDialog.files[i], i === 0 ? caption : "")
             dropSendDialog.close()
         }
     }

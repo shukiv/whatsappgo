@@ -85,6 +85,8 @@ int main(int argc, char **argv)
     QJsonArray readIds;
     int messageGetRequests = 0;
     int listRequests = 0;
+    int biggestLimit = 0;
+    int presenceRequests = 0;
     int sendRequests = 0;
     QString heldSendId;
 
@@ -130,16 +132,36 @@ int main(int argc, char **argv)
                     result = QJsonObject{{QStringLiteral("state"), QStringLiteral("connected")},
                                          {QStringLiteral("connected"), true},
                                          {QStringLiteral("logged_in"), true}};
+                } else if (method == QStringLiteral("chats.list")) {
+                    const int offset = params.value(QStringLiteral("offset")).toInt();
+                    QJsonArray page;
+                    // 250 conversations: the first page is full, the second is
+                    // the remainder, and there is nothing after that.
+                    for (int index = offset; index < qMin(offset + 200, 250); ++index) {
+                        page.append(QJsonObject{{QStringLiteral("jid"), QStringLiteral("chat%1@lid").arg(index)},
+                                                {QStringLiteral("title"), QStringLiteral("Chat %1").arg(index)},
+                                                {QStringLiteral("last_message_at"), 5000 - index}});
+                    }
+                    result = page;
                 } else if (method == QStringLiteral("messages.list")) {
                     ++listRequests;
+                    const auto requested = params.value(QStringLiteral("limit")).toInt();
+                    biggestLimit = qMax(biggestLimit, requested);
+                    // The daemon never serves more than 200 in one page, and a
+                    // request for more used to be answered with 50.
+                    const int size = requested > 200 ? 50 : requested;
                     QJsonArray page;
                     const auto chat = params.value(QStringLiteral("chat_jid")).toString();
-                    for (int index = 0; index < 100; ++index)
-                        page.append(message(QStringLiteral("m%1").arg(index, 3, 10, QChar('0')), chat, 1000 + index));
+                    const auto before = params.value(QStringLiteral("before")).toVariant().toLongLong();
+                    const qint64 newest = before > 0 ? before - 1 : 1099;
+                    for (qint64 stamp = newest - size + 1; stamp <= newest; ++stamp) {
+                        page.append(message(QStringLiteral("m%1").arg(stamp, 4, 10, QChar('0')), chat, stamp));
+                    }
+                    const qint64 oldest = newest - size + 1;
                     result = QJsonObject{{QStringLiteral("messages"), page},
-                                         {QStringLiteral("has_more"), true},
-                                         {QStringLiteral("next_before"), 1000},
-                                         {QStringLiteral("next_before_id"), QStringLiteral("m000")}};
+                                         {QStringLiteral("has_more"), oldest > 100},
+                                         {QStringLiteral("next_before"), oldest},
+                                         {QStringLiteral("next_before_id"), QStringLiteral("m%1").arg(oldest, 4, 10, QChar('0'))}};
                 } else if (method == QStringLiteral("message.get")) {
                     ++messageGetRequests;
                     auto updated = message(params.value(QStringLiteral("message_id")).toString(),
@@ -148,6 +170,8 @@ int main(int argc, char **argv)
                         {QStringLiteral("emoji"), QStringLiteral("👍")},
                         {QStringLiteral("sender_jid"), QStringLiteral("friend@lid")}}});
                     result = updated;
+                } else if (method == QStringLiteral("contact.presence.subscribe")) {
+                    ++presenceRequests;
                 } else if (method == QStringLiteral("chat.read")) {
                     ++readRequests;
                     readIds = params.value(QStringLiteral("message_ids")).toArray();
@@ -164,16 +188,16 @@ int main(int argc, char **argv)
     // 1. A download that finishes after the reader has moved on belongs to the
     // conversation it was started in, not the one now on screen.
     client.openChat(alice, QStringLiteral("Alice"));
-    if (!waitFor([&] { return client.messageList()->count() == 100; }))
+    if (!waitFor([&] { return client.messageList()->count() == 50; }))
         return testFatal("the first conversation never loaded");
-    client.downloadMedia(QStringLiteral("m050"));
+    client.downloadMedia(QStringLiteral("m1050"));
     if (!waitFor([&] { return downloadRequests == 1 && !held.isEmpty(); }))
         return testFatal("no download was requested");
     const auto heldId = held.keys().constFirst();
     client.openChat(bob, QStringLiteral("Bob"));
-    if (!waitFor([&] { return client.messageList()->count() == 100 && listRequests == 2; }))
+    if (!waitFor([&] { return client.messageList()->count() == 50 && listRequests == 2; }))
         return testFatal("the second conversation never loaded");
-    auto downloaded = message(QStringLiteral("m050"), alice, 1050);
+    auto downloaded = message(QStringLiteral("m1050"), alice, 1050);
     downloaded.insert(QStringLiteral("kind"), QStringLiteral("image"));
     downloaded.insert(QStringLiteral("media_path"), QStringLiteral("/tmp/whatsappgo-test.jpg"));
     reply(heldId, downloaded);
@@ -191,7 +215,7 @@ int main(int argc, char **argv)
         {QStringLiteral("version"), 1},
         {QStringLiteral("event"), QStringLiteral("message.reaction")},
         {QStringLiteral("data"), QJsonObject{{QStringLiteral("chat_jid"), bob},
-                                             {QStringLiteral("message_id"), QStringLiteral("m010")}}},
+                                             {QStringLiteral("message_id"), QStringLiteral("m1050")}}},
     }).toJson(QJsonDocument::Compact) + '\n');
     if (!waitFor([&] { return messageGetRequests == 1; }))
         return testFatal("a reaction did not ask for the message it changed");
@@ -199,7 +223,7 @@ int main(int argc, char **argv)
     if (client.messageList()->count() != before)
         return testFatal("a reaction threw away loaded history",
                          QStringLiteral("%1 -> %2").arg(before).arg(client.messageList()->count()));
-    if (client.messageList()->byId(QStringLiteral("m010")).value(QStringLiteral("reactions")).toList().isEmpty())
+    if (client.messageList()->byId(QStringLiteral("m1050")).value(QStringLiteral("reactions")).toList().isEmpty())
         return testFatal("the reaction never reached the message");
 
     // 3. A star lands on the message it was asked for.
@@ -207,13 +231,13 @@ int main(int argc, char **argv)
         {QStringLiteral("version"), 1},
         {QStringLiteral("event"), QStringLiteral("message.starred")},
         {QStringLiteral("data"), QJsonObject{{QStringLiteral("chat_jid"), bob},
-                                             {QStringLiteral("message_id"), QStringLiteral("m000")},
+                                             {QStringLiteral("message_id"), QStringLiteral("m1050")},
                                              {QStringLiteral("starred"), true}}},
     }).toJson(QJsonDocument::Compact) + '\n');
     settle();
-    if (!client.messageList()->byId(QStringLiteral("m000")).value(QStringLiteral("starred")).toBool())
+    if (!client.messageList()->byId(QStringLiteral("m1050")).value(QStringLiteral("starred")).toBool())
         return testFatal("the star did not reach the message it was meant for");
-    if (client.messageList()->byId(QStringLiteral("m099")).value(QStringLiteral("starred")).toBool())
+    if (client.messageList()->byId(QStringLiteral("m1090")).value(QStringLiteral("starred")).toBool())
         return testFatal("the star landed on another message as well");
 
     // 4. A message that arrives while its conversation is open is acknowledged.
@@ -240,7 +264,54 @@ int main(int argc, char **argv)
     if (readRequests != 0)
         return testFatal("the reader's own message was acknowledged back to them");
 
-    // 5. A send whose daemon disappears mid-request leaves the composer usable.
+    // 5. A refresh keeps the pages the reader had loaded rather than asking for
+    // more than the daemon serves and being handed the smallest page instead.
+    listRequests = 0;
+    const int firstPage = client.messageList()->count();
+    // Scroll back past one page's worth: a conversation with more than 200
+    // messages loaded is what the refresh used to throw away.
+    for (int page = 0; page < 5; ++page) {
+        const int before = client.messageList()->count();
+        client.loadOlderMessages();
+        if (!waitFor([&] { return client.messageList()->count() >= before + 50; }))
+            return testFatal("an older page was never added",
+                             QString::number(client.messageList()->count()));
+    }
+    if (client.messageList()->count() <= 200 || client.messageList()->count() <= firstPage)
+        return testFatal("the conversation did not grow past one page",
+                         QString::number(client.messageList()->count()));
+    const int scrolledBack = client.messageList()->count();
+    client.refreshOpenMessages();
+    settle(300);
+    if (!waitFor([&] { return client.messageList()->count() >= scrolledBack; }, 5000))
+        return testFatal("refreshing the conversation lost the pages that were loaded",
+                         QStringLiteral("%1 -> %2").arg(scrolledBack).arg(client.messageList()->count()));
+    if (biggestLimit > 200)
+        return testFatal("the daemon was asked for a page larger than it serves",
+                         QString::number(biggestLimit));
+
+    // 6. The sidebar asks for the conversations after its first page.
+    const int listedBefore = client.chats().size();
+    client.loadMoreChats();
+    if (!waitFor([&] { return client.chats().size() > listedBefore; }))
+        return testFatal("the sidebar never asked for the conversations after its first page");
+
+    // 7. Coming back finds the conversation again by itself: anything that
+    // arrived while the connection was down is missing until it does, and the
+    // presence subscription went with the socket.
+    listRequests = 0;
+    presenceRequests = 0;
+    connection->abort();
+    if (!waitFor([&] { return !client.daemonConnected(); }))
+        return testFatal("the client did not notice the connection dropping");
+    if (!waitFor([&] { return client.daemonConnected(); }, 10000))
+        return testFatal("the client never reconnected");
+    if (!waitFor([&] { return listRequests > 0; }, 5000))
+        return testFatal("reconnecting left the open conversation as it was");
+    if (presenceRequests == 0)
+        return testFatal("the presence subscription was not renewed after reconnecting");
+
+    // 8. A send whose daemon disappears mid-request leaves the composer usable.
     client.sendMessage(QStringLiteral("hello"), QString());
     if (!waitFor([&] { return sendRequests == 1 && client.busy(); }))
         return testFatal("the send never reached the daemon");
@@ -258,5 +329,6 @@ int main(int argc, char **argv)
     settle();
     if (client.busy())
         return testFatal("a send refused before it left the window left the composer disabled");
+
     return EXIT_SUCCESS;
 }

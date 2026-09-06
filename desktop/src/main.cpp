@@ -296,6 +296,8 @@ int main(int argc, char *argv[])
     parser.addOption(bugReportTestOption);
     QCommandLineOption updateSettingsTestOption(QStringLiteral("update-settings-test"), QStringLiteral("Verify the Help page reports the version and offers the update button"));
     parser.addOption(updateSettingsTestOption);
+    QCommandLineOption composerDraftTestOption(QStringLiteral("composer-draft-test"), QStringLiteral("Verify a draft and the message it replies to stay with their own conversation"));
+    parser.addOption(composerDraftTestOption);
     QCommandLineOption styleDetectionTestOption(QStringLiteral("style-detection-test"), QStringLiteral("Verify the Qt Quick Controls style is only chosen when its module is installed"));
     parser.addOption(styleDetectionTestOption);
     QCommandLineOption fileUrlTestOption(QStringLiteral("file-url-test"), QStringLiteral("Verify local paths and file URLs convert both ways, including Windows drive letters"));
@@ -345,6 +347,7 @@ int main(int argc, char *argv[])
     const bool searchResultsTest = parser.isSet(searchResultsTestOption);
     const bool bugReportTest = parser.isSet(bugReportTestOption);
     const bool updateSettingsTest = parser.isSet(updateSettingsTestOption);
+    const bool composerDraftTest = parser.isSet(composerDraftTestOption);
     const bool profileRemovalTest = parser.isSet(profileRemovalTestOption);
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
@@ -366,7 +369,7 @@ int main(int argc, char *argv[])
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
         || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
-        || styleDetectionTest || fileUrlTest || menuPlacementTest
+        || styleDetectionTest || fileUrlTest || menuPlacementTest || composerDraftTest
         || !screenshotPath.isEmpty();
 
     // Automated runs keep the per-account monitors off, because each one opens
@@ -2632,6 +2635,53 @@ QtObject {
         // Pressing it must not need a daemon to survive.
         QMetaObject::invokeMethod(button, "clicked");
         QCoreApplication::processEvents();
+        return EXIT_SUCCESS;
+    }
+
+    if (composerDraftTest) {
+        if (engine.rootObjects().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *root = engine.rootObjects().constFirst();
+        auto *composer = root->findChild<QObject *>(QStringLiteral("messageComposer"));
+        if (composer == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // A draft, and the message it is answering, belong to the conversation
+        // they were written in. Pressing Enter after switching used to send one
+        // person's words - quoting one person's message - to somebody else.
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("alice@lid")));
+        composer->setProperty("text", QStringLiteral("for Alice"));
+        root->setProperty("replyTargetId", QStringLiteral("alice-message"));
+        root->setProperty("replyPreview", QStringLiteral("Alice said this"));
+        QMetaObject::invokeMethod(root, "rememberDraft");
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QCoreApplication::processEvents();
+        if (!composer->property("text").toString().isEmpty()
+                || !root->property("replyTargetId").toString().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        composer->setProperty("text", QStringLiteral("for Bob"));
+        QMetaObject::invokeMethod(root, "rememberDraft");
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("alice@lid")));
+        QCoreApplication::processEvents();
+        if (composer->property("text").toString() != QStringLiteral("for Alice")
+                || root->property("replyTargetId").toString() != QStringLiteral("alice-message")
+                || root->property("replyPreview").toString() != QStringLiteral("Alice said this"))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Sending clears the conversation's draft rather than parking it.
+        QMetaObject::invokeMethod(root, "clearDraft");
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("alice@lid")));
+        QCoreApplication::processEvents();
+        if (!composer->property("text").toString().isEmpty()
+                || !root->property("replyTargetId").toString().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Bob's draft is still Bob's.
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QCoreApplication::processEvents();
+        if (composer->property("text").toString() != QStringLiteral("for Bob"))
+            return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
     }
 

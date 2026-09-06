@@ -254,11 +254,21 @@ void MessageListModel::upsert(const QVariantMap &message)
         const int row = existing.value();
         if (row < 0 || row >= count())
             return;
-        if (m_messages.at(row).toMap() == prepared)
+        // The day mark is the model's own working, not part of the message the
+        // daemon sends. Replacing the row with what arrived would drop it, and
+        // the date pill above that message with it.
+        const auto stored = m_messages.at(row).toMap();
+        auto merged = prepared;
+        if (stored.contains(QStringLiteral("starts_day")))
+            merged.insert(QStringLiteral("starts_day"), stored.value(QStringLiteral("starts_day")));
+        if (stored == merged)
             return;
-        m_messages[row] = prepared;
+        m_messages[row] = merged;
         const auto changed = index(count() - 1 - row, 0);
         emit dataChanged(changed, changed, {MessageRole});
+        // A replacement can carry a different time, which moves where one day
+        // ends and the next begins.
+        refreshDayStarts();
         return;
     }
     const int row = count();

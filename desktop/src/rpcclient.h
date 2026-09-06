@@ -195,12 +195,17 @@ public:
     Q_INVOKABLE void setContactBlocked(const QString &jid, bool blocked);
     Q_INVOKABLE void clearChatInfo();
     Q_INVOKABLE void loadOlderMessages();
+    // The next page of conversations for the sidebar.
+    Q_INVOKABLE void loadMoreChats();
+    // Re-reads the open conversation, keeping the pages already loaded. Used
+    // after a reconnection, when anything that arrived meanwhile is missing.
+    Q_INVOKABLE void refreshOpenMessages();
     Q_INVOKABLE bool canLoadOlderMessages() const;
     Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
     Q_INVOKABLE void sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text);
     Q_INVOKABLE void requestLinkPreview(const QString &text);
     Q_INVOKABLE void clearComposerLinkPreview();
-    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {});
+    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {});
     Q_INVOKABLE void sendVoice(const QString &localUrl);
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
     Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
@@ -235,7 +240,7 @@ public:
     // continues with one.
     Q_INVOKABLE QVariantMap nextAudioAfter(const QString &messageId) const;
     Q_INVOKABLE QString prepareClipboardImage();
-    Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {});
+    Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {});
     Q_INVOKABLE void discardClipboardImage(const QString &localUrl);
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
     Q_INVOKABLE void saveImage(const QString &path, const QString &destination);
@@ -324,7 +329,6 @@ private:
     void upgradeSmallLinkPreviews(const QVariantList &messages);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
-    void refreshOpenMessages();
     void pumpMediaQueue();
     // Answers every request that will never come back, so a caller waiting on
     // one is not left waiting for ever, and forgets the media queue's places.
@@ -419,6 +423,14 @@ private:
     QSet<QString> m_pendingChatAvatars;
     QHash<QString, qint64> m_chatAvatarRequestedAt;
     QSet<QString> m_requestedStatusMedia;
+    // How many conversations one sidebar page holds, and where that listing
+    // has got to.
+    static constexpr int chatPageSize = 200;
+    bool m_loadingChats = false;
+    bool m_moreChats = false;
+    // How many messages the open conversation had loaded before a refresh, so
+    // the pages the reader had scrolled through can be restored.
+    int m_restoreTarget = 0;
     QStringList m_mediaQueue;
     int m_mediaInFlight = 0;
 };
