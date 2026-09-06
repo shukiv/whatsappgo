@@ -154,7 +154,9 @@ last check, if any.
 
 GitHub answers sixty anonymous requests an hour per address, and every program
 on that address shares the allowance - a shared office line, a VPN exit, or
-carrier-grade NAT can spend it without WhatsAppGo asking for anything. The
+carrier-grade NAT can spend it without WhatsAppGo asking for anything. Each
+start of the daemon looks once, so restarting it many times in an hour - a day
+of rebuilding, or testing releases - spends the allowance as well. The
 answer names how long is left; nothing is asked of GitHub again until then, so
 pressing the button meanwhile repeats the same wait rather than making it
 longer. Releases are still installable by hand from the releases page while the
