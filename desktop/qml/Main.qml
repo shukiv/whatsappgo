@@ -37,30 +37,44 @@ ApplicationWindow {
     // one person's words - and the message they were replying to - to another.
     property var chatDrafts: ({})
     property string draftChatJid: ""
+    // Which account and conversation the composer is holding words for. It is
+    // remembered rather than recomputed because switching accounts changes the
+    // account before the conversation is put down: parking the draft under a
+    // freshly computed key filed the account being left under the account
+    // being opened, which is how a draft crossed accounts.
+    property string draftHeldKey: ""
+    // The same person can be a conversation in two accounts, and those are two
+    // conversations. The account is part of what a draft belongs to.
+    function draftKey(jid) {
+        return String(backend.profile || "") + "\u0000" + String(jid || "")
+    }
     function rememberDraft() {
         if (window.draftChatJid === "")
             return
+        const key = window.draftHeldKey || window.draftKey(window.draftChatJid)
         const text = composer.text
         if (text === "" && window.replyTargetId === "")
-            delete window.chatDrafts[window.draftChatJid]
+            delete window.chatDrafts[key]
         else
-            window.chatDrafts[window.draftChatJid] = {
+            window.chatDrafts[key] = {
                 text: text, replyTargetId: window.replyTargetId, replyPreview: window.replyPreview
             }
     }
     function restoreDraft(jid) {
-        const draft = window.chatDrafts[jid] || ({})
+        const key = window.draftKey(jid)
+        const draft = window.chatDrafts[key] || ({})
         composer.text = String(draft.text || "")
         window.replyTargetId = String(draft.replyTargetId || "")
         window.replyPreview = String(draft.replyPreview || "")
         window.draftChatJid = String(jid || "")
+        window.draftHeldKey = key
     }
     function clearDraft() {
         composer.clear()
         window.replyTargetId = ""
         window.replyPreview = ""
         if (window.draftChatJid !== "")
-            delete window.chatDrafts[window.draftChatJid]
+            delete window.chatDrafts[window.draftHeldKey || window.draftKey(window.draftChatJid)]
     }
     property string pendingMessageJumpId: ""
     property int pendingMessageJumpAttempts: 0
@@ -145,6 +159,36 @@ ApplicationWindow {
         window.replyPreview = ""
         window.rememberDraft()
         backend.sendFile(fileUrl, caption || "", replyTo)
+    }
+
+    // What has to be put down when the reader moves to another conversation.
+    // Everything here belongs to the chat being left, and acting on it against
+    // the new one is how a draft, a quotation, or a selection reached the wrong
+    // person.
+    function handleChatSwitched(jid) {
+        // Compared by key, not by conversation: the same person in a second
+        // account is a second conversation with a draft of its own.
+        if (window.draftKey(jid) !== window.draftHeldKey) {
+            window.rememberDraft()
+            window.restoreDraft(jid)
+            // Results found in another conversation are not results in this
+            // one: clicking one used to search this chat for somebody else's
+            // message.
+            if (window.chatSearchOpen)
+                window.closeConversationSearch()
+        }
+        // A search result opens the chat it was found in; clearing the target
+        // here left the jump with nothing to look for by the time the first
+        // page arrived.
+        if (window.pendingMessageJumpChat !== jid) {
+            window.pendingMessageJumpId = ""
+            window.pendingMessageJumpAttempts = 0
+        }
+        // Messages picked in another conversation are not a selection in this
+        // one: Star, Delete and Forward used to act on them against the new
+        // chat.
+        if (window.messageSelectionActive)
+            window.endMessageSelection()
     }
 
     function applyUpdateAction() {
@@ -2137,18 +2181,7 @@ ApplicationWindow {
                     Connections {
                         target: backend
                         function onSelectedChatChanged() {
-                            const jid = String(backend.selectedChat.jid || "")
-                            if (jid !== window.draftChatJid) {
-                                window.rememberDraft()
-                                window.restoreDraft(jid)
-                                // Results found in another conversation are not
-                                // results in this one: clicking one used to
-                                // search this chat for somebody else's message.
-                                if (window.chatSearchOpen)
-                                    window.closeConversationSearch()
-                            }
-                            window.pendingMessageJumpId = ""
-                            window.pendingMessageJumpAttempts = 0
+                            window.handleChatSwitched(String(backend.selectedChat.jid || ""))
                             window.highlightedMessageId = ""
                             messageJumpRetry.stop()
                             messageJumpHighlight.stop()
@@ -2413,12 +2446,12 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.topMargin: 64
                 z: 20
-                onSendRequested: (imageUrl, caption) => {
+                onSendRequested: (imageUrl, caption, rotation) => {
                     const replyTo = window.replyTargetId
                     window.replyTargetId = ""
                     window.replyPreview = ""
                     window.rememberDraft()
-                    backend.sendClipboardImage(imageUrl, caption, replyTo)
+                    backend.sendClipboardImage(backend.rotatedImage(imageUrl, rotation), caption, replyTo)
                 }
                 onCanceled: imageUrl => backend.discardClipboardImage(imageUrl)
                 onAddRequested: window.prepareClipboardPaste()

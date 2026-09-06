@@ -1558,7 +1558,10 @@ func (s *Store) ClearChatMessages(ctx context.Context, chatJID string) error {
 	for _, statement := range []string{
 		`DELETE FROM reactions WHERE chat_jid=?`,
 		`DELETE FROM message_pins WHERE chat_jid=?`,
-		`DELETE FROM media_payloads WHERE message_id IN (SELECT id FROM messages WHERE chat_jid=?)`,
+		// By conversation, not by message id: the same id can appear in two
+		// conversations, and clearing one used to take the other's attachment
+		// payload with it, leaving a message that could never be downloaded.
+		`DELETE FROM media_payloads WHERE chat_jid=?`,
 		`DELETE FROM messages WHERE chat_jid=?`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, chatJID); err != nil {

@@ -3,7 +3,9 @@
 #include "TestSupport.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QColor>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -13,6 +15,7 @@
 #include <QPointer>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QUrl>
 
 #include <functional>
 
@@ -86,6 +89,7 @@ int main(int argc, char **argv)
     int messageGetRequests = 0;
     int listRequests = 0;
     int biggestLimit = 0;
+    QList<int> chatLimits;
     int presenceRequests = 0;
     int sendRequests = 0;
     QString heldSendId;
@@ -134,10 +138,16 @@ int main(int argc, char **argv)
                                          {QStringLiteral("logged_in"), true}};
                 } else if (method == QStringLiteral("chats.list")) {
                     const int offset = params.value(QStringLiteral("offset")).toInt();
+                    // The daemon serves whatever is asked for up to 500, which
+                    // is what lets a refresh return the pages already loaded.
+                    int limit = params.value(QStringLiteral("limit")).toInt();
+                    if (limit <= 0 || limit > 500)
+                        limit = 100;
+                    chatLimits.append(limit);
                     QJsonArray page;
                     // 250 conversations: the first page is full, the second is
                     // the remainder, and there is nothing after that.
-                    for (int index = offset; index < qMin(offset + 200, 250); ++index) {
+                    for (int index = offset; index < qMin(offset + limit, 250); ++index) {
                         page.append(QJsonObject{{QStringLiteral("jid"), QStringLiteral("chat%1@lid").arg(index)},
                                                 {QStringLiteral("title"), QStringLiteral("Chat %1").arg(index)},
                                                 {QStringLiteral("last_message_at"), 5000 - index}});
@@ -290,11 +300,24 @@ int main(int argc, char **argv)
         return testFatal("the daemon was asked for a page larger than it serves",
                          QString::number(biggestLimit));
 
-    // 6. The sidebar asks for the conversations after its first page.
+    // 6. The sidebar asks for the conversations after its first page, and a
+    // refresh keeps them: a message arriving used to scroll the reader back to
+    // the first two hundred conversations.
     const int listedBefore = client.chats().size();
     client.loadMoreChats();
     if (!waitFor([&] { return client.chats().size() > listedBefore; }))
         return testFatal("the sidebar never asked for the conversations after its first page");
+    const int listedAfterPaging = client.chats().size();
+    chatLimits.clear();
+    client.refreshChats();
+    settle(300);
+    if (client.chats().size() < listedAfterPaging)
+        return testFatal("a refresh threw away the conversations the sidebar had loaded",
+                         QStringLiteral("%1 -> %2").arg(listedAfterPaging).arg(client.chats().size()));
+    if (chatLimits.isEmpty() || chatLimits.constFirst() < listedAfterPaging)
+        return testFatal("the refresh asked for fewer conversations than were loaded",
+                         chatLimits.isEmpty() ? QStringLiteral("nothing was asked")
+                                              : QString::number(chatLimits.constFirst()));
 
     // 7. Coming back finds the conversation again by itself: anything that
     // arrived while the connection was down is missing until it does, and the
@@ -323,6 +346,28 @@ int main(int argc, char **argv)
     settle();
     if (client.busy())
         return testFatal("sending stayed disabled after the daemon disconnected");
+
+    // 9. A photo turned in the preview is sent turned. The preview only
+    // rotated what was on screen, so the picture arrived the way the camera
+    // wrote it and the turning was lost.
+    QImage upright(8, 4, QImage::Format_ARGB32);
+    upright.fill(Qt::white);
+    upright.setPixelColor(0, 0, QColor(Qt::red));
+    const auto uprightPath = QDir(runtime.path()).filePath(QStringLiteral("upright.png"));
+    if (!upright.save(uprightPath, "PNG"))
+        return testFatal("could not write the picture to turn", uprightPath);
+    const auto uprightUrl = QUrl::fromLocalFile(uprightPath).toString();
+    if (client.rotatedImage(uprightUrl, 0) != uprightUrl)
+        return testFatal("a picture nobody turned was copied anyway");
+    const auto turnedUrl = client.rotatedImage(uprightUrl, 90);
+    if (turnedUrl == uprightUrl)
+        return testFatal("a picture turned in the preview was sent as it was");
+    const QImage turned(QUrl(turnedUrl).toLocalFile());
+    if (turned.width() != upright.height() || turned.height() != upright.width())
+        return testFatal("the turned picture kept its old shape",
+                         QStringLiteral("%1x%2").arg(turned.width()).arg(turned.height()));
+    if (turned.pixelColor(turned.width() - 1, 0) != QColor(Qt::red))
+        return testFatal("the picture was copied without being turned");
 
     // A request made with no daemon answers its caller too.
     client.sendMessage(QStringLiteral("hello again"), QString());

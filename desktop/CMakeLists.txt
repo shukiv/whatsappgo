@@ -508,6 +508,13 @@ if(BUILD_TESTING)
     set_tests_properties(desktop-style-detection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-update-settings COMMAND whatsappgo --update-settings-test)
     add_test(NAME desktop-composer-drafts COMMAND whatsappgo --composer-draft-test)
+    # The drafts test adds and switches accounts, so it needs settings of its
+    # own and a backend that cannot start: it must never touch the accounts the
+    # person running the suite actually uses.
+    set_tests_properties(desktop-composer-drafts PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/cd;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/composer-draft-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/composer-draft-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/composer-draft-test/config"
+        TIMEOUT 15
+    )
     set_tests_properties(desktop-update-settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
     add_test(NAME desktop-bug-report COMMAND whatsappgo --bug-report-test)
     set_tests_properties(desktop-bug-report PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)

@@ -240,6 +240,10 @@ public:
     // continues with one.
     Q_INVOKABLE QVariantMap nextAudioAfter(const QString &messageId) const;
     Q_INVOKABLE QString prepareClipboardImage();
+    // Writes a turned copy of an image and returns its URL, so the picture that
+    // is sent is the one the preview was showing. Returns the original URL when
+    // there is nothing to turn.
+    Q_INVOKABLE QString rotatedImage(const QString &localUrl, int degrees);
     Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {});
     Q_INVOKABLE void discardClipboardImage(const QString &localUrl);
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
@@ -426,6 +430,8 @@ private:
     // How many conversations one sidebar page holds, and where that listing
     // has got to.
     static constexpr int chatPageSize = 200;
+    // The most the daemon will return in one answer.
+    static constexpr int chatListCeiling = 500;
     bool m_loadingChats = false;
     bool m_moreChats = false;
     // How many messages the open conversation had loaded before a refresh, so

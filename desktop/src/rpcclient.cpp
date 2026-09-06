@@ -26,6 +26,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
+#include <QTransform>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalServer>
@@ -766,15 +767,19 @@ void RpcClient::refreshChats()
 {
     // The unfiltered list backs the sidebar, the unread total and the new-chat
     // picker, so a search never narrows it; the query keeps its own results.
+    // A refresh asks for as much as the sidebar had scrolled to, or the pages
+    // a reader had loaded would be replaced by the first one every time a
+    // message arrived.
+    const int wanted = qBound(chatPageSize, static_cast<int>(m_chats.size()), chatListCeiling);
     sendRequest(QStringLiteral("chats.list"),
-                {{QStringLiteral("limit"), chatPageSize}, {QStringLiteral("offset"), 0}, {QStringLiteral("query"), QString()}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
+                {{QStringLiteral("limit"), wanted}, {QStringLiteral("offset"), 0}, {QStringLiteral("query"), QString()}},
+                [this, wanted](const QJsonValue &result, const QJsonObject &error) {
                     if (!error.isEmpty())
                         return;
                     m_chats = result.toArray().toVariantList();
-                    // Whether there is another page to ask for: a full page
+                    // Whether there is another page to ask for: a full answer
                     // means there may be, a short one means this is the end.
-                    m_moreChats = m_chats.size() >= chatPageSize;
+                    m_moreChats = static_cast<int>(m_chats.size()) >= wanted;
                     m_loadingChats = false;
                     syncChatListModel();
                     const auto selectedJid = m_selectedChat.value(QStringLiteral("jid")).toString();
@@ -2584,6 +2589,36 @@ QString RpcClient::prepareClipboardImage()
 		return {};
 	}
 	return QUrl::fromLocalFile(path).toString();
+}
+
+// rotatedImage writes a turned copy of a picture. The preview turns what is on
+// screen, and the file was sent untouched: the picture arrived the way the
+// camera wrote it, with the turning the reader had asked for thrown away.
+QString RpcClient::rotatedImage(const QString &localUrl, int degrees)
+{
+	const int turn = ((degrees % 360) + 360) % 360;
+	if (turn == 0)
+		return localUrl;
+	const auto path = QUrl(localUrl).isLocalFile() ? QUrl(localUrl).toLocalFile() : localUrl;
+	QImage image(path);
+	if (image.isNull()) {
+		emit errorOccurred(tr("Could not turn the image."));
+		return localUrl;
+	}
+	const auto directory = clipboardDirectory();
+	if (!QDir().mkpath(directory)) {
+		emit errorOccurred(tr("Could not turn the image."));
+		return localUrl;
+	}
+	const auto turned = QDir(directory).filePath(
+		QStringLiteral("turned-%1.png").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+	QTransform rotation;
+	rotation.rotate(turn);
+	if (!image.transformed(rotation, Qt::SmoothTransformation).save(turned, "PNG")) {
+		emit errorOccurred(tr("Could not turn the image."));
+		return localUrl;
+	}
+	return QUrl::fromLocalFile(turned).toString();
 }
 
 void RpcClient::sendClipboardImage(const QString &localUrl, const QString &caption, const QString &replyTo)

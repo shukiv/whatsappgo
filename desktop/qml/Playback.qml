@@ -100,8 +100,10 @@ Item {
             loader.item.play()
     }
 
-    function stop() {
-        pendingId = ""
+    // finishCurrent stops what is playing without cancelling a recording that
+    // is still being downloaded: one recording ending used to throw away the
+    // request for the next one, which then never played.
+    function finishCurrent() {
         startPending = false
         if (loader.item) {
             loader.item.stop()
@@ -110,6 +112,11 @@ Item {
         currentId = ""
         currentPath = ""
         isVideo = false
+    }
+
+    function stop() {
+        pendingId = ""
+        finishCurrent()
     }
 
     onVideoSurfaceChanged: beginPlayback()
@@ -138,13 +145,13 @@ Item {
 				}
                 onErrorOccurred: (error, errorString) => {
                     root.failed(errorString)
-                    root.stop()
+                    root.finishCurrent()
                 }
                 onMediaStatusChanged: {
                     if (mediaStatus !== MediaPlayer.EndOfMedia || root.isVideo)
                         return
                     const completed = root.currentId
-                    root.stop()
+                    root.finishCurrent()
                     root.finished(completed)
                 }
             }

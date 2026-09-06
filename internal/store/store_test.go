@@ -1476,6 +1476,49 @@ func TestDeleteChatRemovesTheChatAndEverythingHangingOffIt(t *testing.T) {
 	}
 }
 
+func TestClearChatMessagesLeavesAnotherChatsAttachmentsAlone(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const cleared = "cleared@s.whatsapp.net"
+	const kept = "kept@s.whatsapp.net"
+	// The same message id in two conversations is ordinary: a message
+	// forwarded to several people keeps its id in every copy.
+	const shared = "shared-id"
+	for _, chat := range []string{cleared, kept} {
+		msg := model.Message{ID: shared, ChatJID: chat, Timestamp: 10, Kind: "image", Body: "photo", Status: "received"}
+		if err := s.UpsertMessage(ctx, msg, "Title", false); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SaveMediaPayload(ctx, chat, shared, []byte(chat)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.ClearChatMessages(ctx, cleared); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok, err := s.MediaPayload(ctx, cleared, shared); err != nil || ok {
+		t.Fatalf("the cleared chat kept its attachment: ok=%v err=%v", ok, err)
+	}
+	// Without the payload the other conversation still shows the message but
+	// can never download it again: the picture is gone for good.
+	payload, ok, err := s.MediaPayload(ctx, kept, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || string(payload) != kept {
+		t.Fatalf("clearing one chat took the other chat's attachment: ok=%v payload=%q", ok, payload)
+	}
+	page, err := s.ListMessages(ctx, kept, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 {
+		t.Fatalf("clearing one chat emptied the other: %d messages left", len(page.Messages))
+	}
+}
+
 func TestGroupSenderNameBackfillLabelsMessagesThatSyncedWithoutAPushName(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

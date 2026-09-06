@@ -10,7 +10,7 @@ Item {
     property url imageUrl: ""
     property real imageRotation: 0
     readonly property bool previewActive: String(imageUrl).length > 0
-    signal sendRequested(url imageUrl, string caption)
+    signal sendRequested(url imageUrl, string caption, int rotation)
     signal canceled(url imageUrl)
     signal addRequested()
 
@@ -246,8 +246,11 @@ Item {
             onClicked: {
                 const sentUrl = root.imageUrl
                 const sentCaption = caption.text
+                // What the reader turned is what gets sent; the preview used to
+                // be the only place the turn existed.
+                const turned = root.imageRotation
                 root.imageUrl = ""
-                root.sendRequested(sentUrl, sentCaption)
+                root.sendRequested(sentUrl, sentCaption, turned)
             }
             background: Rectangle {
                 radius: width / 2

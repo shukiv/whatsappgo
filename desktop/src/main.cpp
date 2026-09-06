@@ -1633,6 +1633,26 @@ QtObject {
             require(playback->property("waitingForVideoSurface").toBool(),
                     QStringLiteral("video playback started before its display surface existed"));
             QMetaObject::invokeMethod(playback, "stop");
+
+            // Asking for a recording that is not on disk yet waits for the
+            // download. One recording reaching its end used to throw that
+            // request away, and the recording the reader had asked for then
+            // never played at all.
+            QMetaObject::invokeMethod(
+                playback, "start",
+                Q_ARG(QVariant, QVariant(QStringLiteral("waiting-voice-note"))),
+                Q_ARG(QVariant, QVariant(QString())),
+                Q_ARG(QVariant, QVariant(false)));
+            require(playback->property("pendingId").toString() == QStringLiteral("waiting-voice-note"),
+                    QStringLiteral("a recording that has to be downloaded is not waiting for its file"));
+            require(QMetaObject::invokeMethod(playback, "finishCurrent"),
+                    QStringLiteral("playback cannot end a recording without cancelling a download"));
+            require(playback->property("pendingId").toString() == QStringLiteral("waiting-voice-note"),
+                    QStringLiteral("the recording that ended cancelled the download of the next one"));
+            // Closing the player deliberately does put the request down.
+            QMetaObject::invokeMethod(playback, "stop");
+            require(playback->property("pendingId").toString().isEmpty(),
+                    QStringLiteral("stopping playback left a download request behind"));
         }
 
         // The other person's name belongs above group messages only.
@@ -2646,6 +2666,13 @@ QtObject {
         if (composer == nullptr)
             return WHATSAPPGO_TEST_FAILURE();
 
+        // The test adds and switches accounts, and settings survive between
+        // runs: start from the account this run expects to be on.
+        if (backend.profile() != QStringLiteral("default")) {
+            backend.switchProfile(QStringLiteral("default"));
+            QCoreApplication::processEvents();
+        }
+
         // A draft, and the message it is answering, belong to the conversation
         // they were written in. Pressing Enter after switching used to send one
         // person's words - quoting one person's message - to somebody else.
@@ -2681,6 +2708,58 @@ QtObject {
         QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
         QCoreApplication::processEvents();
         if (composer->property("text").toString() != QStringLiteral("for Bob"))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // The same person written to from a second account is a second
+        // conversation. A draft written at work used to be waiting in the
+        // personal account, quoting a message that account cannot even see.
+        if (backend.profiles().contains(QStringLiteral("work")))
+            backend.switchProfile(QStringLiteral("work"));
+        else
+            backend.addProfile(QStringLiteral("Work"));
+        QCoreApplication::processEvents();
+        if (backend.profile() != QStringLiteral("work"))
+            return WHATSAPPGO_TEST_FAILURE();
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QCoreApplication::processEvents();
+        if (!composer->property("text").toString().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        composer->setProperty("text", QStringLiteral("for Bob at work"));
+        QMetaObject::invokeMethod(root, "rememberDraft");
+        // Switching back is what parks the work draft, and it happens with the
+        // new account already current: the draft has to be filed under the
+        // account it was written in, not the one being opened.
+        backend.switchProfile(QStringLiteral("default"));
+        QCoreApplication::processEvents();
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QCoreApplication::processEvents();
+        if (composer->property("text").toString() != QStringLiteral("for Bob"))
+            return WHATSAPPGO_TEST_FAILURE();
+        backend.switchProfile(QStringLiteral("work"));
+        QCoreApplication::processEvents();
+        QMetaObject::invokeMethod(root, "restoreDraft", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QCoreApplication::processEvents();
+        if (composer->property("text").toString() != QStringLiteral("for Bob at work"))
+            return WHATSAPPGO_TEST_FAILURE();
+        backend.switchProfile(QStringLiteral("default"));
+        QCoreApplication::processEvents();
+
+        // Messages picked in one conversation are not a selection in the next
+        // one, and a jump asked for in the conversation being opened has to
+        // survive the switch that opens it.
+        QMetaObject::invokeMethod(root, "beginMessageSelection");
+        root->setProperty("pendingMessageJumpChat", QStringLiteral("carol@lid"));
+        root->setProperty("pendingMessageJumpId", QStringLiteral("carol-message"));
+        QMetaObject::invokeMethod(root, "handleChatSwitched", Q_ARG(QVariant, QStringLiteral("carol@lid")));
+        QCoreApplication::processEvents();
+        if (root->property("messageSelectionActive").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        if (root->property("pendingMessageJumpId").toString() != QStringLiteral("carol-message"))
+            return WHATSAPPGO_TEST_FAILURE();
+        // Opening any other conversation does put the target down.
+        QMetaObject::invokeMethod(root, "handleChatSwitched", Q_ARG(QVariant, QStringLiteral("bob@lid")));
+        QCoreApplication::processEvents();
+        if (!root->property("pendingMessageJumpId").toString().isEmpty())
             return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
     }
