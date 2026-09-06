@@ -19,7 +19,21 @@ int testPrivacySettings()
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", QDir(runtime.path()).filePath(QStringLiteral("config")).toUtf8());
     qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
-    QSettings().setValue(QStringLiteral("accounts/profiles"), QStringList{QStringLiteral("default"), QStringLiteral("work")});
+    // XDG_CONFIG_HOME does not redirect Windows' native registry settings,
+    // which also reject an empty organization. Seed both accounts in a
+    // temporary INI store on every platform, as the profile-name test does.
+    QCoreApplication::setOrganizationName(QStringLiteral("WhatsAppGoTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("PrivacySettings"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, runtime.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, runtime.path());
+    {
+        QSettings settings;
+        settings.setValue(QStringLiteral("accounts/profiles"), QStringList{QStringLiteral("default"), QStringLiteral("work")});
+        settings.sync();
+        if (settings.status() != QSettings::NoError)
+            return testFatal("could not seed privacy test profiles", settings.fileName());
+    }
     QDir().mkpath(QDir(runtime.path()).filePath(QStringLiteral("whatsappgo")));
     QLocalServer first, second;
     if (!first.listen(RpcClient::socketPathForProfile(QStringLiteral("default")))
@@ -68,12 +82,16 @@ int testPrivacySettings()
     const auto nobody = QJsonObject{{QStringLiteral("last_seen"), QStringLiteral("none")},
                                     {QStringLiteral("online"), QStringLiteral("match_last_seen")}};
     RpcClient client(QStringLiteral("default"));
+    if (!client.profiles().contains(QStringLiteral("work")))
+        return testFatal("the privacy test's second account was not loaded");
     if (!waitFor([&] { return !pending.isEmpty(); }))
         return testFatal("privacy was not fetched after connecting");
     answer(pending.takeFirst(), everyone);
     if (!waitFor([&] { return client.privacySettings() == everyone.toVariantMap(); }))
         return testFatal("the first account's privacy settings never loaded");
     client.switchProfile(QStringLiteral("work"));
+    if (client.profile() != QStringLiteral("work"))
+        return testFatal("the privacy test did not switch to its second account");
     if (!client.privacySettings().isEmpty())
         return testFatal("the second account inherited the first account's privacy settings");
     if (!waitFor([&] { return !pending.isEmpty(); }))
