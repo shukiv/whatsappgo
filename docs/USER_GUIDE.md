@@ -130,6 +130,10 @@ actions instead of displaying controls that would fail silently.
 
 ## Keyboard
 
+Long drafts expand the message textbox up to its height limit, then scroll
+inside it. A scrollbar stays visible while the text overflows; use the mouse
+wheel or drag its handle to review earlier lines without scrolling the chat.
+
 | Key | What it does |
 | --- | --- |
 | **Enter** | Sends the message. With **Enter is send** turned off in Settings the roles swap: Enter opens a line and **Ctrl+Enter** sends. |
