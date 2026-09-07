@@ -229,8 +229,11 @@ starting another stops the previous one. Starting supported audio or video
 playback marks the message as played/read. Nothing is handed to a web browser.
 
 Paste a copied image into the composer to open the media preview. The preview
-supports a caption and basic rotation before sending. Downloaded documents and
-media are cached on disk. **Download** fetches an attachment that has not yet
+supports a caption and basic rotation before sending. The caption field grows
+as you type, then scrolls for longer text while keeping the cursor visible.
+Use **Shift+Enter** for another line and **Enter** to send the image. The preview
+image shrinks as needed so the caption and send controls remain accessible.
+Downloaded documents and media are cached on disk. **Download** fetches an attachment that has not yet
 been cached; **Open** launches the cached file with its default Linux
 application.
 

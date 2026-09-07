@@ -139,16 +139,23 @@ Item {
 
     Item {
         id: footer
+        objectName: "mediaPreviewFooter"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 142
+        // Reserve the thumbnail/send row below the growing caption. Otherwise
+        // extra lines either disappear or overlap these controls and the image.
+        height: captionFrame.height + 86
 
         Rectangle {
+            id: captionFrame
+            objectName: "mediaPreviewCaptionFrame"
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.top: parent.top
-            width: Math.min(parent.width - 150, 760)
-            height: 56
+            width: Math.max(1, Math.min(parent.width - 150, 760))
+            readonly property real maximumHeight: Math.max(56, Math.min(180, root.height * 0.3))
+            height: Math.min(maximumHeight, Math.max(56,
+                caption.contentHeight + caption.topPadding + caption.bottomPadding))
             radius: 10
             color: Theme.surfaceMuted
 
@@ -158,32 +165,66 @@ Item {
                 anchors.rightMargin: 6
                 spacing: 4
 
-                TextArea {
-                    id: caption
-                    readOnly: root.sending
-                    objectName: "mediaPreviewCaption"
+                ScrollView {
+                    id: captionScroll
+                    objectName: "mediaPreviewCaptionScroll"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    leftPadding: 0
-                    rightPadding: 0
-                    topPadding: 15
-                    bottomPadding: 8
-                    placeholderText: qsTr("Add a caption")
-                    color: Theme.text
-                    font.pixelSize: 14
-                    wrapMode: TextEdit.Wrap
-                    Accessible.name: qsTr("Image caption")
-                    background: Item {}
-                    Keys.onPressed: event => {
-                        if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) {
-                            sendButton.clicked()
-                            event.accepted = true
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: OverlayScrollBar {}
+
+                    // Wrapping changes on a window resize without moving the
+                    // text cursor. Keep that cursor in view after layout, but
+                    // do not recenter while the reader scrolls older lines.
+                    function revealCursorAfterResize() {
+                        const flick = contentItem
+                        if (!caption.activeFocus || !flick || typeof flick.contentY === "undefined")
+                            return
+                        const cursor = caption.cursorRectangle
+                        const top = caption.mapToItem(flick.contentItem, 0, cursor.y).y
+                        const bottom = top + cursor.height
+                        const maxY = Math.max(0, flick.contentHeight - flick.height)
+                        if (top < flick.contentY)
+                            flick.contentY = Math.max(0, top)
+                        else if (bottom > flick.contentY + flick.height)
+                            flick.contentY = Math.min(maxY, bottom - flick.height)
+                    }
+                    onAvailableWidthChanged: Qt.callLater(revealCursorAfterResize)
+                    onAvailableHeightChanged: Qt.callLater(revealCursorAfterResize)
+
+                    // ScrollView keeps the cursor visible once the caption
+                    // reaches its height limit, including pasted and RTL text.
+                    TextArea {
+                        id: caption
+                        readOnly: root.sending
+                        objectName: "mediaPreviewCaption"
+                        width: captionScroll.availableWidth
+                        leftPadding: 0
+                        rightPadding: 6
+                        topPadding: 15
+                        bottomPadding: 8
+                        placeholderText: qsTr("Add a caption")
+                        color: Theme.text
+                        font.pixelSize: 14
+                        wrapMode: TextEdit.Wrap
+                        textFormat: TextEdit.PlainText
+                        Accessible.name: qsTr("Image caption")
+                        background: Item {}
+                        Keys.onPressed: event => {
+                            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) {
+                                sendButton.clicked()
+                                event.accepted = true
+                            }
                         }
                     }
                 }
 
                 ThemedToolButton {
                     enabled: !root.sending
+                    Layout.alignment: Qt.AlignBottom
+                    Layout.bottomMargin: 6
                     Layout.preferredWidth: 44
                     Layout.preferredHeight: 44
                     iconSource: Qt.resolvedUrl("icons/smile.svg")
