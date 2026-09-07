@@ -60,8 +60,13 @@ unread total is shown on chat and navigation badges. Search above the list
 filters conversations; the search icon in the navigation rail opens and focuses
 chat search. The **Archived** row follows the filter strip.
 
-Opening a conversation shows its newest messages. Scroll upward to load older
-history in pages. All messages delivered to the linked device are persisted in
+Opening a conversation, including selecting the same chat again, shows the
+bottom of its newest message. Sending text with **Enter** or the send button
+also returns to the bottom, even when you were reading older messages. Scrolling
+up releases automatic following; incoming messages and contact-detail refreshes
+do not pull you back down. Quoted-message and search-result navigation still
+opens at the selected message. Scroll upward to load older history in pages.
+All messages delivered to the linked device are persisted in
 the profile's `messages.db` SQLite database; the UI does not keep the complete
 database in memory.
 
@@ -156,6 +161,11 @@ from 100% to 500%. The toolbar zoom buttons remain available, and scrolling
 over chat lists or message thumbnails keeps its normal behavior. Clicking an
 open image exposes **Copy image** and **Save image** actions.
 
+Photo/video bubbles stay compact: their outer width is capped at 336 logical
+pixels and shrinks with the conversation pane. Long captions wrap below the
+preview without widening the bubble or leaving an empty panel beside the image.
+This limit applies only to chat previews, not the full-size viewer.
+
 Selecting an item in the account-wide media library opens its conversation and
 jumps to that message, loading older history as needed. To forward an attachment,
 download it first. If its file is unavailable, forwarding reports that it needs
@@ -219,7 +229,9 @@ been cached; **Open** launches the cached file with its default Linux
 application.
 
 Text, quoted-reply context, and pasted-image previews remain available if a send
-fails. A successful acknowledgement clears only the draft that was sent, not
+fails. This includes the selected reply for file attachments and voice notes;
+the quote is cleared only after the send succeeds. A successful acknowledgement
+clears only the draft that was sent, not
 newer typing or another chat's draft. An image preview is hidden when leaving its
 account/chat and shown again on return. These are in-session drafts, not a
 persistent outbox; check delivery before retrying after a connection loss.
@@ -261,6 +273,11 @@ system tray, WhatsAppGo also places its icon there with connection status,
 **Open/Hide**, and **Quit WhatsAppGo** actions. Minimizing hides the window
 behind that icon. Opening a chat sends read receipts for its incoming messages.
 Typing and presence updates depend on what the other account and WhatsApp expose.
+Typing and audio-recording indicators clear immediately when a stop/offline event
+arrives, or after 10 seconds without a fresh activity update if the stop event is
+lost. The header then returns to the available online/last-seen information, or
+stays blank when none is known. Changing chats or losing the connection also
+clears transient activity.
 Status-broadcast updates do not create desktop notifications.
 
 With a tray available, minimizing or closing the window hides it and keeps notifications and
@@ -287,11 +304,15 @@ the update there.
 
 ## Reporting a problem
 
-**Report a problem** submits your description and the displayed environment
-details to the `whatsappgo` project at `bugs.jabali-panel.com`. Reports require
-an intake key configured for the app's backend; GitHub CLI/login is no longer
-used. Errors leave the report editable. No chat logs or account identities are
-automatically attached. See [bug reporting and key setup](BUG_REPORTING.md).
+**Report a problem**, from the toolbar or Help, opens
+[WhatsAppGo GitHub issues](https://github.com/shukiv/whatsappgo/issues) directly
+in your default browser. There is no in-app form or intake key to configure.
+Your browser controls whether the page opens in a new tab or window.
+
+Review existing issues or create a new issue on GitHub. Opening the page does
+not submit a report or attach app data, logs, or account details. If the browser
+cannot launch, the app shows the URL so you can open it manually.
+See [bug reporting](BUG_REPORTING.md).
 
 ## Logging out and local data
 

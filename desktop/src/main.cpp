@@ -26,6 +26,7 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QIcon>
 #include <QLibraryInfo>
 #include <QFile>
@@ -292,7 +293,7 @@ int main(int argc, char *argv[])
     parser.addOption(chatRowMenuTestOption);
     QCommandLineOption searchResultsTestOption(QStringLiteral("search-results-test"), QStringLiteral("Verify the sidebar search swaps the chat list for grouped results"));
     parser.addOption(searchResultsTestOption);
-    QCommandLineOption bugReportTestOption(QStringLiteral("bug-report-test"), QStringLiteral("Verify the report-a-problem button, dialog and disclosure"));
+    QCommandLineOption bugReportTestOption(QStringLiteral("bug-report-test"), QStringLiteral("Verify report-a-problem actions open GitHub issues directly"));
     parser.addOption(bugReportTestOption);
     QCommandLineOption updateSettingsTestOption(QStringLiteral("update-settings-test"), QStringLiteral("Verify the Help page reports the version and offers the update button"));
     parser.addOption(updateSettingsTestOption);
@@ -420,7 +421,7 @@ int main(int argc, char *argv[])
     // stub answers just enough for the window to come up.
     QLocalServer stubDaemon;
     int rejectedDraftSends = 0;
-    if (searchResultsTest || composerDraftTest) {
+    if (searchResultsTest || composerDraftTest || messageScrollTest) {
         const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
 #ifndef Q_OS_WIN
         QDir().mkpath(QFileInfo(stubPath).absolutePath());
@@ -431,11 +432,17 @@ int main(int argc, char *argv[])
                                         .arg(stubPath, stubDaemon.errorString());
             return WHATSAPPGO_TEST_FAILURE();
         }
-        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, &rejectedDraftSends] {
+        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, &rejectedDraftSends] {
             auto *socket = stubDaemon.nextPendingConnection();
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, &rejectedDraftSends] {
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, &rejectedDraftSends] {
                 while (socket->canReadLine()) {
                     const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                    const auto method = request.value(QStringLiteral("method")).toString();
+                    // The scroll test delivers pages straight to the real
+                    // model at controlled times. An empty daemon reply must
+                    // not erase its fixture or involve a real account.
+                    if (messageScrollTest && method == QStringLiteral("messages.list"))
+                        continue;
                     QJsonValue result = QJsonObject{};
                     if (request.value(QStringLiteral("method")).toString() == QStringLiteral("status.get")) {
                         result = QJsonObject{{QStringLiteral("logged_in"), true},
@@ -444,7 +451,6 @@ int main(int argc, char *argv[])
                     QJsonObject response{{QStringLiteral("version"), 1},
                                                {QStringLiteral("id"), request.value(QStringLiteral("id"))},
                                                {QStringLiteral("result"), result}};
-                    const auto method = request.value(QStringLiteral("method")).toString();
                     if (composerDraftTest && (method == QStringLiteral("message.send") || method == QStringLiteral("message.send_media"))) {
                         ++rejectedDraftSends;
                         response.remove(QStringLiteral("result"));
@@ -1299,7 +1305,28 @@ QtObject {
         accountWindow.show();
         QCoreApplication::processEvents();
         auto *accountUnreadBadge = qobject_cast<QQuickItem *>(accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherUnreadBadge")));
+        auto *accountIcon = qobject_cast<QQuickItem *>(accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherIcon")));
         auto *accountChipItem = qobject_cast<QQuickItem *>(accountChip.get());
+        // ToolButton content has style-specific padding. Badges belong to the
+        // outer control, not that inset box, at both header/control sizes.
+        bool accountBadgeAtCorner = accountUnreadBadge && accountChipItem && accountIcon;
+        if (accountBadgeAtCorner) {
+            for (const int size : {40, 44}) {
+                accountChipItem->setSize(QSizeF(size, size));
+                for (const int count : {1, 12, 100}) {
+                    accountChip->setProperty("unreadCounts", QVariantMap{{QStringLiteral("default"), count}});
+                    QCoreApplication::processEvents();
+                    const auto topRight = accountUnreadBadge->mapToItem(accountChipItem, QPointF(accountUnreadBadge->width(), 0));
+                    // user.svg's head starts at y=4 in its 24-unit view box.
+                    const auto headTop = accountIcon->mapToItem(accountChipItem, QPointF(0, accountIcon->height() / 6.0)).y();
+                    accountBadgeAtCorner = accountBadgeAtCorner && topRight.x() >= size && topRight.y() <= 0
+                        && topRight.x() <= size + 3 && topRight.y() >= -6
+                        && accountUnreadBadge->height() == 19
+                        && topRight.y() + accountUnreadBadge->height() <= headTop;
+                }
+            }
+            accountChip->setProperty("unreadCounts", QVariantMap{{QStringLiteral("default"), 12}, {QStringLiteral("work"), 0}});
+        }
         auto *accountMenu = accountChip->findChild<QObject *>(QStringLiteral("accountSwitcherMenu"));
         const bool accountClicked = QMetaObject::invokeMethod(accountChip.get(), "click");
         QCoreApplication::processEvents();
@@ -1408,6 +1435,7 @@ QtObject {
                 && note(accountMenu->property("y").toReal() >= accountChip->property("height").toReal(), "account menu y")
                 && note(actualAccountClicked, "window account chip click")
                 && note(accountUnreadBadge->width() >= 19.0, "unread badge width")
+                && note(accountBadgeAtCorner, "account badge upper-right placement")
                 && note(accountChip->property("width").toReal() == 44.0, "account chip width")
                 && note(accountChip->property("totalUnread").toInt() == 12, "account total unread")
                 && note(qAbs(timestampRight - badgeRight) <= 2.0, "timestamp/badge alignment")
@@ -2203,11 +2231,13 @@ QtObject {
         // the next incoming row snaps a reader out of older history.
         messages->clear();
         const bool preparedChat = QMetaObject::invokeMethod(
-            messageList, "prepareForChat", Q_ARG(QVariant, QVariant(QStringLiteral("stable@lid"))));
+            messageList, "prepareForChat", Q_ARG(QVariant, QVariant(QStringLiteral("stable@lid"))),
+            Q_ARG(QVariant, QVariant(false)));
         require(preparedChat, QStringLiteral("the message list did not expose its chat-position function"));
         messageList->setProperty("initialPositionPending", false);
         QMetaObject::invokeMethod(
-            messageList, "prepareForChat", Q_ARG(QVariant, QVariant(QStringLiteral("stable@lid"))));
+            messageList, "prepareForChat", Q_ARG(QVariant, QVariant(QStringLiteral("stable@lid"))),
+            Q_ARG(QVariant, QVariant(false)));
         require(!messageList->property("initialPositionPending").toBool(),
                 QStringLiteral("refreshing metadata for the open chat re-armed its initial tail jump"));
 
@@ -2239,6 +2269,104 @@ QtObject {
         require(messages->count() == 1
                     && messages->at(0).value(QStringLiteral("id")).toString() == QStringLiteral("scroll-90"),
                 QStringLiteral("returning to a viewed chat did not restore its messages immediately"));
+
+        // Check the newest delegate itself, not Qt's estimated contentHeight:
+        // an estimate can say "near tail" while the final lines are clipped.
+        // Qt may retain the bottom margin or place the row flush with the
+        // viewport after polish. Both show the final line; overshoot does not.
+        const auto newestAtBottom = [&] {
+            QQmlExpression bottom(qmlContext(messageList), messageList, QStringLiteral(
+                "(function() { var row = itemAtIndex(0); if (!row) return -1; "
+                "var edge = mapFromItem(row, 0, row.height).y; "
+                "return Math.max(0, edge - height, height - bottomMargin - edge); })()"));
+            const auto distance = bottom.evaluate().toDouble();
+            if (bottom.hasError() || distance < 0 || distance > 2.0) {
+                qInfo() << "Newest row outside bottom padding:" << distance;
+                return false;
+            }
+            return true;
+        };
+        const auto browseOlder = [&] {
+            QMetaObject::invokeMethod(messageList, "releaseTail");
+            messageList->setProperty("contentY", messageList->property("contentY").toReal() - 240.0);
+            settle();
+        };
+        backend.openChat(QStringLiteral("tail-send@lid"), QStringLiteral("Tail send"));
+        messages->reset(history);
+        settle();
+        require(newestAtBottom(), QStringLiteral("opening a chat clips the newest message"));
+        browseOlder();
+        auto *composer = qobject_cast<QQuickItem *>(mainRoot->findChild<QObject *>(QStringLiteral("messageComposer")));
+        if (!composer || !applicationWindow)
+            return WHATSAPPGO_TEST_FAILURE();
+        bool enterSent = false;
+        const auto sentObservation = QObject::connect(&backend, &RpcClient::textSendFinished, &app,
+            [&enterSent](const QString &, const QString &, const QString &, const QString &, bool) { enterSent = true; });
+        composer->setProperty("text", QStringLiteral("A message typed while reading older history"));
+        composer->forceActiveFocus();
+        QKeyEvent enterPress(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QCoreApplication::sendEvent(applicationWindow, &enterPress);
+        settle();
+        QObject::disconnect(sentObservation);
+        require(enterSent, QStringLiteral("the physical Enter key did not reach the send action"));
+        require(messageList->property("followTail").toBool() && newestAtBottom(),
+                QStringLiteral("pressing Enter while reading history did not jump to the newest message"));
+        // A real send's row can arrive later than the key press/acknowledgement.
+        messages->upsert(makeMessage(100));
+        settle();
+        require(newestAtBottom(), QStringLiteral("the sent row arrived below the viewport"));
+
+        browseOlder();
+        backend.openChat(QStringLiteral("tail-send@lid"), QStringLiteral("Tail send"));
+        settle();
+        require(messageList->property("followTail").toBool() && newestAtBottom(),
+                QStringLiteral("explicitly reopening the selected chat did not return to its bottom"));
+
+        backend.openChat(QStringLiteral("tail-other@lid"), QStringLiteral("Other chat"));
+        backend.openChat(QStringLiteral("tail-send@lid"), QStringLiteral("Tail send"));
+        settle();
+        require(newestAtBottom(), QStringLiteral("returning to a cached chat clips its newest message"));
+        auto lateMessage = makeMessage(100);
+        lateMessage.insert(QStringLiteral("body"), QStringLiteral("Late-loaded message line\n").repeated(24));
+        messages->upsert(lateMessage);
+        settle();
+        require(newestAtBottom(), QStringLiteral("late row layout left the chat above its final lines"));
+
+        // Metadata signals for the selected chat are not explicit activation.
+        browseOlder();
+        const auto metadataReadingY = messageList->property("contentY").toReal();
+        QMetaObject::invokeMethod(&backend, "selectedChatChanged");
+        settle();
+        require(!messageList->property("followTail").toBool()
+                    && qAbs(messageList->property("contentY").toReal() - metadataReadingY) < 2.0,
+                QStringLiteral("a selected-chat metadata refresh interrupted reading history"));
+
+        // A quoted/search target intentionally opens away from the tail.
+        backend.openChat(QStringLiteral("tail-other@lid"), QStringLiteral("Other chat"));
+        QMetaObject::invokeMethod(mainRoot, "jumpToMessageInChat",
+            Q_ARG(QVariant, QVariant(QStringLiteral("tail-send@lid"))),
+            Q_ARG(QVariant, QVariant(QStringLiteral("Tail send"))),
+            Q_ARG(QVariant, QVariant(QStringLiteral("scroll-50"))));
+        settle();
+        settle();
+        require(mainRoot->property("highlightedMessageId").toString() == QStringLiteral("scroll-50")
+                    && !messageList->property("followTail").toBool(),
+                QStringLiteral("chat activation overrode a quoted-message navigation target"));
+
+        // A delayed snapshot with unchanged row count must still settle at
+        // the tail after an ordinary open, rather than relying on countChanged.
+        backend.openChat(QStringLiteral("tail-send@lid"), QStringLiteral("Tail send"));
+        settle();
+        auto refreshedHistory = history;
+        refreshedHistory.append(lateMessage);
+        messages->reset(refreshedHistory);
+        settle();
+        require(newestAtBottom(), QStringLiteral("a delayed snapshot clipped the newest row after opening"));
+
+        // Cancel cached delegate incubation before tearing down the QML engine.
+        QMetaObject::invokeMethod(messageList, "releaseTail");
+        messages->clear();
+        settle();
 
         return passed ? EXIT_SUCCESS : EXIT_FAILURE;
     }
@@ -3046,45 +3174,36 @@ QtObject {
             return WHATSAPPGO_TEST_FAILURE();
         auto *root = engine.rootObjects().constFirst();
         auto *button = qobject_cast<QQuickItem *>(root->findChild<QObject *>(QStringLiteral("bugReportButton")));
-        auto *dialog = root->findChild<QObject *>(QStringLiteral("bugReportDialog"));
-        if (button == nullptr || dialog == nullptr)
+        auto *settings = root->findChild<QObject *>(QStringLiteral("settingsPane"));
+        if (!button || !settings || button->width() < 36 || button->height() < 36)
             return WHATSAPPGO_TEST_FAILURE();
-        // A 40px control is the sidebar header's pointer target; anything
-        // smaller is a different button from the ones beside it.
-        if (button->width() < 36 || button->height() < 36)
+        const auto expectedUrl = QStringLiteral("https://github.com/shukiv/whatsappgo/issues");
+        if (root->property("bugReportUrl").toString() != expectedUrl
+                || root->findChild<QObject *>(QStringLiteral("bugReportDialog")))
             return WHATSAPPGO_TEST_FAILURE();
 
+        // Intercept the external opener: no real browser or report submission.
+        QQmlExpression failedBrowser(engine.rootContext(), root,
+            QStringLiteral("openBugReportUrl = function(url) { transientNotice = url; return false }"));
+        failedBrowser.evaluate();
         QMetaObject::invokeMethod(button, "click");
         QCoreApplication::processEvents();
-        // A Popup becomes visible at once and only reports "opened" after its
-        // enter transition, which needs more than one turn of the loop.
-        if (!dialog->property("visible").toBool())
+        if (failedBrowser.hasError() || root->property("transientNotice").toString() != expectedUrl
+                || !root->property("transientError").toString().contains(expectedUrl))
             return WHATSAPPGO_TEST_FAILURE();
 
-        if (!dialog->property("subtitle").toString().contains(QStringLiteral("bugs.jabali-panel.com")))
+        root->setProperty("transientError", QString());
+        root->setProperty("transientNotice", QString());
+        QQmlExpression openedBrowser(engine.rootContext(), root,
+            QStringLiteral("openBugReportUrl = function(url) { transientNotice = url; return true }"));
+        openedBrowser.evaluate();
+        QMetaObject::invokeMethod(button, "click");
+        if (openedBrowser.hasError() || root->property("transientNotice").toString() != expectedUrl
+                || !root->property("transientError").toString().isEmpty())
             return WHATSAPPGO_TEST_FAILURE();
-        // An empty report must not create an unhelpful intake item.
-        if (dialog->property("acceptEnabled").toBool())
-            return WHATSAPPGO_TEST_FAILURE();
-        dialog->setProperty("subject", QStringLiteral("Videos play as a black screen"));
-        QCoreApplication::processEvents();
-        if (dialog->property("acceptEnabled").toBool())
-            return WHATSAPPGO_TEST_FAILURE();
-        dialog->setProperty("details", QStringLiteral("Opening a status video shows nothing."));
-        QCoreApplication::processEvents();
-        if (!dialog->property("acceptEnabled").toBool())
-            return WHATSAPPGO_TEST_FAILURE();
-
-        // The environment is disclosed before it leaves the user's device.
-        auto *environment = root->findChild<QObject *>(QStringLiteral("bugReportEnvironmentText"));
-        if (environment == nullptr || !environment->property("visible").toBool())
-            return WHATSAPPGO_TEST_FAILURE();
-
-        // Sending is what the daemon does; the dialog only reports the result.
-        QMetaObject::invokeMethod(dialog, "finish", Q_ARG(QVariant, false),
-                                  Q_ARG(QVariant, QStringLiteral("no route")));
-        QCoreApplication::processEvents();
-        if (!dialog->property("visible").toBool() || dialog->property("sending").toBool())
+        root->setProperty("transientNotice", QString());
+        QMetaObject::invokeMethod(settings, "bugReportRequested");
+        if (root->property("transientNotice").toString() != expectedUrl)
             return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
     }

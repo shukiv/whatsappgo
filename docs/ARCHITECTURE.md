@@ -60,6 +60,14 @@ but normal packages do not install or require systemd user units.
 - manages account tabs, theme preference, clipboard, file dialogs, system tray,
   and interactive desktop notifications
 
+The desktop treats `chat.presence` composing/recording events as transient hints.
+A single-shot 10-second timer renews only on activity for the selected chat, not
+on general online updates. Expiry removes only activity fields and emits the
+presence notification, preserving online/last-seen information. Paused/offline
+events clear activity immediately; navigation, account switches, and WhatsApp or
+daemon disconnects cancel the timer. This prevents a lost stop event from
+leaving the header stuck on “Typing…”.
+
 ### Backend
 
 - owns the WhatsApp connection, encryption sessions, and reconnection
@@ -167,12 +175,32 @@ on failure; successful sends clean up temporary files. Rotated send copies are
 discarded after completion while the original remains available for retry on
 failure. Pending previews cannot be sent to a newly selected conversation.
 
+File and voice-note sends also retain the selected reply until acknowledgement.
+Their completion signal carries the original profile, conversation, and quote;
+only a successful send clears a still-matching quote in that conversation's
+draft. A newer reply or another conversation's draft is left alone.
+
+An image download started by **Copy image** may finish after navigation. Its
+clipboard action can complete, but the downloaded message is inserted into the
+visible model only if the original account and conversation still match.
+When the backend disconnects, queued media work is discarded and cancellation
+callbacks release their slots before the active-download count is reset. This
+keeps the three-download limit intact after reconnection.
+
 ### Bug-report intake
+
+The desktop's toolbar and Help actions open the WhatsAppGo GitHub issues
+URL directly through the external browser opener, without invoking a backend
+RPC or collecting report data. Both share one action and browser-failure notice.
 
 `internal/bugreport` performs authenticated HTTPS submission to the fixed Jabali
 endpoint with `program: "whatsappgo"`. The service exposes safe environment
-disclosure and submission through the local RPC. Keys are runtime configuration,
-never RPC arguments or bundled credentials. See [bug reporting](BUG_REPORTING.md)
+disclosure, a credential-availability boolean, and submission through the local
+RPC for separately configured tooling, not the desktop report actions.
+Keys are runtime configuration, never RPC arguments or bundled credentials.
+The submitter enforces `Retry-After` and tracker-error
+backoff on manual retries, but never retries a POST automatically.
+See [bug reporting](BUG_REPORTING.md)
 for the request/response contract and operational setup.
 
 ### Shared contacts and places
@@ -324,6 +352,16 @@ history grows away from the reader. It also marks the message that opens each
 calendar day, which is what the date pills are drawn from; a page of older
 history moves that mark rather than leaving two, so the recompute runs after
 every change to the list.
+
+`RpcClient::chatOpened` signals explicit conversation activation, including
+reselecting the current chat. It is distinct from `selectedChatChanged`, which
+also reports title/avatar refreshes and must not interrupt a reader's position.
+Activation and text-send actions re-enable tail following; explicit quoted or
+search-message targets take precedence over the normal opening position. A
+coalesced one-shot timer flushes pending `ListView` layout and positions at row
+zero's bottom edge. Model resets (including same-count cached-page refreshes)
+reschedule this only while following. Wheel/drag input releases following and
+cancels queued positioning; there is no continuous content-height scroll loop.
 
 ## Memory and rendering
 

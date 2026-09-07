@@ -131,7 +131,7 @@ All parameter objects reject unknown fields.
 | --- | --- | --- |
 | `rpc.discover` | `{}` | API metadata |
 | `status.get` | `{}` | Connection status |
-| `bugreport.environment` | `{}` | Safe environment `fields`, `rendered` text, fixed `program: "whatsappgo"`, and intake `endpoint` |
+| `bugreport.environment` | `{}` | Safe environment `fields`, `rendered` text, fixed `program: "whatsappgo"`, intake `endpoint`, public `public_url`, and `authenticated_available` (local key present and readable, not server-validated) |
 | `bugreport.submit` | `subject`, `body` | Submit to Jabali Bugs Intake and return `{ "url": "..." }`; requires a daemon-side intake key. See [bug reporting](BUG_REPORTING.md) |
 | `update.status` | `{}` | The installed version, any newer release, and whether this build can install one |
 | `update.check` | `{}` | Ask GitHub now instead of waiting for the next three-hourly look |

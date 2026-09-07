@@ -29,6 +29,14 @@ ApplicationWindow {
 
     property string transientError: ""
     property string transientNotice: ""
+    readonly property string bugReportUrl: "https://github.com/shukiv/whatsappgo/issues"
+    property var openBugReportUrl: function(url) { return Qt.openUrlExternally(url) }
+    function reportBug() {
+        if (!openBugReportUrl(bugReportUrl)) {
+            window.transientError = qsTr("Could not open your browser. Visit %1").arg(bugReportUrl)
+            errorTimer.restart()
+        }
+    }
     property bool recordingVoice: Boolean(voiceRecorderLoader.item && voiceRecorderLoader.item.recording)
     property string replyTargetId: ""
     property string replyPreview: ""
@@ -105,6 +113,10 @@ ApplicationWindow {
             window.replyTargetId = ""
             window.replyPreview = ""
         }
+    }
+    function finishAttachmentSend(profile, jid, replyTo, success) {
+        if (success && replyTo !== "")
+            window.finishImageReply(String(profile) + "\u0000" + String(jid), replyTo)
     }
     property string pendingMessageJumpId: ""
     property int pendingMessageJumpAttempts: 0
@@ -185,8 +197,6 @@ ApplicationWindow {
     // which is what WhatsApp Web does with an attachment picked while replying.
     function sendAttachment(fileUrl, caption, document) {
         const replyTo = window.replyTargetId
-        window.replyTargetId = ""
-        window.replyPreview = ""
         window.rememberDraft()
         backend.sendFile(fileUrl, caption || "", replyTo, document === true)
     }
@@ -218,12 +228,8 @@ ApplicationWindow {
         if (!context || context.profile !== backend.profile
                 || context.chatJid !== String(backend.selectedChat.jid || ""))
             return
+        window.rememberDraft()
         backend.sendVoice(path, context.chatJid, context.profile, context.replyTo)
-        if (window.replyTargetId === context.replyTo) {
-            window.replyTargetId = ""
-            window.replyPreview = ""
-            window.rememberDraft()
-        }
     }
 
     // What has to be put down when the reader moves to another conversation.
@@ -735,15 +741,6 @@ ApplicationWindow {
             window.transientError = message
             errorTimer.restart()
         }
-        function onBugReportFinished(success, message, url) {
-            bugReportDialog.finish(success, message)
-            if (!success)
-                return
-            // The URL is the only receipt the reader gets, so it goes in the
-            // notice rather than only into the dialog that just closed.
-            window.transientNotice = url ? qsTr("Report sent: %1").arg(url) : message
-            noticeTimer.restart()
-        }
         function onDaemonConnectedChanged() {
             if (!backend.daemonConnected)
                 return
@@ -1183,11 +1180,7 @@ ApplicationWindow {
                             iconSource: Qt.resolvedUrl("icons/bug.svg")
                             iconSize: 20
                             Accessible.name: qsTr("Report a problem")
-                            onClicked: {
-                                backend.refreshBugReportEnvironment()
-                                bugReportDialog.reset()
-                                bugReportDialog.open()
-                            }
+                            onClicked: window.reportBug()
                             background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
                             ToolTip.visible: hovered
                             ToolTip.text: Accessible.name
@@ -2166,19 +2159,28 @@ ApplicationWindow {
                             followTail = false
                         }
 
-                        function prepareForChat(chatJid) {
+                        function returnToTail() {
+                            cancelFlick()
+                            followTail = true
+                            initialPositionPending = count === 0
+                            scheduleTailPosition()
+                        }
+
+                        function prepareForChat(chatJid, explicitlyOpened) {
                             const jid = String(chatJid || "")
                             // selectedChatChanged also reports refreshed titles
-                            // and avatars. Only a real conversation change may
-                            // request the initial jump to the newest message.
-                            if (jid === positionedChatJid)
+                            // and avatars. Only changing or explicitly opening
+                            // a conversation requests a jump to its newest row.
+                            if (jid === positionedChatJid && !explicitlyOpened)
                                 return
                             positionedChatJid = jid
                             tailPositionTimer.stop()
-                            followTail = true
-                            initialPositionPending = jid !== "" && count === 0
-                            if (jid !== "" && count > 0)
-                                scheduleTailPosition()
+                            if (jid !== "")
+                                returnToTail()
+                            else {
+                                followTail = false
+                                initialPositionPending = false
+                            }
                         }
 
                         // Geometry can change several times while a batch of
@@ -2192,6 +2194,9 @@ ApplicationWindow {
                                 if (!messageList.followTail)
                                     return
                                 messageList.positioningTail = true
+                                // Model changes are batched until polish. Apply
+                                // them before choosing the newest row's edge.
+                                messageList.forceLayout()
                                 messageList.positionViewAtBeginning()
                                 Qt.callLater(() => {
                                     messageList.positioningTail = false
@@ -2241,6 +2246,9 @@ ApplicationWindow {
 
                         Connections {
                             target: backend.messages
+                            function onModelReset() {
+                                messageList.scheduleTailPosition()
+                            }
                             function onAppended() {
                                 messageList.scheduleTailPosition()
                                 if (window.infoDrawerOpen) {
@@ -2261,8 +2269,20 @@ ApplicationWindow {
 
                     Connections {
                         target: backend
+                        function onChatOpened(chatJid) {
+                            if (window.pendingMessageJumpChat === String(chatJid)
+                                    && window.pendingMessageJumpId) {
+                                messageList.releaseTail()
+                                messageList.initialPositionPending = false
+                                return
+                            }
+                            messageList.prepareForChat(chatJid, true)
+                        }
                         function onTextSendFinished(profile, chatJid, text, replyTo, success) {
                             window.finishTextSend(profile, chatJid, text, replyTo, success)
+                        }
+                        function onAttachmentSendFinished(profile, chatJid, replyTo, success) {
+                            window.finishAttachmentSend(profile, chatJid, replyTo, success)
                         }
                         function onClipboardSendFinished(profile, chatJid, localUrl, replyTo, success) {
                             const key = String(profile) + "\u0000" + String(chatJid)
@@ -2524,6 +2544,7 @@ ApplicationWindow {
                                             const body = composer.text
                                             const replyTo = window.replyTargetId
                                             window.rememberDraft()
+                                            messageList.returnToTail()
                                             backend.sendMessage(body, replyTo)
                                             backend.setTyping(false)
                                         } else if (window.recordingVoice) {
@@ -2660,11 +2681,7 @@ ApplicationWindow {
             onLogoutRequested: logoutDialog.open()
             onShortcutsRequested: shortcutsDialog.open()
             onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
-            onBugReportRequested: {
-                backend.refreshBugReportEnvironment()
-                bugReportDialog.reset()
-                bugReportDialog.open()
-            }
+            onBugReportRequested: window.reportBug()
         }
 
         MediaLibraryPane {
@@ -3499,11 +3516,6 @@ ApplicationWindow {
         acceptText: qsTr("Remove")
         destructive: true
         onAccepted: backend.removeProfile(profile)
-    }
-
-    BugReportDialog {
-        id: bugReportDialog
-        onSubmitRequested: (subject, details) => backend.submitBugReport(subject, details)
     }
 
     WhatsAppDialog {

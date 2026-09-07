@@ -52,12 +52,20 @@ every interactive control.
 | Quick-reaction tray | `44 px` high; `32 px` cells |
 | Contact drawer | `540 px` wide |
 | Contact avatar | `120 × 120 px` |
+| Photo/video bubble | `336 px` maximum outer width; also bounded by conversation width |
+| Photo/video horizontal image gutter | `4 px`; captions retain the `11 px` text gutter |
 
 These values are component baselines, not permission to hard-code unrelated
 layouts. Preserve relative density when a platform font or scale factor changes.
-Message bubbles are content-driven, cap at 68% of the conversation pane and at
-620 px on a wide window, and must not resize when an asynchronous thumbnail is
-replaced with a higher-quality source.
+Text-message bubbles are content-driven, cap at 68% of the conversation pane and
+at 620 px on a wide window. Photo/video bubbles use a separate 336 px outer cap
+(approximately 420 device pixels at 125% scaling, matching the supplied Web
+reference). The preview uses up to 328 px with 4 px horizontal gutters; captions,
+sender labels, and quotes wrap or elide within the same bubble instead of
+expanding it beside the image. At narrower widths both preview and caption
+shrink together. Bubbles must not resize when an asynchronous thumbnail is
+replaced with a higher-quality source. Stickers keep their separate unframed
+treatment, and the full-size viewer is not limited by the chat preview cap.
 
 ## Responsive behavior
 

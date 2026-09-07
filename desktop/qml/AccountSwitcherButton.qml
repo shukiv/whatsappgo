@@ -45,6 +45,7 @@ ThemedToolButton {
 
     contentItem: Item {
         TintedIcon {
+            objectName: "accountSwitcherIcon"
             anchors.centerIn: parent
             width: 20
             height: 20
@@ -54,12 +55,14 @@ ThemedToolButton {
 
         Rectangle {
             id: unreadBadge
+            parent: root
             objectName: "accountSwitcherUnreadBadge"
             visible: root.totalUnread > 0
             anchors.top: parent.top
             anchors.right: parent.right
-            anchors.topMargin: 2
-            anchors.rightMargin: 1
+            // Leave the profile's head clear even when the count reads 99+.
+            anchors.topMargin: -6
+            anchors.rightMargin: -2
             width: root.totalUnread > 99 ? 26 : 19
             height: 19
             radius: height / 2

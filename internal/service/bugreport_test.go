@@ -26,6 +26,8 @@ func (r *captureReport) Submit(_ context.Context, subject, body string) (string,
 }
 
 func TestBugReportDestinationAndDisclosure(t *testing.T) {
+	t.Setenv("WHATSAPPGO_BUGREPORT_TOKEN", "")
+	t.Setenv("WHATSAPPGO_BUGREPORT_TOKEN_FILE", "")
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +44,17 @@ func TestBugReportDestinationAndDisclosure(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := result.(map[string]any)
-	if env["program"] != "whatsappgo" || env["endpoint"] != bugreport.Endpoint {
+	if env["program"] != "whatsappgo" || env["endpoint"] != bugreport.Endpoint || env["public_url"] != bugreport.PublicReportURL || env["authenticated_available"] != false {
 		t.Fatalf("wrong destination: %v", env)
+	}
+	t.Setenv("WHATSAPPGO_BUGREPORT_TOKEN", "test-secret-never-disclosed")
+	result, err = svc.Handle(ctx, "bugreport.environment", json.RawMessage(`{}`))
+	if err != nil || result.(map[string]any)["authenticated_available"] != true {
+		t.Fatalf("configured intake unavailable: %v %v", result, err)
+	}
+	disclosure, _ := json.Marshal(result)
+	if strings.Contains(string(disclosure), "test-secret-never-disclosed") {
+		t.Fatal("credentials leaked in reporting capabilities")
 	}
 	reporter := &captureReport{}
 	svc.reporter = reporter

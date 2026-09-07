@@ -107,8 +107,9 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - `whatsappctl` command-line automation with JSON output, live event streams,
   media sending, contact resolution, and a discoverable local API for bots
 - Flatpak, Debian, RPM, and AppImage packaging definitions
-- user-reviewed bug reports sent to the `whatsappgo` project in Jabali Bugs
-  Intake; see [intake key setup](docs/BUG_REPORTING.md)
+- **Report a problem** opens the WhatsAppGo GitHub issues page directly in
+  your browser, with no in-app form or intake key;
+  see [bug reporting](docs/BUG_REPORTING.md)
 
 Call records may be displayed when WhatsApp supplies them, but starting voice
 or video calls is not supported.

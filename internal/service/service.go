@@ -254,7 +254,9 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		// nobody files a report without seeing what travels with it.
 		environment := s.bugReportEnvironment()
 		return map[string]any{"fields": environment, "rendered": environment.Render(),
-			"program": bugreport.Program, "endpoint": bugreport.Endpoint}, nil
+			"program": bugreport.Program, "endpoint": bugreport.Endpoint,
+			"public_url": bugreport.PublicReportURL,
+			"authenticated_available": bugreport.AuthenticatedAvailable()}, nil
 	case "bugreport.submit":
 		var params struct {
 			Subject string `json:"subject"`

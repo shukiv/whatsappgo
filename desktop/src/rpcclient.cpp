@@ -218,6 +218,16 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     m_reconnectTimer.setInterval(1500);
     m_reconnectTimer.setSingleShot(true);
     connect(&m_reconnectTimer, &QTimer::timeout, this, &RpcClient::connectSocket);
+    // Typing/recording are transient hints, not durable contact status. A
+    // paused event can be lost when the sender closes the app or loses signal.
+    m_chatPresenceExpiryTimer.setParent(this);
+    m_chatPresenceExpiryTimer.setObjectName(QStringLiteral("chatPresenceExpiryTimer"));
+    m_chatPresenceExpiryTimer.setInterval(10000);
+    m_chatPresenceExpiryTimer.setSingleShot(true);
+    connect(&m_chatPresenceExpiryTimer, &QTimer::timeout, this, [this] {
+        if (clearChatPresence())
+            emit selectedPresenceChanged();
+    });
     // Chat-list refreshes arrive in bursts, and each one would otherwise
     // replay the live query. One replay per burst is enough and keeps the
     // request queue clear for the search the reader is waiting on.
@@ -252,6 +262,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         }
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
+        m_chatPresenceExpiryTimer.stop();
         ++m_privacyRequestGeneration;
         m_privacySettings.clear();
         emit privacySettingsChanged();
@@ -292,6 +303,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
 
 RpcClient::~RpcClient()
 {
+    m_chatPresenceExpiryTimer.stop();
     // QLocalSocket::abort() can synchronously emit disconnected. Disconnect
     // the member callbacks before member destruction begins so they cannot
     // access containers that C++ has already destroyed in reverse order.
@@ -514,7 +526,6 @@ void RpcClient::abandonPendingRequests(const QString &reason, bool announce)
     const auto abandoned = std::exchange(m_pending, {});
     const auto quiet = std::exchange(m_quietRequests, {});
     m_mediaQueue.clear();
-    m_mediaInFlight = 0;
     const QJsonObject error{{QStringLiteral("code"), QStringLiteral("disconnected")},
                             {QStringLiteral("message"), reason}};
     bool anybodyWasWaiting = false;
@@ -524,6 +535,10 @@ void RpcClient::abandonPendingRequests(const QString &reason, bool announce)
         if (it.value())
             it.value()(QJsonValue(), error);
     }
+    // Each cancelled download releases its own slot in its callback. Reset
+    // only after those callbacks have run, or they decrement zero below zero
+    // and the next connection can start more than three downloads at once.
+    m_mediaInFlight = 0;
     // One line, however many requests were dropped: a daemon restart abandons
     // a handful at once and nobody needs to be told about each of them.
     if (announce && anybodyWasWaiting)
@@ -591,11 +606,27 @@ void RpcClient::processLine(const QByteArray &line)
     }
 }
 
+bool RpcClient::clearChatPresence()
+{
+    m_chatPresenceExpiryTimer.stop();
+    const auto removed = m_selectedPresence.remove(QStringLiteral("chat_state"))
+        + m_selectedPresence.remove(QStringLiteral("media"))
+        + m_selectedPresence.remove(QStringLiteral("sender_jid"));
+    return removed > 0;
+}
+
 void RpcClient::processEvent(const QString &name, const QJsonValue &data)
 {
     if (name == QStringLiteral("connection.changed")) {
         const bool wasConnected = m_status.value(QStringLiteral("connected")).toBool();
         m_status = data.toObject().toVariantMap();
+        if (!m_status.value(QStringLiteral("connected")).toBool()) {
+            m_chatPresenceExpiryTimer.stop();
+            if (!m_selectedPresence.isEmpty()) {
+                m_selectedPresence.clear();
+                emit selectedPresenceChanged();
+            }
+        }
         emit statusChanged();
         if (m_status.value(QStringLiteral("connected")).toBool() && !wasConnected)
             refreshPrivacySettings();
@@ -610,13 +641,17 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
             return;
         const auto chatState = m_selectedPresence.value(QStringLiteral("chat_state"));
         const auto chatMedia = m_selectedPresence.value(QStringLiteral("media"));
+        const auto chatSender = m_selectedPresence.value(QStringLiteral("sender_jid"));
+        if (payload.value(QStringLiteral("unavailable")).toBool())
+            m_chatPresenceExpiryTimer.stop();
         m_selectedPresence = payload.toVariantMap();
         m_selectedPresence.insert(QStringLiteral("state"),
                                   payload.value(QStringLiteral("unavailable")).toBool()
                                       ? QStringLiteral("offline") : QStringLiteral("online"));
-        if (!chatState.toString().isEmpty()) {
+        if (!payload.value(QStringLiteral("unavailable")).toBool() && !chatState.toString().isEmpty()) {
             m_selectedPresence.insert(QStringLiteral("chat_state"), chatState);
             m_selectedPresence.insert(QStringLiteral("media"), chatMedia);
+            m_selectedPresence.insert(QStringLiteral("sender_jid"), chatSender);
         }
         emit selectedPresenceChanged();
     } else if (name == QStringLiteral("chat.presence")) {
@@ -626,13 +661,14 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
             return;
         const auto state = payload.value(QStringLiteral("state")).toString();
         if (state == QStringLiteral("paused")) {
-            m_selectedPresence.remove(QStringLiteral("chat_state"));
-            m_selectedPresence.remove(QStringLiteral("media"));
-            m_selectedPresence.remove(QStringLiteral("sender_jid"));
-        } else {
+            clearChatPresence();
+        } else if (state == QStringLiteral("composing")) {
             m_selectedPresence.insert(QStringLiteral("chat_state"), state);
             m_selectedPresence.insert(QStringLiteral("media"), payload.value(QStringLiteral("media")).toString());
             m_selectedPresence.insert(QStringLiteral("sender_jid"), payload.value(QStringLiteral("sender_jid")).toString());
+            m_chatPresenceExpiryTimer.start();
+        } else {
+            return;
         }
         emit selectedPresenceChanged();
     } else if (name == QStringLiteral("pairing.qr")) {
@@ -1031,6 +1067,7 @@ void RpcClient::upgradeSmallLinkPreviews(const QVariantList &messages)
 
 void RpcClient::openChat(const QString &jid, const QString &title)
 {
+    m_chatPresenceExpiryTimer.stop();
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
 	if (!previousJid.isEmpty())
 		rememberMessages(previousJid, m_messages.items());
@@ -1050,6 +1087,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     m_nextBeforeId.clear();
     emit selectedChatChanged();
     emit selectedPresenceChanged();
+    emit chatOpened(jid);
     if (!jid.endsWith(QStringLiteral("@g.us")) && !jid.endsWith(QStringLiteral("@broadcast")))
         sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}},
                     {}, OnFailure::StayQuiet);
@@ -1222,6 +1260,7 @@ void RpcClient::setChatFavorite(const QString &jid, bool favorite)
 
 void RpcClient::closeChat()
 {
+    m_chatPresenceExpiryTimer.stop();
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
 	if (!previousJid.isEmpty())
 		rememberMessages(previousJid, m_messages.items());
@@ -1839,15 +1878,18 @@ void RpcClient::sendFile(const QString &localUrl, const QString &caption, const 
     const auto path = QUrl(localUrl).toLocalFile();
     if (path.isEmpty())
         return;
+    const auto sentProfile = m_profile;
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
     setBusy(true);
     // WhatsApp Web quotes a message whatever is attached to the reply, so the
     // reply the composer is showing travels with the file.
     sendRequest(QStringLiteral("message.send_media"),
-                {{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
+                {{QStringLiteral("chat_jid"), chatJid},
                  {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
                  {QStringLiteral("reply_to"), replyTo}, {QStringLiteral("document"), document}},
-                [this](const QJsonValue &, const QJsonObject &error) {
+                [this, sentProfile, chatJid, replyTo](const QJsonValue &, const QJsonObject &error) {
                     setBusy(false);
+                    emit attachmentSendFinished(sentProfile, chatJid, replyTo, error.isEmpty());
                     if (error.isEmpty())
                         emit messageSent();
                 });
@@ -1867,7 +1909,10 @@ void RpcClient::sendVoice(const QString &localUrl, const QString &chatJid, const
                 {{QStringLiteral("chat_jid"), chatJid},
                  {QStringLiteral("path"), path}, {QStringLiteral("voice"), true},
                  {QStringLiteral("reply_to"), replyTo}},
-                [this](const QJsonValue &, const QJsonObject &) { setBusy(false); });
+                [this, recordingProfile, chatJid, replyTo](const QJsonValue &, const QJsonObject &error) {
+                    setBusy(false);
+                    emit attachmentSendFinished(recordingProfile, chatJid, replyTo, error.isEmpty());
+                });
 }
 
 void RpcClient::editMessage(const QString &messageId, const QString &text)
@@ -2072,6 +2117,7 @@ void RpcClient::switchProfile(const QString &profile)
 {
     if (profile == m_profile || !m_profiles.contains(profile))
         return;
+    m_chatPresenceExpiryTimer.stop();
     m_reconnectTimer.stop();
     m_socket.abort();
     abandonPendingRequests(tr("The account was changed."), false);
@@ -2402,15 +2448,27 @@ bool RpcClient::installUpdate()
 
 void RpcClient::refreshBugReportEnvironment()
 {
+    m_bugReportEnvironment.clear();
+    m_bugReportAuthenticated = false;
+    emit bugReportEnvironmentChanged();
     sendRequest(QStringLiteral("bugreport.environment"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
         if (!error.isEmpty())
             return;
         const auto rendered = result.toObject().value(QStringLiteral("rendered")).toString();
-        if (rendered == m_bugReportEnvironment)
+        const bool authenticated = result.toObject().value(QStringLiteral("authenticated_available")).toBool();
+        if (rendered == m_bugReportEnvironment && authenticated == m_bugReportAuthenticated)
             return;
         m_bugReportEnvironment = rendered;
+        m_bugReportAuthenticated = authenticated;
         emit bugReportEnvironmentChanged();
-    });
+    }, OnFailure::StayQuiet);
+}
+
+bool RpcClient::openPublicBugReport()
+{
+    // Open only the hosted form. No report text, environment, token or URL
+    // parameters leave the app; the user completes Turnstile in the browser.
+    return QDesktopServices::openUrl(QUrl(QStringLiteral("https://bugs.jabali-panel.com/report")));
 }
 
 void RpcClient::submitBugReport(const QString &subject, const QString &body)
@@ -2753,17 +2811,25 @@ void RpcClient::copyImage(const QString &messageId, const QString &path)
 		return;
 	if (messageId.isEmpty() || m_selectedChat.isEmpty())
 		return;
+	const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+	const auto requestedProfile = m_profile;
 	m_pendingCopyImageId = messageId;
 	sendRequest(QStringLiteral("message.download"),
-		{{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
+		{{QStringLiteral("chat_jid"), chatJid},
 		 {QStringLiteral("message_id"), messageId}},
-		[this, messageId](const QJsonValue &result, const QJsonObject &error) {
+		[this, messageId, chatJid, requestedProfile](const QJsonValue &result, const QJsonObject &error) {
 			if (!error.isEmpty()) {
 				m_pendingCopyImageId.clear();
 				return;
 			}
+			if (m_profile != requestedProfile)
+				return;
 			const auto message = result.toObject().toVariantMap();
-			upsertMessage(message);
+			// Copying can finish after navigation. The clipboard operation may
+			// complete, but its message must never enter another chat's model.
+			if (m_selectedChat.value(QStringLiteral("jid")).toString() == chatJid
+				&& belongsToOpenChat(message))
+				upsertMessage(message);
 			if (messageId == m_pendingCopyImageId && copyImageFile(message.value(QStringLiteral("media_path")).toString()))
 				m_pendingCopyImageId.clear();
 		});

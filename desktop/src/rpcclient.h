@@ -66,6 +66,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool clipboardHasImage READ clipboardHasImage NOTIFY clipboardChanged)
     Q_PROPERTY(QVariantMap composerLinkPreview READ composerLinkPreview NOTIFY composerLinkPreviewChanged)
     Q_PROPERTY(QString bugReportEnvironment READ bugReportEnvironment NOTIFY bugReportEnvironmentChanged)
+    Q_PROPERTY(bool bugReportAuthenticated READ bugReportAuthenticated NOTIFY bugReportEnvironmentChanged)
     Q_PROPERTY(QVariantMap updateStatus READ updateStatus NOTIFY updateStatusChanged)
     // True while a check the reader asked for is in flight, so the control
     // they pressed can show that something is happening.
@@ -186,8 +187,10 @@ public:
     bool checkingForUpdates() const { return m_checkingForUpdates; }
 
     Q_INVOKABLE void refreshBugReportEnvironment();
+    Q_INVOKABLE bool openPublicBugReport();
     Q_INVOKABLE void submitBugReport(const QString &subject, const QString &body);
     QString bugReportEnvironment() const { return m_bugReportEnvironment; }
+    bool bugReportAuthenticated() const { return m_bugReportAuthenticated; }
     Q_INVOKABLE void setChannelMuted(const QString &jid, bool muted);
     Q_INVOKABLE void postTextStatus(const QString &text, int background);
     Q_INVOKABLE void postMediaStatus(const QString &localUrl, const QString &caption);
@@ -265,6 +268,9 @@ signals:
     void chatsChanged();
     void archivedChatsChanged();
     void selectedChatChanged();
+    // Explicit activation, including reselecting the same sidebar row. Unlike
+    // selectedChatChanged this is never emitted for title/avatar refreshes.
+    void chatOpened(const QString &chatJid);
     void selectedPresenceChanged();
     void chatInfoChanged();
     void sharedContentChanged();
@@ -278,6 +284,7 @@ signals:
     void errorOccurred(const QString &message);
     void messageSent();
     void textSendFinished(const QString &profile, const QString &chatJid, const QString &text, const QString &replyTo, bool success);
+    void attachmentSendFinished(const QString &profile, const QString &chatJid, const QString &replyTo, bool success);
     void clipboardSendFinished(const QString &profile, const QString &chatJid, const QString &localUrl, const QString &replyTo, bool success);
     void statusReplyFinished(const QString &recipientJid, const QString &statusMessageId, bool success, const QString &message);
     void profileChanged();
@@ -328,6 +335,7 @@ private:
                      OnFailure onFailure = OnFailure::Report);
     void processLine(const QByteArray &line);
     void processEvent(const QString &name, const QJsonValue &data);
+    bool clearChatPresence();
     void setBusy(bool value);
     void upsertMessage(const QVariantMap &message);
     bool belongsToOpenChat(const QVariantMap &message) const;
@@ -355,10 +363,12 @@ private:
     QLocalSocket m_socket;
     QTimer m_reconnectTimer;
     QTimer m_searchReplayTimer;
+    QTimer m_chatPresenceExpiryTimer;
     QByteArray m_readBuffer;
     quint64 m_nextId = 0;
     QHash<QString, Callback> m_pending;
     QString m_bugReportEnvironment;
+    bool m_bugReportAuthenticated = false;
     // Requests whose failure is not shown to the reader.
     QSet<QString> m_quietRequests;
     QVariantMap m_updateStatus;

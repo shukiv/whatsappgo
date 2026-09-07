@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -137,5 +138,76 @@ func TestValidateKeepsUTF8Boundaries(t *testing.T) {
 	subject, body, err := Validate(strings.Repeat("a", maxSubject-1)+"ש", strings.Repeat("b", maxBody-1)+"😀")
 	if err != nil || !utf8.ValidString(subject) || !utf8.ValidString(body) {
 		t.Fatalf("split UTF-8: %v", err)
+	}
+}
+
+func TestIntakeRetryAfterAndBackoff(t *testing.T) {
+	t.Setenv("WHATSAPPGO_BUGREPORT_TOKEN", "test-intake-key")
+	for _, tc := range []struct {
+		name   string
+		status int
+		header string
+		wait   time.Duration
+	}{
+		{"seconds", 429, "90", 90 * time.Second},
+		{"date", 429, "Sun, 06 Sep 2026 12:02:00 GMT", 2 * time.Minute},
+		{"invalid", 429, "not a date", time.Minute},
+		{"missing", 429, "", time.Minute},
+		{"upstream", 502, "", 5 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.Header().Set("X-Request-ID", "req-123")
+				w.Header().Set("Retry-After", tc.header)
+				w.WriteHeader(tc.status)
+				io.WriteString(w, `{"ok":false,"error":"private server diagnostics"}`)
+			}))
+			defer server.Close()
+			s := NewIntakeSubmitter()
+			s.endpoint, s.now = server.URL, func() time.Time { return now }
+			if _, err := s.Submit(context.Background(), "Title", "Body"); err == nil || !strings.Contains(err.Error(), "req-123") || strings.Contains(err.Error(), "private server") {
+				t.Fatalf("missing safe failure diagnostics: %v", err)
+			}
+			now = now.Add(tc.wait - time.Second)
+			if _, err := s.Submit(context.Background(), "Title", "Body"); err == nil || calls != 1 {
+				t.Fatalf("sent before retry deadline: %v calls=%d", err, calls)
+			}
+			now = now.Add(time.Second)
+			if _, err := s.Submit(context.Background(), "Title", "Body"); err == nil || calls != 2 {
+				t.Fatalf("did not permit explicit retry: %v calls=%d", err, calls)
+			}
+			if tc.status == 502 && s.retryAt.Sub(now) != 10*time.Second {
+				t.Fatal("upstream retries did not back off")
+			}
+		})
+	}
+}
+
+func TestIntakeTerminalErrorsAndKeyRedaction(t *testing.T) {
+	const key = "secret-intake-key"
+	t.Setenv("WHATSAPPGO_BUGREPORT_TOKEN", key)
+	for _, status := range []int{400, 401, 413, 415} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				body, _ := io.ReadAll(r.Body)
+				if strings.Contains(string(body), key) || !strings.Contains(string(body), "[REDACTED]") {
+					t.Error("known intake key was not stripped from report text")
+				}
+				w.Header().Set("X-Request-ID", key)
+				w.WriteHeader(status)
+				io.WriteString(w, key)
+			}))
+			defer server.Close()
+			s := NewIntakeSubmitter()
+			s.endpoint = server.URL
+			if _, err := s.Submit(context.Background(), "Title "+key, "Body "+key); err == nil || strings.Contains(err.Error(), key) || calls != 1 || !s.retryAt.IsZero() {
+				t.Fatalf("terminal failure: err=%v calls=%d", err, calls)
+			}
+		})
 	}
 }

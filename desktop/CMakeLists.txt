@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(WhatsAppGo VERSION 0.1.5 LANGUAGES CXX)
+project(WhatsAppGo VERSION 0.1.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -559,6 +559,10 @@ if(BUILD_TESTING)
     set_tests_properties(desktop-resize-rendering desktop-message-layout desktop-message-scroll PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
+    )
+    # Enter-to-send exercises a local stub, never the developer's live account.
+    set_tests_properties(desktop-message-scroll PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/ms;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/message-scroll-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/message-scroll-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/message-scroll-test/config"
     )
     set_tests_properties(desktop-pairing-auto-start desktop-presence-updates desktop-link-preview-upgrade PROPERTIES TIMEOUT 5)
     set_tests_properties(desktop-system-integration PROPERTIES

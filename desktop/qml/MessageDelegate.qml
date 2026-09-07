@@ -35,6 +35,7 @@ Item {
     // picture that is meant to be loose on the page.
     readonly property bool stickerKind: modelData.kind === "sticker"
     readonly property bool visualKind: ["image", "video", "sticker"].indexOf(modelData.kind) >= 0
+    readonly property bool framedVisualKind: modelData.kind === "image" || modelData.kind === "video"
     readonly property bool audioKind: modelData.kind === "audio"
     // WhatsApp Web marks the reaction the reader themselves left, so it can be
     // replaced or taken back knowingly. The self reaction is the one whose
@@ -135,11 +136,19 @@ Item {
     // Nothing may size itself from the bubble, because the bubble sizes itself
     // from its content and the two together would form a binding loop.
     readonly property real horizontalPadding: 11
-    readonly property real maxBubbleWidth: Math.max(180, Math.min(root.width * 0.68, 620))
+    // A photo/video and its caption share a compact width. Letting the caption
+    // use the text-message limit left a large blank panel beside the preview.
+    // 336 logical px matches the ~420 px reference at 125% desktop scaling.
+    readonly property real maxBubbleWidth: Math.max(180,
+        Math.min(root.width * 0.68, framedVisualKind ? 336 : 620))
     readonly property real contentMaxWidth: maxBubbleWidth - 2 * horizontalPadding
     readonly property real linkCardWidth: Math.min(contentMaxWidth,
         Math.max(320, Math.min(root.width * 0.46, 420)))
-    readonly property real mediaWidth: Math.min(contentMaxWidth, modelData.kind === "sticker" ? 160 : 300)
+    // Images sit closer to the bubble edge; captions retain the text gutter.
+    readonly property real mediaHorizontalPadding: framedVisualKind ? 4 : horizontalPadding
+    readonly property real mediaOutset: horizontalPadding - mediaHorizontalPadding
+    readonly property real mediaWidth: Math.min(contentMaxWidth + 2 * mediaOutset,
+        modelData.kind === "sticker" ? 160 : 328)
     readonly property real mediaDisplayHeight: {
         const previewWidth = Number(modelData.preview_width || 0)
         const previewHeight = Number(modelData.preview_height || 0)
@@ -179,7 +188,7 @@ Item {
         senderLabel.visible ? Math.min(senderLabel.implicitWidth, contentMaxWidth) : 0,
         forwardedMark.visible ? Math.min(forwardedMark.implicitWidth, contentMaxWidth) : 0,
         replyBox.visible ? Math.min(Math.max(replyBox.naturalWidth, 96), contentMaxWidth) : 0,
-        mediaFrame.visible ? mediaWidth : 0,
+        mediaFrame.visible ? mediaWidth - 2 * mediaOutset : 0,
         voiceRow.visible ? 284 : 0,
         fileRow.visible ? Math.min(fileRow.implicitWidth, contentMaxWidth) : 0,
         linkPreview.visible ? linkCardWidth : 0,
@@ -694,6 +703,7 @@ Item {
                 // than as a line of text.
                 readonly property bool videoPlaceholder: root.modelData.kind === "video" && !previewReady
                 visible: previewReady || videoPlaceholder
+                x: -root.mediaOutset
                 width: root.mediaWidth
                 height: visible ? (previewReady ? root.mediaDisplayHeight : 150) : 0
 

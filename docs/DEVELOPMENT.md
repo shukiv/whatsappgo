@@ -62,6 +62,15 @@ are `x` and `y`, unlike the `position` point used by `TapHandler` events.
 
 `desktop-composer-drafts` also checks same-chat selection preservation, voice
 recording cancellation on navigation, and media-library message targets.
+`desktop-message-scroll` uses an isolated stub daemon and controlled model
+pages. It delivers actual Return-key and mouse-wheel events to the offscreen
+window, checks the newest delegate's bottom edge (not estimated content height),
+and covers sending while browsing, delayed sent rows, same-chat reselection,
+cached opens, late row layout, same-count page refreshes, metadata refreshes,
+and quoted-message targets. It never sends a real WhatsApp message. Flush
+pending model updates before positioning with
+[`ListView.forceLayout()`](https://doc.qt.io/qt-6/qml-qtquick-listview.html#forceLayout-method);
+do not add unconditional content-height handlers that fight reader scrolling.
 `desktop-conversation-updates` uses a local stub daemon to verify document and
 voice-send parameters and out-of-order starred-message responses. Neither test
 records microphone input or sends messages to WhatsApp. Go tests cover document
@@ -163,6 +172,20 @@ itself from the bubble. Width limits inside `MessageDelegate.qml` derive from
 child's `Layout.maximumWidth` to `bubble.width` creates a loop that Qt breaks
 silently, leaving bubbles collapsed or stretched across the pane;
 `ctest -R desktop-message-layout` covers the resulting geometry.
+
+`desktop-layout-regressions` also checks the account unread badge at the outer
+top-right of both 40px and 44px buttons with one-, two-, and three-digit counts.
+`desktop-bug-report` checks the toolbar and Help reporting actions using a
+stubbed browser opener. Both open the WhatsAppGo GitHub issues URL with
+no dialog; browser-launch failure shows the destination for manual navigation.
+Use isolated XDG config/data/cache/runtime directories and unset intake
+credentials for these tests; never submit test reports to the live intake.
+
+`desktop-presence-updates` replays presence events through an isolated RPC socket.
+It covers missing stop events, explicit paused/offline events, audio recording,
+deadline renewal, unrelated updates, chat changes, and connection loss. The test
+checks the production 10-second timeout, then shortens the actual Qt timer for
+fast regression coverage; no live WhatsApp account is used.
 
 For a screenshot without a live desktop:
 

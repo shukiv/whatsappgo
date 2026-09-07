@@ -55,10 +55,16 @@ device from the official WhatsApp application if credentials may be exposed.
 
 ## Bug-report intake
 
-Reports are sent only on explicit submission to `bugs.jabali-panel.com`, program
-`whatsappgo`. The displayed technical environment accompanies the user's text;
-private logs, media, account names, and chat identifiers are not automatically
-collected. Do not put secrets in the description. The intake redacts known
+The desktop's **Report a problem** actions open only
+`https://github.com/shukiv/whatsappgo/issues` in the browser, without report data,
+credentials, or automatic issue creation. Users choose what to post on GitHub;
+do not include private chats or secrets in public issues.
+
+The optional intake RPC remains available for tooling. Only explicit submission
+sends a report to `bugs.jabali-panel.com`, program `whatsappgo`. The technical
+environment accompanies the caller's text. Private logs, media, account names, and chat
+identifiers are not automatically collected. The client redacts the configured
+intake key from report text, but not arbitrary secrets. The intake redacts known
 secret patterns, but that is not a guarantee that all private information will
 be removed.
 
@@ -66,5 +72,8 @@ An operator-issued key is read by the daemon from `WHATSAPPGO_BUGREPORT_TOKEN`
 or `WHATSAPPGO_BUGREPORT_TOKEN_FILE`; prefer an owner-only file outside the
 repository. Authentication is sent as a Bearer header over HTTPS. Redirects are
 refused, keys are never returned over RPC, and arbitrary server error bodies are
-not echoed into the UI. No shared token is included in the app. See
+not echoed into the UI. Only a validated `X-Request-ID` and HTTP status are
+logged on response failures, not the report or credentials. The environment RPC
+exposes only credential availability, never the key or its path. No shared token
+is included in the app. See
 [key setup and retry behavior](BUG_REPORTING.md).
