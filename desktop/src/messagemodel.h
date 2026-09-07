@@ -72,6 +72,10 @@ public:
     void prepend(const QVariantList &older);
     // Updates a message in place, or appends it when it is new.
     void upsert(const QVariantMap &message);
+    // Presentation state for this opening of a conversation, independent of
+    // read receipts and never saved in the cached message payloads.
+    void setUnreadBoundary(const QString &messageId, int count);
+    void noteUnreadMessage(const QVariantMap &message);
     // Applies a delivery receipt to messages already on screen. A receipt
     // never moves a message backwards: a read message that is reported as
     // merely delivered stays read.
@@ -109,4 +113,6 @@ private:
 
     QVariantList m_messages;
     QHash<QString, int> m_rowById;
+    QString m_firstUnreadId;
+    int m_unreadCount = 0;
 };

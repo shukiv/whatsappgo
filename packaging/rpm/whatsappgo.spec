@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.6
+Version:        0.1.7
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -43,6 +43,11 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Mon Sep 07 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.7-1
+- Show a stable unread-message divider and count in light and dark themes
+- Keep unread boundaries consistent with paged history and read receipts
+- Preserve arrivals during chat loading and reject stale opening responses
+
 * Mon Sep 07 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.6-1
 - Restore chat-tail navigation, compact media bubbles and expiring typing indicators
 - Preserve attachment replies, isolate image-copy callbacks and correct download accounting

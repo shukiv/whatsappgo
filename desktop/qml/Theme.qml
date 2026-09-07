@@ -59,6 +59,8 @@ QtObject {
     // Web floats it over the wallpaper: white in the light theme, and the same
     // panel colour it uses for received bubbles in the dark one.
     readonly property color daySeparator: dark ? "#202C33" : "#FFFFFF"
+    readonly property color unreadSeparator: dark ? "#202C33" : "#FFFFFF"
+    readonly property color unreadSeparatorBand: dark ? "#33202C33" : "#08000000"
     readonly property color border: dark ? "#2A3942" : "#DDDAD6"
     readonly property color icon: dark ? "#AEBAC1" : "#54545A"
     readonly property color avatar: dark ? "#374248" : "#E7E5E2"

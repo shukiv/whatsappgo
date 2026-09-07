@@ -54,6 +54,7 @@ every interactive control.
 | Contact avatar | `120 × 120 px` |
 | Photo/video bubble | `336 px` maximum outer width; also bounded by conversation width |
 | Photo/video horizontal image gutter | `4 px`; captions retain the `11 px` text gutter |
+| Unread divider | Full-width `44 px` faint band, centered `32 px` rounded pill, `12 px` semibold label; `8 px` gap before the message |
 
 These values are component baselines, not permission to hard-code unrelated
 layouts. Preserve relative density when a platform font or scale factor changes.
@@ -90,6 +91,9 @@ treatment, and the full-size viewer is not limited by the chat preview cap.
   reset the user's scroll position.
 - Follow new messages only while the conversation is already at the latest
   message. Loading older history preserves the visible anchor.
+- The unread divider sits below any date pill and above the first unread
+  incoming message. Use `Theme.unreadSeparator` and `unreadSeparatorBand`,
+  with a complete count label and no focus changes or height animation.
 - Menus opened by a hover affordance and by right-click expose the same action
   family and eligibility rules.
 - Image media opens in the native viewer at aspect-fit 100%; zoom remains

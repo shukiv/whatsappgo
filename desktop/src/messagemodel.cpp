@@ -161,7 +161,10 @@ QVariant MessageListModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= count() || role != MessageRole)
         return QVariant();
-    return m_messages.at(count() - 1 - index.row());
+    auto message = m_messages.at(count() - 1 - index.row()).toMap();
+    if (!m_firstUnreadId.isEmpty() && messageId(message) == m_firstUnreadId)
+        message.insert(QStringLiteral("unread_separator_count"), m_unreadCount);
+    return message;
 }
 
 QHash<int, QByteArray> MessageListModel::roleNames() const
@@ -272,6 +275,10 @@ void MessageListModel::upsert(const QVariantMap &message)
         return;
     }
     const int row = count();
+    if (prepared.value(QStringLiteral("from_me")).toBool()
+        && (isEmpty() || prepared.value(QStringLiteral("timestamp")).toLongLong()
+            >= m_messages.constLast().toMap().value(QStringLiteral("timestamp")).toLongLong()))
+        setUnreadBoundary({}, 0);
     beginInsertRows(QModelIndex(), 0, 0);
     m_messages.append(prepared);
     m_rowById.insert(id, row);
@@ -279,6 +286,43 @@ void MessageListModel::upsert(const QVariantMap &message)
     refreshDayStarts();
     emit countChanged();
     emit appended();
+}
+
+void MessageListModel::setUnreadBoundary(const QString &id, int count)
+{
+    count = qMax(0, count);
+    const auto boundary = count > 0 ? id : QString{};
+    if (m_firstUnreadId == boundary && m_unreadCount == count)
+        return;
+    const auto previous = m_firstUnreadId;
+    m_firstUnreadId = boundary;
+    m_unreadCount = count;
+    for (const auto &changedId : {previous, boundary}) {
+        const int row = viewRowForId(changedId);
+        if (row >= 0) {
+            const auto changed = index(row, 0);
+            emit dataChanged(changed, changed, {MessageRole});
+        }
+    }
+}
+
+void MessageListModel::noteUnreadMessage(const QVariantMap &message)
+{
+    const auto id = messageId(message);
+    const auto kind = message.value(QStringLiteral("kind")).toString();
+    const auto status = message.value(QStringLiteral("status")).toString();
+    if (id.isEmpty() || m_rowById.contains(id)
+        || message.value(QStringLiteral("from_me")).toBool()
+        || message.value(QStringLiteral("revoked")).toBool()
+        || kind.isEmpty() || kind == QStringLiteral("system") || kind == QStringLiteral("unknown")
+        || status == QStringLiteral("read") || status == QStringLiteral("played"))
+        return;
+    // Download/thumbnail events also use message.upsert. An old attachment
+    // arriving outside the loaded page must not start a new unread batch.
+    if (!isEmpty() && message.value(QStringLiteral("timestamp")).toLongLong()
+        < m_messages.constLast().toMap().value(QStringLiteral("timestamp")).toLongLong())
+        return;
+    setUnreadBoundary(m_unreadCount == 0 ? id : m_firstUnreadId, m_unreadCount + 1);
 }
 
 namespace {
@@ -340,6 +384,7 @@ void MessageListModel::applyReceipt(const QStringList &messageIds, const QString
 
 void MessageListModel::clear()
 {
+    setUnreadBoundary({}, 0);
     if (m_messages.isEmpty())
         return;
     beginResetModel();

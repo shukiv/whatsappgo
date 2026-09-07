@@ -988,10 +988,32 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	// Read the page and its unread boundary from one SQLite snapshot. A live
+	// arrival between the two queries must not be counted without its row (or
+	// included in the page but omitted from the divider count).
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return model.MessagePage{}, err
+	}
+	defer tx.Rollback()
+	page := model.MessagePage{}
+	if before <= 0 {
+		// Incoming history may have no receipt metadata. Use the account's
+		// unread total to locate the boundary, excluding outgoing messages and
+		// protocol rows. Do not invent a boundary if that history is not local.
+		err := tx.QueryRowContext(ctx, `SELECT unread_count, COALESCE(CASE WHEN unread_count>0 THEN (
+		 SELECT id FROM messages WHERE chat_jid=? AND from_me=0 AND kind NOT IN ('unknown','system','')
+		 ORDER BY timestamp DESC,id DESC LIMIT 1 OFFSET
+		 (SELECT MAX(unread_count-1,0) FROM chats WHERE jid=?)
+		) END,'') FROM chats WHERE jid=?`, chatJID, chatJID, chatJID).Scan(&page.UnreadCount, &page.FirstUnreadID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return model.MessagePage{}, err
+		}
+	}
 	if before <= 0 {
 		before = time.Now().Add(24 * time.Hour).UnixMilli()
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
+	rows, err := tx.QueryContext(ctx, `SELECT m.id,m.chat_jid,m.sender_jid,m.sender_name,m.timestamp,m.kind,m.body,m.from_me,m.status,
  m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
  m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
  m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,m.starred,m.forwarding_score,
@@ -1028,6 +1050,9 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
 	if err := rows.Close(); err != nil {
 		return model.MessagePage{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return model.MessagePage{}, err
+	}
 	hasMore := len(items) > limit
 	if hasMore {
 		items = items[:limit]
@@ -1044,7 +1069,8 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
 	if err := s.attachReactions(ctx, chatJID, items); err != nil {
 		return model.MessagePage{}, err
 	}
-	return model.MessagePage{Messages: items, HasMore: hasMore, NextBefore: next, NextBeforeID: nextID}, nil
+	page.Messages, page.HasMore, page.NextBefore, page.NextBeforeID = items, hasMore, next, nextID
+	return page, nil
 }
 
 // ListStatusGroups returns active status stories grouped by their actual

@@ -1,7 +1,8 @@
 # Running on Linux, Windows and macOS
 
-Audited and ported on 2026-09-05. This document records what was wrong, what
-changed, and what is still unverified.
+Audited and ported on 2026-09-05; build status updated on 2026-09-07 after the
+v0.1.6 cross-platform CI and release builds. This document records what was
+wrong, what changed, and what is still unverified.
 
 ## Where it stands
 
@@ -11,13 +12,13 @@ changed, and what is still unverified.
 | Daemon and client can talk | Unix socket | named pipe | Unix socket |
 | Directories resolve | XDG | `%AppData%` / `%LocalAppData%` | `~/Library` |
 | Notifications | freedesktop service | desktop client | desktop client |
-| Qt client compiles | yes | expected, CI-only | expected, CI-only |
+| Qt client compiles | yes | yes, CI | yes, CI |
 | Packaging | deb, rpm, flatpak, AppImage | ZIP + Inno Setup | .app + DMG |
 
-Built and tested here on Linux. The Windows and macOS builds are exercised by
-CI, not on this machine: the Go side cross-compiles and vets cleanly for both,
-and the Qt side has never been compiled on either. Treat the first run on those
-platforms as untested.
+Built and tested here on Linux. Windows and macOS desktop builds, tests and
+packaging passed CI for v0.1.6; they are not run on this development machine.
+That verifies compilation and automated behavior, not interactive use on a
+physical Windows or macOS desktop. Treat first-run behavior there as unverified.
 
 ## What was actually blocking it
 

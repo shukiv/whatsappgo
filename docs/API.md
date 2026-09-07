@@ -153,7 +153,7 @@ All parameter objects reject unknown fields.
 | `calls.list` | `{}` | Locally synchronized call records |
 | `channels.list` | `{}` | Followed channels |
 | `communities.list` | `{}` | Joined communities |
-| `messages.list` | `chat_jid`, `before`, `limit` | Message page with pagination cursor |
+| `messages.list` | `chat_jid`, `before`, `before_id`, `limit` | Message page with pagination cursor; newest page also supplies `unread_count` and `first_unread_id` when available, for a stable unread divider |
 | `messages.search` | `query`, `limit` | Local text-search results |
 | `link.preview` | `text` | Open Graph metadata and thumbnail bytes |
 | `history.request` / `history.refresh` | `chat_jid`, `limit` | Ask WhatsApp for older/recent linked-device history |

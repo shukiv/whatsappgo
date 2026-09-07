@@ -144,6 +144,12 @@ calendar day and the next says **Today**, **Yesterday**, the weekday for the
 rest of the week, and a date for anything older. Loading older history moves
 the pill onto the message that now opens that day.
 
+A centered **1 unread message** (or **N unread messages**) pill on a faint
+horizontal band marks the first unread incoming message. Its position stays
+fixed as more messages arrive and read receipts update. Reopening the chat
+starts a fresh unread batch; replying clears the previous divider. The marker
+does not move you away from the bottom or interrupt scrolling through history.
+
 Your own messages sit on the right with a tail on their top-right corner;
 messages you received sit on the left. A tick beside your own time is one mark
 for sent, two for delivered, and two blue for read.

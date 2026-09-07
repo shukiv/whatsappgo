@@ -383,9 +383,12 @@ Item {
     // where WhatsApp Web puts one day's end and the next one's start.
     readonly property bool startsDay: Boolean(modelData.starts_day)
     readonly property real daySeparatorHeight: startsDay ? 42 : 0
+    readonly property int unreadCount: actionsEnabled ? Number(modelData.unread_separator_count || 0) : 0
+    readonly property real unreadSeparatorHeight: unreadCount > 0 ? 52 : 0
 
     width: ListView.view ? ListView.view.width : 640
-    implicitHeight: root.daySeparatorHeight + bubble.implicitHeight + (reactionsFlow.visible ? 24 : 4)
+    implicitHeight: root.daySeparatorHeight + root.unreadSeparatorHeight
+        + bubble.implicitHeight + (reactionsFlow.visible ? 24 : 4)
 
     Rectangle {
         id: daySeparator
@@ -405,6 +408,40 @@ Item {
             color: Theme.textMuted
             font.pixelSize: 13
             Accessible.name: text
+        }
+    }
+
+    Rectangle {
+        id: unreadSeparator
+        objectName: "messageUnreadSeparator"
+        visible: root.unreadCount > 0
+        x: 0
+        y: root.daySeparatorHeight
+        width: root.width
+        height: 44
+        color: Theme.unreadSeparatorBand
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 16, unreadLabel.implicitWidth + 28)
+            height: 32
+            radius: height / 2
+            color: Theme.unreadSeparator
+
+            Label {
+                id: unreadLabel
+                objectName: "messageUnreadSeparatorLabel"
+                anchors.centerIn: parent
+                width: Math.min(implicitWidth, parent.width - 20)
+                text: root.unreadCount === 1 ? qsTr("1 unread message")
+                    : qsTr("%1 unread messages").arg(root.unreadCount)
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                color: Theme.text
+                elide: Text.ElideRight
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
+            }
         }
     }
 
@@ -446,7 +483,7 @@ Item {
         // anchors are set for an instant. That stretches the bubble across the
         // conversation and discards its width binding for good.
         x: root.modelData.from_me ? Math.max(0, root.width - width - 40) : 40
-        y: root.daySeparatorHeight
+        y: root.daySeparatorHeight + root.unreadSeparatorHeight
         color: root.stickerKind
             ? "transparent"
             : (root.modelData.from_me ? Theme.outgoingBubble : Theme.incomingBubble)

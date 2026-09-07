@@ -705,6 +705,9 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         if (message.value(QStringLiteral("chat_jid")).toString() == QStringLiteral("status@broadcast"))
             refreshStatuses();
         if (message.value(QStringLiteral("chat_jid")) == m_selectedChat.value(QStringLiteral("jid"))) {
+            if (m_openingMessages)
+                m_openingMessageUpdates.append(message);
+            m_messages.noteUnreadMessage(message);
             upsertMessage(message);
             // The reader is looking at it. Only the page that opens a chat used
             // to send receipts, so a message that arrived while the
@@ -1067,6 +1070,10 @@ void RpcClient::upgradeSmallLinkPreviews(const QVariantList &messages)
 
 void RpcClient::openChat(const QString &jid, const QString &title)
 {
+    const auto generation = ++m_chatOpenGeneration;
+    m_openingMessages = true;
+    m_openingMessageUpdates.clear();
+    m_messages.setUnreadBoundary({}, 0);
     m_chatPresenceExpiryTimer.stop();
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
 	if (!previousJid.isEmpty())
@@ -1097,13 +1104,29 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     // is never held behind network history synchronisation.
     sendRequest(QStringLiteral("messages.list"),
                 {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), 50}},
-                [this, jid](const QJsonValue &result, const QJsonObject &error) {
-                    if (!error.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != jid)
+                [this, jid, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_chatOpenGeneration || m_selectedChat.value(QStringLiteral("jid")).toString() != jid)
                         return;
+                    m_openingMessages = false;
                     const auto page = result.toObject();
+                    if (!error.isEmpty()) {
+                        m_openingMessageUpdates.clear();
+                        return;
+                    }
                     const auto loadedMessages = page.value(QStringLiteral("messages")).toArray().toVariantList();
                     rememberMessages(jid, loadedMessages);
+                    m_messages.setUnreadBoundary(page.value(QStringLiteral("first_unread_id")).toString(),
+                                                 page.value(QStringLiteral("unread_count")).toInt());
                     m_messages.reset(loadedMessages);
+                    // Events can arrive while the first page is in flight.
+                    // Replay them after its snapshot; IDs already in that page
+                    // are updates, not a second unread message.
+                    const auto openingUpdates = std::exchange(m_openingMessageUpdates, {});
+                    for (const auto &entry : openingUpdates) {
+                        const auto message = entry.toMap();
+                        m_messages.noteUnreadMessage(message);
+                        upsertMessage(message);
+                    }
                     upgradeSmallLinkPreviews(loadedMessages);
                     m_hasMore = page.value(QStringLiteral("has_more")).toBool();
                     m_nextBefore = page.value(QStringLiteral("next_before")).toVariant().toLongLong();
@@ -1260,6 +1283,9 @@ void RpcClient::setChatFavorite(const QString &jid, bool favorite)
 
 void RpcClient::closeChat()
 {
+    ++m_chatOpenGeneration;
+    m_openingMessages = false;
+    m_openingMessageUpdates.clear();
     m_chatPresenceExpiryTimer.stop();
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
 	if (!previousJid.isEmpty())
@@ -2117,6 +2143,9 @@ void RpcClient::switchProfile(const QString &profile)
 {
     if (profile == m_profile || !m_profiles.contains(profile))
         return;
+    ++m_chatOpenGeneration;
+    m_openingMessages = false;
+    m_openingMessageUpdates.clear();
     m_chatPresenceExpiryTimer.stop();
     m_reconnectTimer.stop();
     m_socket.abort();

@@ -353,6 +353,22 @@ calendar day, which is what the date pills are drawn from; a page of older
 history moves that mark rather than leaving two, so the recompute runs after
 every change to the list.
 
+The newest `messages.list` page includes an unread-count/first-message-ID
+snapshot before the desktop acknowledges the chat. SQLite reads this metadata
+and the page in one transaction. The boundary is the oldest of the latest N
+incoming content messages, where N is the account's unread total (history need
+not have individual receipt metadata). If that many messages are not stored
+locally, the boundary is unknown rather than guessed. A boundary outside the
+newest page appears when its older page is loaded.
+
+`MessageListModel` keeps this divider as presentation state, not in cached
+message payloads. Only the boundary row exposes `unread_separator_count` to
+QML. New incoming IDs extend the batch; receipt, reaction, and media updates
+do not count again. Opening another chat/account or reselecting the chat resets
+the batch, and a new outgoing message clears it. Events arriving during the
+initial page request are replayed after its snapshot, and a generation guard
+rejects stale responses from earlier chat activations.
+
 `RpcClient::chatOpened` signals explicit conversation activation, including
 reselecting the current chat. It is distinct from `selectedChatChanged`, which
 also reports title/avatar refreshes and must not interrupt a reader's position.

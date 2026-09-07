@@ -142,6 +142,10 @@ type MessagePage struct {
 	// Id of the oldest message in this page. Paging uses it together with
 	// NextBefore so messages sharing a timestamp are not skipped.
 	NextBeforeID string `json:"next_before_id,omitempty"`
+	// Snapshot for the unread divider, taken before opening the chat sends read
+	// receipts. The boundary can belong to an older, not-yet-loaded page.
+	UnreadCount   int    `json:"unread_count,omitempty"`
+	FirstUnreadID string `json:"first_unread_id,omitempty"`
 }
 
 // StatusGroup is one contact's active story. Items are ordered from oldest to

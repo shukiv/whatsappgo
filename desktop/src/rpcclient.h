@@ -387,6 +387,9 @@ private:
     QVariantList m_messageSearchHits;
     int m_archivedCount = 0;
     MessageListModel m_messages;
+    quint64 m_chatOpenGeneration = 0;
+    bool m_openingMessages = false;
+    QVariantList m_openingMessageUpdates;
     QHash<QString, QVariantList> m_messageCache;
     QStringList m_messageCacheOrder;
     QVariantMap m_selectedChat;
