@@ -180,6 +180,11 @@ stubbed browser opener. Both open the WhatsAppGo GitHub issues URL with
 no dialog; browser-launch failure shows the destination for manual navigation.
 Use isolated XDG config/data/cache/runtime directories and unset intake
 credentials for these tests; never submit test reports to the live intake.
+The report-action check reuses the in-process daemon stub so backend-startup
+errors cannot overwrite the browser-failure notice under test. The profile-name
+check keeps a passive local listener instead of launching helpers. Both use
+distinct test profile names to isolate Windows named pipes as well as Unix
+socket paths; neither depends on backend startup/shutdown timing.
 
 `desktop-presence-updates` replays presence events through an isolated RPC socket.
 It covers missing stop events, explicit paused/offline events, audio recording,

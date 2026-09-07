@@ -519,8 +519,13 @@ if(BUILD_TESTING)
         TIMEOUT 15
     )
     set_tests_properties(desktop-update-settings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
-    add_test(NAME desktop-bug-report COMMAND whatsappgo --bug-report-test)
-    set_tests_properties(desktop-bug-report PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
+    add_test(NAME desktop-bug-report COMMAND whatsappgo --profile bug-report-test --bug-report-test)
+    # Browser feedback must not race a real backend's startup failures. Use
+    # the in-process stub with isolated settings and a separate Windows pipe.
+    set_tests_properties(desktop-bug-report PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/br;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/bug-report-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/bug-report-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/bug-report-test/config"
+        TIMEOUT 15
+    )
     add_test(NAME desktop-presence-display COMMAND whatsappgo --presence-display-test)
     set_tests_properties(desktop-light-theme desktop-dark-theme PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"

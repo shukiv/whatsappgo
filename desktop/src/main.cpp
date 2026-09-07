@@ -421,7 +421,7 @@ int main(int argc, char *argv[])
     // stub answers just enough for the window to come up.
     QLocalServer stubDaemon;
     int rejectedDraftSends = 0;
-    if (searchResultsTest || composerDraftTest || messageScrollTest) {
+    if (searchResultsTest || composerDraftTest || messageScrollTest || bugReportTest) {
         const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
 #ifndef Q_OS_WIN
         QDir().mkpath(QFileInfo(stubPath).absolutePath());
