@@ -772,12 +772,13 @@ Item {
                     height: 48
                     radius: 24
                     color: "#99000000"
-                    Label {
+                    TintedIcon {
                         anchors.centerIn: parent
-                        text: root.playingThis && Playback.playing ? "❚❚" : "▶"
-                        color: "#FFFFFF"
-                        font.pixelSize: 18
-                        Accessible.ignored: true
+                        width: 24
+                        height: 24
+                        source: root.playingThis && Playback.playing
+                            ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
+                        tint: "#FFFFFF"
                     }
                 }
 
@@ -825,23 +826,17 @@ Item {
                 width: root.contentWidth
                 spacing: 8
 
-                ToolButton {
+                ThemedToolButton {
                     objectName: "voicePlayButton"
                     Layout.preferredWidth: 30
                     Layout.preferredHeight: 30
-                    text: root.playingThis && Playback.playing ? "❚❚" : "▶"
-                    font.pixelSize: 15
+                    iconSource: root.playingThis && Playback.playing
+                        ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
+                    iconSize: 18
                     padding: 0
                     Accessible.name: root.playingThis && Playback.playing
                         ? qsTr("Pause voice message")
                         : qsTr("Play voice message")
-                    contentItem: Label {
-                        text: parent.text
-                        color: Theme.icon
-                        font: parent.font
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
                     // WhatsApp Web draws the play control as a bare glyph on the
                     // bubble. A filled circle behind it read as a button pasted
                     // onto the message.
@@ -1065,12 +1060,15 @@ Item {
                     Layout.preferredHeight: 30
                     radius: 15
                     color: Theme.surfaceMuted
-                    Label {
+                    TintedIcon {
                         anchors.centerIn: parent
-                        text: root.modelData.kind === "video" ? "▶" : root.modelData.kind === "document" ? "↓" : "•"
-                        color: Theme.icon
-                        font.pixelSize: 13
-                        Accessible.ignored: true
+                        width: 18
+                        height: 18
+                        source: root.modelData.kind === "video" ? Qt.resolvedUrl("icons/play.svg")
+                            : root.modelData.kind === "document" ? Qt.resolvedUrl("icons/document.svg")
+                            : root.modelData.kind === "poll" ? Qt.resolvedUrl("icons/poll.svg")
+                            : Qt.resolvedUrl("icons/gallery.svg")
+                        tint: Theme.icon
                     }
                 }
                 Label {

@@ -57,7 +57,7 @@ jobs:
     steps:
       # fontconfig on a bare container has no fonts to hand Qt, and the tests
       # that measure text are the ones that fail.
-      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtquickcontrols2 fontconfig google-noto-sans-fonts dejavu-sans-fonts
+      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtsvg-devel qt6-qtquickcontrols2 fontconfig google-noto-sans-fonts dejavu-sans-fonts
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
         with:

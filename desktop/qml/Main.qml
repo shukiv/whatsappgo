@@ -2811,13 +2811,9 @@ ApplicationWindow {
                     Layout.preferredWidth: 44
                     Layout.preferredHeight: 44
                     Accessible.name: Playback.playing ? qsTr("Pause") : qsTr("Play")
-                    contentItem: Label {
-                        text: Playback.playing ? "❚❚" : "▶"
-                        color: "#FFFFFF"
-                        font.pixelSize: 17
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
+                    iconSource: Playback.playing ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
+                    iconTint: "#FFFFFF"
+                    iconSize: 22
                     background: Rectangle { radius: 22; color: parent.hovered ? "#33FFFFFF" : "transparent" }
                     onClicked: Playback.toggle()
                 }

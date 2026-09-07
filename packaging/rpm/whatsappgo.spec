@@ -12,6 +12,7 @@ BuildRequires:  ninja-build
 BuildRequires:  qt6-qtbase-devel
 BuildRequires:  qt6-qtdeclarative-devel
 BuildRequires:  qt6-qtmultimedia-devel
+BuildRequires:  qt6-qtsvg-devel
 Recommends:     notification-daemon
 Suggests:       gnome-shell-extension-appindicator
 

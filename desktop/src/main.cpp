@@ -1,5 +1,6 @@
 #include "rpcclient.h"
 #include "traybehavior.h"
+#include "lucideprovider.h"
 
 #include <QApplication>
 #include <QAction>
@@ -464,6 +465,7 @@ int main(int argc, char *argv[])
 
     RpcClient backend(initialProfile, parser.value(chatOption));
     QQmlApplicationEngine engine;
+    engine.addImageProvider(QStringLiteral("lucide"), new LucideProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);

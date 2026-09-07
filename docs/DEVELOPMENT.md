@@ -3,19 +3,32 @@
 ## Toolchain
 
 WhatsAppGo requires Go 1.26+, CMake 3.22+, a C++20 compiler, Qt 6.5+ (Core,
-Gui, Quick, Quick Controls 2, Network, Multimedia).
+Gui, Quick, Quick Controls 2, Network, Multimedia, SVG).
 
 On Debian 13:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
-  qt6-base-dev qt6-declarative-dev qt6-multimedia-dev \
+  qt6-base-dev qt6-declarative-dev qt6-multimedia-dev libqt6svg6-dev \
   qml6-module-org-kde-desktop \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 ```
 
 Run `make check-desktop-deps` for a read-only prerequisite check.
+
+### Icons
+
+Standard navigation, menu, message-action and playback icons use the bundled
+Lucide SVG subset. Keep using `TintedIcon` / `ThemedToolButton` and semantic
+`Theme` colors; their existing glyph sizes and hit targets remain unchanged.
+`LucideProvider` renders trusted Qt resources with Qt SVG, tinting with QPainter
+so the software renderer works too. Images are cached by name, tint and device
+pixel size. No runtime CDN, Node package or GPU effect is needed.
+
+The app logo, status rings and WhatsApp-style receipt marks retain their own
+artwork. See [icon provenance, aliases and license](../desktop/qml/icons/README.md)
+when adding or updating icons; include new SVGs in `desktop/CMakeLists.txt`.
 
 ## Build and run
 

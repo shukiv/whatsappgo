@@ -6,13 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 Network Multimedia)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 Network Multimedia Svg)
 
 qt_standard_project_setup(REQUIRES 6.5)
 qt_policy(SET QTP0004 NEW)
 
 qt_add_executable(whatsappgo
     src/main.cpp
+    src/lucideprovider.cpp
+    src/lucideprovider.h
     src/messagemodel.cpp
     src/messagemodel.h
     src/profilemonitor.cpp
@@ -130,6 +132,25 @@ qt_add_qml_module(whatsappgo
         qml/ContactInfoDrawer.qml
 		qml/MessageInfoDrawer.qml
     RESOURCES
+        qml/icons/LICENSE.lucide
+        qml/icons/block.svg
+        qml/icons/calls.svg
+        qml/icons/channels.svg
+        qml/icons/check.svg
+        qml/icons/check-check.svg
+        qml/icons/chevron-down.svg
+        qml/icons/communities.svg
+        qml/icons/download.svg
+        qml/icons/forward.svg
+        qml/icons/group-add.svg
+        qml/icons/pause.svg
+        qml/icons/play.svg
+        qml/icons/profile.svg
+        qml/icons/sort.svg
+        qml/icons/star.svg
+        qml/icons/star-filled.svg
+        qml/icons/status.svg
+        qml/icons/user-add.svg
         qml/icons/new-chat.svg
         qml/icons/menu.svg
         qml/icons/bug.svg
@@ -179,7 +200,7 @@ qt_add_qml_module(whatsappgo
 target_include_directories(whatsappgo PRIVATE src)
 
 target_link_libraries(whatsappgo PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia Qt6::Svg
 )
 
 target_compile_definitions(whatsappgo PRIVATE

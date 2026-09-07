@@ -27,8 +27,11 @@ implementation details.
 
 Use `Theme.qml` semantic tokens in QML rather than repeating literal colors.
 The light selected-filter treatment is `#D9FDD3` with `#008069` text. Use the
-platform font and bundled line-icon set, with a visible keyboard focus ring on
-every interactive control.
+bundled Roboto font and Lucide line icons, with a visible keyboard focus ring on
+every interactive control. Lucide uses a 24-unit view box, 2-unit rounded stroke,
+and each component's existing glyph size; do not enlarge the hit target's glyph
+to fill its padding. Render through `TintedIcon` with theme tinting in both
+themes. Keep the app logo, status rings and delivery/read marks distinct.
 
 ## Measured desktop geometry
 
