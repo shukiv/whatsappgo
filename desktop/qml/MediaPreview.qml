@@ -11,6 +11,10 @@ Item {
     property real imageRotation: 0
     property bool sending: false
     property bool sendAllowed: true
+    property bool enterIsSend: true
+    property bool replaceEmoticons: true
+    property bool spellChecking: false
+    property string spellLanguage: "en_US"
     readonly property bool previewActive: String(imageUrl).length > 0
     signal sendRequested(url imageUrl, string caption, int rotation)
     signal canceled(url imageUrl)
@@ -24,7 +28,8 @@ Item {
     // Escape backs out of the preview, the way it closes every other overlay.
     Shortcut {
         sequences: [StandardKey.Cancel]
-        enabled: root.visible && !root.sending
+        enabled: root.visible && !root.sending && !Theme.popupOwnsFocus(root.Overlay.overlay,
+            root.Window.window ? root.Window.window.activeFocusItem : null)
         onActivated: root.closePreview()
     }
 
@@ -210,10 +215,31 @@ Item {
                         font.pixelSize: 14
                         wrapMode: TextEdit.Wrap
                         textFormat: TextEdit.PlainText
+                        ComposerText {
+                            id: captionText
+                            editor: caption
+                            spellChecking: root.spellChecking && root.visible
+                            spellLanguage: root.spellLanguage
+                        }
+                        ComposerEditMenu { id: captionEditMenu; editor: caption; formatter: captionText }
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onPressed: mouse => captionEditMenu.showAt(caption.positionAt(mouse.x, mouse.y), mouse.x, mouse.y)
+                        }
                         Accessible.name: qsTr("Image caption")
                         background: Item {}
+                        Keys.onReleased: event => {
+                            if (root.replaceEmoticons && (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                    && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)))
+                                captionText.convertEmoticons()
+                        }
                         Keys.onPressed: event => {
-                            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) {
+                            if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers & Qt.ShiftModifier)) {
+                                captionEditMenu.showAt(caption.cursorPosition, caption.cursorRectangle.x, caption.cursorRectangle.y + caption.cursorRectangle.height)
+                                event.accepted = true
+                            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)
+                                    && (root.enterIsSend || event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
                                 sendButton.clicked()
                                 event.accepted = true
                             }
@@ -283,7 +309,7 @@ Item {
             }
         }
 
-        RoundButton {
+        ThemedToolButton {
             id: sendButton
             objectName: "mediaPreviewSendButton"
             anchors.right: parent.right
@@ -292,11 +318,15 @@ Item {
             anchors.bottomMargin: 16
             width: 64
             height: 64
+            iconSource: Qt.resolvedUrl("icons/send.svg")
+            iconTint: Theme.primaryText
+            iconSize: 24
             enabled: root.visible && root.previewActive && root.sendAllowed && !root.sending
             Accessible.name: qsTr("Send image")
             onClicked: {
                 if (!enabled)
                     return
+                if (root.replaceEmoticons) captionText.convertEmoticons(true)
                 const sentUrl = root.imageUrl
                 const sentCaption = caption.text
                 // What the reader turned is what gets sent; the preview used to
@@ -308,12 +338,6 @@ Item {
             background: Rectangle {
                 radius: width / 2
                 color: sendButton.down ? Qt.darker(Theme.primary, 1.12) : Theme.primary
-            }
-            contentItem: TintedIcon {
-                width: 28
-                height: 28
-                source: Qt.resolvedUrl("icons/send.svg")
-                tint: Theme.primaryText
             }
         }
     }

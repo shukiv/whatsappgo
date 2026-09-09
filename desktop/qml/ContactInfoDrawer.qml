@@ -15,6 +15,14 @@ Rectangle {
     property var sharedContent: []
     property bool sharedContentHasMore: false
     property bool sharedContentLoading: false
+    property var groupInfo: ({})
+    property bool groupLoading: false
+    property bool groupBusy: false
+    property string groupError: ""
+    signal groupActionRequested(string action, var member)
+    signal memberAvatarRequested(string jid)
+    signal copyRequested(string value)
+    readonly property bool isGroup: Boolean(chat && chat.is_group) || String(selectedChat.jid || "").endsWith("@g.us")
 
     signal closeRequested()
     signal sharedRequested(string category)
@@ -42,7 +50,10 @@ Rectangle {
     border.color: Theme.border
     z: 40
     focus: opened
-    Keys.onEscapePressed: closeRequested()
+    Keys.onEscapePressed: {
+        if (sharedView) sharedView = false
+        else closeRequested()
+    }
     Accessible.role: Accessible.Pane
     Accessible.name: sharedView ? qsTr("Shared content") : qsTr("Contact information")
 
@@ -129,6 +140,7 @@ Rectangle {
     Component {
         id: infoPage
         ScrollView {
+            objectName: "contactInfoScroll"
             clip: true
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ScrollBar.vertical: OverlayScrollBar {}
@@ -167,25 +179,40 @@ Rectangle {
                         }
                         HoverHandler { cursorShape: avatarButton.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
                     }
-                    Label {
+                    CopyableInfoText {
+                        objectName: "contactInfoName"
                         width: parent.width - 48
                         anchors.horizontalCenter: parent.horizontalCenter
-                        horizontalAlignment: Text.AlignHCenter
+                        centered: true
                         text: root.title
+                        copyLabel: root.isGroup ? qsTr("Copy group name") : qsTr("Copy name")
+                        onCopyRequested: value => root.copyRequested(value)
                         color: Theme.text
                         font.pixelSize: 24
                         font.weight: Font.Medium
-                        wrapMode: Text.Wrap
                     }
-                    Label {
+                    CopyableInfoText {
+                        objectName: "contactInfoPhone"
                         width: parent.width - 48
                         anchors.horizontalCenter: parent.horizontalCenter
-                        horizontalAlignment: Text.AlignHCenter
-                        text: root.info && root.info.phone ? "+" + root.info.phone : (root.chat && root.chat.is_group ? qsTr("Group conversation") : qsTr("WhatsApp contact"))
+                        centered: true
+                        text: root.info && root.info.phone ? "+" + root.info.phone : (root.isGroup ? (root.groupInfo.jid ? qsTr("Group · %1 members").arg(root.groupInfo.participant_count) : qsTr("Group conversation")) : qsTr("WhatsApp contact"))
+                        copyEnabled: Boolean(root.info && root.info.phone)
+                        copyLabel: qsTr("Copy phone number")
+                        onCopyRequested: value => root.copyRequested(value)
                         color: Theme.textMuted
                         font.pixelSize: 15
                     }
 
+                    Label {
+                        width: parent.width - 48
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        visible: root.isGroup && Boolean(root.groupInfo.description)
+                        text: root.groupInfo.description || ""
+                        color: Theme.text
+                        font.pixelSize: 14
+                        wrapMode: Text.Wrap
+                    }
                     Row {
                         anchors.horizontalCenter: parent.horizontalCenter
                         topPadding: 8
@@ -296,6 +323,21 @@ Rectangle {
 
                 Rectangle { width: parent.width; height: 8; color: Theme.surfaceMuted }
 
+                GroupInfoContent {
+                    width: parent.width
+                    visible: root.isGroup
+                    groupInfo: root.groupInfo
+                    chat: root.chat
+                    loading: root.groupLoading
+                    busy: root.groupBusy
+                    error: root.groupError
+                    onActionRequested: (action, member) => root.groupActionRequested(action, member)
+                    onAvatarRequested: jid => root.memberAvatarRequested(jid)
+                }
+
+                Column {
+                    width: parent.width
+                    visible: !root.isGroup
                 ItemDelegate {
                     objectName: "drawerFavoriteRow"
                     width: parent.width
@@ -467,10 +509,11 @@ Rectangle {
                     rightPadding: 16
                     topPadding: 16
                     bottomPadding: 24
-                    text: qsTr("Reporting and calls are not carried by the linked-device protocol, so WhatsAppGo does not show controls that would fail silently.")
+                    text: qsTr("Calling and reporting are not supported by this client. Use the official WhatsApp app for these actions.")
                     color: Theme.textMuted
                     font.pixelSize: 12
                     wrapMode: Text.Wrap
+                }
                 }
             }
         }

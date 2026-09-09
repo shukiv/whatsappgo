@@ -50,6 +50,7 @@ ItemDelegate {
         case "sticker": return "sticker.svg"
         case "contact": return "contact.svg"
         case "location": return "pin.svg"
+        case "view_once": return "view-once.svg"
         default: return ""
         }
     }

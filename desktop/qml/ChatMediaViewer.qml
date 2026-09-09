@@ -128,7 +128,8 @@ FocusScope {
 
     Shortcut {
         sequences: [StandardKey.Cancel]
-        enabled: root.previewActive
+        enabled: root.previewActive && !Theme.popupOwnsFocus(root.Overlay.overlay,
+            root.Window.window ? root.Window.window.activeFocusItem : null)
         onActivated: root.closePreview()
     }
 

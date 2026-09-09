@@ -121,6 +121,9 @@ ApplicationWindow {
     property string pendingMessageJumpId: ""
     property int pendingMessageJumpAttempts: 0
     property string highlightedMessageId: ""
+    property string currentAnimationId: ""
+    onActiveChanged: if (!active) currentAnimationId = ""
+    onActiveSectionChanged: currentAnimationId = ""
     property string chatFilter: "all"
     onChatFilterChanged: backend.setChatListFilter(chatFilter)
     property bool newChatOpen: false
@@ -145,6 +148,8 @@ ApplicationWindow {
 	property var messageInfoMessage: ({})
 	property string messageInfoChatJid: ""
     property bool statusViewerRequested: false
+    property var statusReturnFocusItem: null
+    property string statusReturnSection: ""
     // Remembered so an account that lands on the linking screen can go back to
     // the one that was open before it.
     property string previousProfile: ""
@@ -198,7 +203,7 @@ ApplicationWindow {
     function sendAttachment(fileUrl, caption, document) {
         const replyTo = window.replyTargetId
         window.rememberDraft()
-        backend.sendFile(fileUrl, caption || "", replyTo, document === true)
+        backend.sendFile(fileUrl, caption || "", replyTo, document === true, settingsPane.photoQuality)
     }
 
     property var voiceRecordingContext: null
@@ -357,7 +362,13 @@ ApplicationWindow {
         return qsTr("Contact · %1").arg(local.slice(-4))
     }
 
+    property var sectionHistory: []
     function showSection(section) {
+        if (activeSection !== section) {
+            const history = sectionHistory.slice(-31)
+            history.push(activeSection)
+            sectionHistory = history
+        }
         newChatOpen = false
         activeSection = section
         if (section === "status") backend.refreshStatuses()
@@ -384,10 +395,30 @@ ApplicationWindow {
     function openStatusAt(index) {
         if (index < 0)
             return
+        if (!statusViewerRequested) {
+            statusReturnFocusItem = window.activeFocusItem
+            statusReturnSection = activeSection
+        }
         statusViewerRequested = true
         Qt.callLater(function() {
-            if (statusViewerLoader.item)
+            if (window.statusViewerRequested && statusViewerLoader.item)
                 statusViewerLoader.item.openAt(index)
+        })
+    }
+
+    function closeStatusViewer() {
+        const returnItem = statusReturnFocusItem
+        const returnSection = statusReturnSection
+        statusReturnFocusItem = null
+        statusReturnSection = ""
+        statusViewerRequested = false
+        Qt.callLater(function() {
+            if (window.statusViewerRequested || window.activeSection !== returnSection)
+                return
+            if (returnItem && returnItem.visible && returnItem.enabled)
+                returnItem.forceActiveFocus()
+            else if (window.activeSection === "chats" && backend.selectedChat.jid)
+                composer.forceActiveFocus()
         })
     }
 
@@ -513,6 +544,7 @@ ApplicationWindow {
 		messageInfoMessage = ({})
 		messageInfoChatJid = ""
         backend.refreshChatInfo()
+        backend.refreshGroupInfo()
         contactInfoDrawer.forceActiveFocus()
     }
 
@@ -705,7 +737,11 @@ ApplicationWindow {
 
     Connections {
         target: backend
+        function onStatusPageRequested() {
+            window.showSection("status")
+        }
         function onProfileChanged() {
+            window.currentAnimationId = ""
             starredMessagesDialog.close()
             starredMessagesDialog.chatJid = ""
         }
@@ -1158,18 +1194,29 @@ ApplicationWindow {
                         anchors.fill: parent
                         anchors.leftMargin: 20
                         anchors.rightMargin: 12
-                        spacing: 8
+                        spacing: 4
 
                         Label {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            elide: Text.ElideRight
                             text: qsTr("WhatsAppGo")
                             color: Theme.primary
                             font.pixelSize: 18
                             font.weight: Font.Bold
                         }
 
-                        Item {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 8
+                        ThemedToolButton {
+                            objectName: "appSettingsButton"
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconSource: Qt.resolvedUrl("icons/settings.svg")
+                            iconSize: 20
+                            Accessible.name: qsTr("WhatsAppGo settings")
+                            onClicked: appSettings.open()
+                            background: Rectangle { radius: 20; color: parent.hovered ? Theme.hoverRow : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: Accessible.name
                         }
 
                         ThemedToolButton {
@@ -1611,7 +1658,7 @@ ApplicationWindow {
                 horizontalAlignment: Image.AlignLeft
                 verticalAlignment: Image.AlignTop
                 opacity: Theme.patternOpacity
-                visible: Boolean(backend.selectedChat.jid)
+                visible: Boolean(backend.selectedChat.jid) && settingsPane.showWallpaper
                 smooth: false
                 cache: true
                 Accessible.ignored: true
@@ -2064,7 +2111,16 @@ ApplicationWindow {
                         topMargin: count > 0 ? Math.max(10, height - contentHeight - bottomMargin) : 10
                         bottomMargin: 10
                         boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: OverlayScrollBar {}
+                        ScrollBar.vertical: OverlayScrollBar {
+                            onPressedChanged: {
+                                if (pressed) {
+                                    messageList.releaseTail()
+                                } else {
+                                    messageList.followTail = messageList.nearTail()
+                                    messageList.scheduleTailPosition()
+                                }
+                            }
+                        }
                         // In a bottom-to-top chat, Qt's default wheel mapping
                         // points toward the composer. Consume the wheel once
                         // and move toward older rows explicitly; this also
@@ -2085,11 +2141,25 @@ ApplicationWindow {
                                 const maximum = Math.max(historyEdge, composerEdge)
                                 messageList.contentY = Math.max(minimum,
                                     Math.min(maximum, messageList.contentY - pixels))
+                                messageList.followTail = messageList.nearTail()
+                                messageList.scheduleTailPosition()
                                 if (messageList.nearHistoryStart())
                                     olderMessagesTimer.restart()
                             }
                         }
                         delegate: MessageDelegate {
+                            animationSelected: window.currentAnimationId !== ""
+                                && window.currentAnimationId === String(modelData.id || "")
+                                && window.active && window.activeSection === "chats"
+                                && !emojiPicker.opened && !Playback.videoActive
+                            onAnimationRequested: messageId => {
+                                window.currentAnimationId = window.currentAnimationId === messageId ? "" : messageId
+                            }
+                            onAnimationFailed: message => {
+                                window.currentAnimationId = ""
+                                window.transientError = message
+                                errorTimer.restart()
+                            }
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
                             selectionActive: window.messageSelectionActive
                             selected: window.messageSelectionActive && window.isMessageSelected(modelData.id)
@@ -2113,6 +2183,10 @@ ApplicationWindow {
                                 composer.forceActiveFocus()
                             }
                             onQuotedMessageRequested: messageId => window.jumpToMessage(messageId)
+                            onViewOnceNoticeRequested: {
+                                window.transientNotice = qsTr("This is a view-once message. Open WhatsApp on your phone to view it.")
+                                noticeTimer.restart()
+                            }
                             onPinRequested: (messageId, senderJid, body) => {
                                 pinDialog.messageId = messageId
                                 pinDialog.senderJid = senderJid
@@ -2164,6 +2238,20 @@ ApplicationWindow {
                             followTail = true
                             initialPositionPending = count === 0
                             scheduleTailPosition()
+                        }
+
+                        function jumpToLatest() {
+                            // Stop a pending quoted/search-message lookup from
+                            // pulling the viewport back into history afterward.
+                            window.pendingMessageJumpId = ""
+                            window.pendingMessageJumpChat = ""
+                            window.pendingMessageJumpAttempts = 0
+                            window.highlightedMessageId = ""
+                            messageJumpRetry.stop()
+                            messageJumpArrival.stop()
+                            messageJumpHighlight.stop()
+                            olderMessagesTimer.stop()
+                            returnToTail()
                         }
 
                         function prepareForChat(chatJid, explicitlyOpened) {
@@ -2267,6 +2355,51 @@ ApplicationWindow {
                         }
                     }
 
+                    ThemedToolButton {
+                        id: jumpToLatestButton
+                        objectName: "jumpToLatestButton"
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        anchors.rightMargin: 16
+                        anchors.bottomMargin: 12
+                        width: 44
+                        height: 44
+                        z: 2
+                        visible: messageList.count > 0 && !messageList.followTail
+                                 && !messageList.nearTail()
+                        iconSource: Qt.resolvedUrl("icons/chevron-down.svg")
+                        iconSize: 22
+                        iconTint: Theme.iconMuted
+                        focusPolicy: Qt.StrongFocus
+                        Accessible.name: qsTr("Scroll to latest message")
+                        ToolTip.text: qsTr("Scroll to latest message")
+                        ToolTip.visible: hovered || activeFocus
+                        ToolTip.delay: 650
+                        onClicked: {
+                            messageList.jumpToLatest()
+                            composer.forceActiveFocus()
+                        }
+                        background: Item {
+                            Rectangle {
+                                x: -1
+                                y: 2
+                                width: parent.width + 2
+                                height: parent.height + 2
+                                radius: width / 2
+                                color: Theme.text
+                                opacity: Theme.dark ? 0.06 : 0.10
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: width / 2
+                                color: jumpToLatestButton.down ? Theme.pressedRow
+                                       : jumpToLatestButton.hovered ? Theme.hoverRow : Theme.surfaceRaised
+                                border.width: jumpToLatestButton.visualFocus ? 2 : 0
+                                border.color: Theme.primary
+                            }
+                        }
+                    }
+
                     Connections {
                         target: backend
                         function onChatOpened(chatJid) {
@@ -2303,6 +2436,7 @@ ApplicationWindow {
                             if (!window.handleChatSwitched(String(backend.selectedChat.jid || "")))
                                 return
                             window.highlightedMessageId = ""
+                            window.currentAnimationId = ""
                             messageJumpRetry.stop()
                             messageJumpHighlight.stop()
                             messageList.prepareForChat(backend.selectedChat.jid)
@@ -2415,7 +2549,9 @@ ApplicationWindow {
                                 ThemedToolButton {
                                     id: attachmentButton
                                     objectName: "attachmentButton"
-                                    Layout.preferredWidth: 44
+                                    Layout.minimumWidth: 36
+                                    Layout.preferredWidth: 36
+                                    Layout.maximumWidth: 36
                                     Layout.preferredHeight: 44
                                     iconSource: Qt.resolvedUrl("icons/attach.svg")
                                     Accessible.name: qsTr("Attach")
@@ -2439,6 +2575,8 @@ ApplicationWindow {
                                         onDocumentRequested: documentFileDialog.open()
                                         onPhotosVideosRequested: photosVideosFileDialog.open()
                                         onAudioRequested: audioFileDialog.open()
+                                        onStickerRequested: emojiPicker.openStickerCreator()
+                                        onContactRequested: contactShareDialog.showFor(window.replyTargetId)
                                         onUnavailableRequested: feature => {
                                             window.transientNotice = qsTr("%1 is not supported yet").arg(feature)
                                             noticeTimer.restart()
@@ -2449,7 +2587,9 @@ ApplicationWindow {
                                 ThemedToolButton {
                                     id: emojiButton
                                     objectName: "emojiButton"
-                                    Layout.preferredWidth: 44
+                                    Layout.minimumWidth: 36
+                                    Layout.preferredWidth: 36
+                                    Layout.maximumWidth: 36
                                     Layout.preferredHeight: 44
                                     iconSource: Qt.resolvedUrl("icons/smile.svg")
                                     Accessible.name: qsTr("Choose an emoji")
@@ -2481,15 +2621,88 @@ ApplicationWindow {
                                     bottomPadding: 8
                                     placeholderText: qsTr("Type a message")
                                     color: Theme.text
-                                    font.family: Theme.isEmojiOnly(text) ? Theme.emojiFontFamily : Application.font.family
+                                    font.family: Application.font.family
                                     font.pixelSize: 14
                                     wrapMode: TextEdit.Wrap
+                                    textFormat: TextEdit.PlainText
+                                    ComposerText {
+                                        id: composerText
+                                        editor: composer
+                                        spellChecking: settingsPane.spellChecking
+                                        spellLanguage: settingsPane.spellLanguage
+                                    }
+                                    function openEditMenu(position, x, y) {
+                                        composerText.suggestAt(position)
+                                        const point = composer.mapToItem(composerEditMenu.parent, x, y)
+                                        composerEditMenu.x = point.x
+                                        composerEditMenu.y = point.y
+                                        composerEditMenu.open()
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.RightButton
+                                        onPressed: mouse => composer.openEditMenu(composer.positionAt(mouse.x, mouse.y), mouse.x, mouse.y)
+                                    }
+                                    WhatsAppMenuPopup {
+                                        id: composerEditMenu
+                                        objectName: "composerEditMenu"
+                                        parent: Overlay.overlay
+                                        width: 230
+                                        Repeater {
+                                            model: composerText.suggestions
+                                            WhatsAppMenuItem {
+                                                required property string modelData
+                                                text: modelData
+                                                onClicked: { composerEditMenu.close(); composerText.replaceSpelling(modelData) }
+                                            }
+                                        }
+                                        WhatsAppMenuItem {
+                                            visible: composerText.misspelledWord !== ""
+                                            text: composerText.suggestions.length > 0 ? qsTr("Ignore word") : qsTr("Ignore word (no suggestions)")
+                                            onClicked: { composerEditMenu.close(); composerText.ignoreSpelling() }
+                                        }
+                                        WhatsAppMenuItem {
+                                            text: qsTr("Cut")
+                                            enabled: composer.selectedText !== ""
+                                            onClicked: { composer.cut(); composerEditMenu.close() }
+                                        }
+                                        WhatsAppMenuItem {
+                                            text: qsTr("Copy")
+                                            enabled: composer.selectedText !== ""
+                                            onClicked: { composer.copy(); composerEditMenu.close() }
+                                        }
+                                        WhatsAppMenuItem {
+                                            text: qsTr("Paste")
+                                            enabled: composer.canPaste || backend.clipboardHasImage
+                                            onClicked: {
+                                                composerEditMenu.close()
+                                                if (backend.clipboardHasImage) window.prepareClipboardPaste()
+                                                else composer.paste()
+                                            }
+                                        }
+                                        WhatsAppMenuItem {
+                                            text: qsTr("Select all")
+                                            enabled: composer.text !== ""
+                                            onClicked: { composer.selectAll(); composerEditMenu.close() }
+                                        }
+                                    }
                                     Accessible.name: qsTr("Message")
                                     onTextChanged: {
+                                        composerEditMenu.close()
                                         typingTimer.restart()
                                         linkPreviewTimer.restart()
                                     }
+                                    Keys.onReleased: event => {
+                                        if ((event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                                                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)))
+                                            if (settingsPane.replaceEmoticons) composerText.convertEmoticons()
+                                    }
                                     Keys.onPressed: event => {
+                                        if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier)) {
+                                            composer.openEditMenu(composer.cursorPosition, composer.cursorRectangle.x, composer.cursorRectangle.y)
+                                            event.accepted = true
+                                            return
+                                        }
                                         if (event.matches(StandardKey.Paste) && backend.clipboardHasImage) {
                                             window.prepareClipboardPaste()
                                             event.accepted = true
@@ -2541,6 +2754,7 @@ ApplicationWindow {
                                         if (!enabled)
                                             return
                                         if (composer.text.trim().length > 0) {
+                                            if (settingsPane.replaceEmoticons) composerText.convertEmoticons(true)
                                             const body = composer.text
                                             const replyTo = window.replyTargetId
                                             window.rememberDraft()
@@ -2566,6 +2780,10 @@ ApplicationWindow {
 
             MediaPreview {
                 id: mediaPreview
+                enterIsSend: settingsPane.enterIsSend
+                replaceEmoticons: settingsPane.replaceEmoticons
+                spellChecking: settingsPane.spellChecking
+                spellLanguage: settingsPane.spellLanguage
                 property string ownerKey: ""
                 property string pendingUrl: ""
                 // A preview belongs to its original account/chat. Hide it on
@@ -2579,7 +2797,7 @@ ApplicationWindow {
                     const replyTo = window.replyTargetId
                     window.rememberDraft()
                     pendingUrl = backend.rotatedImage(imageUrl, rotation)
-                    backend.sendClipboardImage(pendingUrl, caption, replyTo)
+                    backend.sendClipboardImage(pendingUrl, caption, replyTo, settingsPane.photoQuality)
                 }
                 onCanceled: imageUrl => backend.discardClipboardImage(imageUrl)
                 onAddRequested: window.prepareClipboardPaste()
@@ -2608,6 +2826,23 @@ ApplicationWindow {
                 opened: window.infoDrawerOpen
                 selectedChat: backend.selectedChat
                 info: backend.chatInfo
+                groupInfo: backend.groupInfo
+                groupLoading: backend.groupInfoLoading
+                groupBusy: backend.groupActionBusy
+                groupError: backend.groupInfoError
+                onMemberAvatarRequested: jid => backend.refreshChatAvatar(jid)
+                onCopyRequested: value => backend.copyText(value)
+                onGroupActionRequested: (action, member) => {
+                    if (action === "retry") backend.refreshGroupInfo()
+                    else if (action === "starred") starredMessagesDialog.openForChat(backend.selectedChat.jid)
+                    else if (action === "disappearing") disappearingDialog.open()
+                    else if (action === "favorite") backend.setChatFavorite(backend.selectedChat.jid, !backend.selectedChat.favorite)
+                    else if (action === "archive") backend.setChatArchived(backend.selectedChat.jid, !backend.selectedChat.archived)
+                    else if (action === "export") exportChatDialog.open()
+                    else if (action === "clear") conversationClearDialog.open()
+                    else if (action === "delete") conversationDeleteDialog.open()
+                    else groupActions.show(action, member)
+                }
                 sharedContent: backend.sharedContent
                 sharedContentHasMore: backend.sharedContentHasMore
                 sharedContentLoading: backend.sharedContentLoading
@@ -2672,19 +2907,58 @@ ApplicationWindow {
             onCreateCommunityRequested: newCommunityDialog.open()
         }
 
-        SettingsPane {
-            id: settingsPane
-            objectName: "settingsPane"
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: window.activeSection === "profile"
-            onLogoutRequested: logoutDialog.open()
-            onShortcutsRequested: shortcutsDialog.open()
-            onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
-            onBugReportRequested: window.reportBug()
+            spacing: 0
+            SettingsPane {
+                id: settingsPane
+                spellingDictionaries: composerText.dictionaries
+                spellingError: composerText.spellError
+                objectName: "settingsPane"
+                Layout.minimumWidth: 0
+                Layout.preferredWidth: Math.min(parent.width, 460)
+                Layout.maximumWidth: Math.min(parent.width, 460)
+                Layout.fillHeight: true
+                onLogoutRequested: logoutDialog.open()
+                onShortcutsRequested: shortcutsDialog.open()
+                onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
+                onBugReportRequested: window.reportBug()
+                onBackRequested: window.leaveSection()
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: Theme.emptyBackground
+                clip: true
+                Rectangle { width: 1; height: parent.height; color: Theme.border }
+                Column {
+                    anchors.centerIn: parent
+                    width: Math.max(1, parent.width - 48)
+                    spacing: 12
+                    Label {
+                        width: parent.width
+                        text: qsTr("WhatsAppGo")
+                        color: Theme.primary
+                        font.pixelSize: 26
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    Label {
+                        width: parent.width
+                        text: qsTr("Your profile and preferences")
+                        color: Theme.textMuted
+                        font.pixelSize: 14
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                }
+            }
         }
 
         MediaLibraryPane {
+            id: mediaLibraryPane
             objectName: "mediaLibraryPane"
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -2738,7 +3012,7 @@ ApplicationWindow {
         active: window.activeSection === "status" || window.statusViewerRequested
         sourceComponent: StatusViewer {
             groups: backend.statusUpdates
-            onCloseRequested: window.statusViewerRequested = false
+            onCloseRequested: window.closeStatusViewer()
             onMediaRequested: messageId => backend.ensureStatusMedia(messageId)
             onReplyRequested: (recipientJid, statusMessageId, text) =>
                 backend.sendStatusReply(recipientJid, statusMessageId, text)
@@ -2932,12 +3206,22 @@ ApplicationWindow {
         }
     }
 
+    WhatsAppGoSettings { id: appSettings }
+    GroupActions {
+        id: groupActions
+        client: backend
+        onNotice: message => { window.transientNotice = message; noticeTimer.restart() }
+    }
+
     EmojiPicker {
         id: emojiPicker
-        parent: emojiButton
-        x: emojiButton.width - width
-        y: -height - 10
+        parent: Overlay.overlay
+        anchorItem: emojiButton
+        allowMedia: true
+        client: backend
+        replyTo: window.replyTargetId
         onEmojiChosen: emoji => window.insertComposerEmoji(emoji)
+        onSettingsRequested: appSettings.open()
     }
 
     FileDialog {
@@ -2976,6 +3260,66 @@ ApplicationWindow {
         ]
         onAccepted: window.sendAttachment(selectedFile)
     }
+    function leaveSection() {
+        const history = sectionHistory.slice()
+        const previous = history.length ? history.pop() : "chats"
+        sectionHistory = history
+        // Going back must not push the page being left onto the stack again.
+        activeSection = previous
+        if (previous === "chats") composer.forceActiveFocus()
+    }
+
+    function navigateBack() {
+        if (Playback.videoActive) { Playback.stop(); return }
+        if (window.activeSection === "profile") { settingsPane.goBack(); return }
+        if (window.activeSection === "media") {
+            if (mediaLibraryPane.selectionActive) { mediaLibraryPane.endSelection(); return }
+            if (mediaLibraryPane.searchActive) {
+                mediaLibraryPane.searchText = ""
+                mediaLibraryPane.searchActive = false
+                return
+            }
+        }
+        if (window.activeSection === "chats") {
+            if (window.messageInfoOpen) { window.messageInfoOpen = false; return }
+            if (window.infoDrawerOpen) {
+                if (contactInfoDrawer.sharedView) contactInfoDrawer.sharedView = false
+                else window.infoDrawerOpen = false
+                return
+            }
+            if (window.chatSearchOpen) { window.chatSearchOpen = false; return }
+            if (window.messageSelectionActive) { window.endMessageSelection(); return }
+            if (window.chatSelectionActive) { window.endChatSelection(); return }
+            if (window.newChatOpen) { window.newChatOpen = false; return }
+            if (window.searching || searchField.text !== "") { window.clearChatSearch(); return }
+            if (window.showArchived) { window.showArchived = false; return }
+        }
+        if (window.activeSection !== "chats" || sectionHistory.length)
+            window.leaveSection()
+        else
+            composer.forceActiveFocus()
+    }
+
+    ContactShareDialog {
+        id: contactShareDialog
+        client: backend
+        onClosed: Qt.callLater(function() {
+            if (window.activeSection === "chats" && backend.selectedChat.jid)
+                composer.forceActiveFocus()
+        })
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        autoRepeat: false
+        // Popups and full-screen viewers own Escape while open. Leaving their
+        // shortcuts enabled alongside this one makes Qt treat it as ambiguous.
+        enabled: !Theme.popupOwnsFocus(window.Overlay.overlay, window.activeFocusItem) && !chatMediaViewer.previewActive
+            && !mediaPreview.previewActive
+            && !(statusViewerLoader.item && statusViewerLoader.item.opened)
+        onActivated: window.navigateBack()
+    }
+
     // The keyboard shortcuts the settings dialog lists. They are declared here so
     // that list describes something real rather than copying the PWA's.
     Shortcut {
@@ -2992,22 +3336,22 @@ ApplicationWindow {
         onActivated: window.openConversationSearch()
     }
     Shortcut {
-        sequence: "Ctrl+N"
+        sequences: ["Ctrl+N", "Ctrl+Alt+N"]
         onActivated: { window.showSection("chats"); window.newChatOpen = true }
     }
     Shortcut {
-        sequence: "Ctrl+Shift+N"
+        sequences: ["Ctrl+Shift+N", "Ctrl+Alt+Shift+N"]
         onActivated: newGroupDialog.open()
     }
     Shortcut {
-        sequence: "Ctrl+E"
+        sequences: ["Ctrl+E", "Ctrl+Alt+Shift+E"]
         onActivated: {
             if (backend.selectedChat.jid)
                 backend.setChatArchived(backend.selectedChat.jid, !backend.selectedChat.archived)
         }
     }
     Shortcut {
-        sequence: "Ctrl+Shift+M"
+        sequences: ["Ctrl+Shift+M", "Ctrl+Alt+Shift+M"]
         onActivated: {
             if (!backend.selectedChat.jid)
                 return
@@ -3016,11 +3360,38 @@ ApplicationWindow {
         }
     }
     Shortcut {
-        sequence: "Ctrl+Shift+U"
+        sequences: ["Ctrl+Shift+U", "Ctrl+Alt+Shift+U"]
         onActivated: {
             if (backend.selectedChat.jid)
                 backend.setChatRead(backend.selectedChat.jid, false)
         }
+    }
+
+    Shortcut {
+        sequences: ["Ctrl+,", "Ctrl+Alt+,"]
+        onActivated: { window.showSection("profile"); settingsPane.openSection = "" }
+    }
+    Shortcut {
+        sequence: "Ctrl+Alt+P"
+        onActivated: { window.showSection("profile"); settingsPane.openSection = "profile" }
+    }
+    Shortcut {
+        sequence: "Ctrl+Alt+E"
+        enabled: window.activeSection === "chats" && Boolean(backend.selectedChat.jid) && !mediaPreview.previewActive
+        onActivated: { attachmentMenu.close(); emojiPicker.opened ? emojiPicker.close() : emojiPicker.open() }
+    }
+    Shortcut {
+        sequence: "Ctrl+Alt+Shift+P"
+        onActivated: {
+            if (backend.selectedChat.jid)
+                backend.setChatPinned(backend.selectedChat.jid, !backend.selectedChat.pinned)
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Alt+G"
+        enabled: window.activeSection === "chats" && Boolean(backend.selectedChat.jid) && !mediaPreview.previewActive
+        onActivated: { attachmentMenu.close(); emojiPicker.selectedTab = 1; emojiPicker.open() }
     }
 
     WhatsAppDialog {
@@ -3256,14 +3627,16 @@ ApplicationWindow {
         id: shortcutsDialog
         objectName: "keyboardShortcutsDialog"
         title: qsTr("Keyboard shortcuts")
-        preferredWidth: 460
-        preferredHeight: 520
+        preferredWidth: 880
+        preferredHeight: 600
         showAccept: false
         cancelText: qsTr("Close")
-        ColumnLayout {
+        GridLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 0
+            columns: shortcutsDialog.width >= 700 ? 2 : 1
+            columnSpacing: 28
+            rowSpacing: 4
             Repeater {
                 // Only shortcuts this client actually binds. A list copied from
                 // the PWA would promise keys that do nothing here.
@@ -3275,7 +3648,12 @@ ApplicationWindow {
                     { keys: "Ctrl+E", label: qsTr("Archive chat") },
                     { keys: "Ctrl+Shift+M", label: qsTr("Mute chat") },
                     { keys: "Ctrl+Shift+U", label: qsTr("Mark as unread") },
-                    { keys: "Esc", label: qsTr("Close the open panel") },
+                    { keys: "Ctrl+Alt+Shift+P", label: qsTr("Pin or unpin chat") },
+                    { keys: "Ctrl+,", label: qsTr("Settings") },
+                    { keys: "Ctrl+Alt+P", label: qsTr("Profile") },
+                    { keys: "Ctrl+Alt+E", label: qsTr("Emoji picker") },
+                    { keys: "Ctrl+Alt+G", label: qsTr("GIF picker") },
+                    { keys: "Esc", label: qsTr("Back one level (Chats is the starting page)") },
                     { keys: settingsPane.enterIsSend ? "Enter" : "Ctrl+Enter", label: qsTr("Send the message") },
                     { keys: settingsPane.enterIsSend ? "Shift+Enter" : "Enter", label: qsTr("New line in the message") }
                 ]
@@ -3862,26 +4240,61 @@ ApplicationWindow {
         id: editDialog
         objectName: "editMessageDialog"
         property string messageId: ""
+        property string ownerProfile: ""
+        property string ownerChat: ""
         title: qsTr("Edit message")
         acceptText: qsTr("Save")
-        acceptEnabled: editField.text.trim() !== ""
-        onOpened: editField.forceActiveFocus()
-        onAccepted: backend.editMessage(messageId, editField.text)
+        acceptEnabled: editField.text.trim() !== "" && ownerProfile === backend.profile && ownerChat === String(backend.selectedChat.jid || "")
+        onOpened: {
+            ownerProfile = backend.profile
+            ownerChat = String(backend.selectedChat.jid || "")
+            editField.forceActiveFocus()
+        }
+        onAccepted: {
+            if (settingsPane.replaceEmoticons) editedText.convertEmoticons(true)
+            backend.editMessage(messageId, editField.text)
+        }
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 96
+            Layout.preferredHeight: Math.min(240, Math.max(100, editField.contentHeight + 24))
             radius: 8
             color: Theme.surfaceMuted
+            ScrollView {
+                anchors.fill: parent
+                anchors.margins: 6
+                clip: true
+                contentWidth: availableWidth
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.vertical: OverlayScrollBar {}
             TextArea {
                 id: editField
-                anchors.fill: parent
-                anchors.margins: 10
+                padding: 8
                 background: null
                 color: Theme.text
                 font.pixelSize: 14
                 wrapMode: TextEdit.Wrap
                 selectByMouse: true
+                textFormat: TextEdit.PlainText
+                ComposerText {
+                    id: editedText
+                    editor: editField
+                    spellChecking: settingsPane.spellChecking && editDialog.opened
+                    spellLanguage: settingsPane.spellLanguage
+                }
+                ComposerEditMenu { id: editMessageMenu; editor: editField; formatter: editedText }
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.RightButton
+                    onPressed: mouse => editMessageMenu.showAt(editField.positionAt(mouse.x, mouse.y), mouse.x, mouse.y)
+                }
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers & Qt.ShiftModifier)) {
+                        editMessageMenu.showAt(editField.cursorPosition, editField.cursorRectangle.x, editField.cursorRectangle.y + editField.cursorRectangle.height)
+                        event.accepted = true
+                    }
+                }
                 Accessible.name: qsTr("Edited message")
+            }
             }
         }
     }

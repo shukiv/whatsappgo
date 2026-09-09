@@ -14,10 +14,20 @@ ItemDelegate {
     property bool on: false
     signal switched(bool value)
 
-    implicitHeight: root.description === "" ? 56 : 72
+    implicitHeight: Math.max(root.description === "" ? 56 : 72,
+        titleLabel.implicitHeight + (root.description ? detailLabel.implicitHeight + 2 : 0)
+        + topPadding + bottomPadding + 20)
+    opacity: enabled ? 1 : 0.5
+    focusPolicy: Qt.StrongFocus
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: text
+    Accessible.description: description
+    Accessible.checked: on
     onClicked: root.switched(!root.on)
 
     background: Rectangle {
+        border.width: root.visualFocus ? 2 : 0
+        border.color: Theme.primary
         color: root.down ? Theme.pressedRow : root.hovered ? Theme.hoverRow : "transparent"
     }
 
@@ -28,19 +38,23 @@ ItemDelegate {
             Layout.fillWidth: true
             spacing: 2
             Label {
+                id: titleLabel
                 Layout.fillWidth: true
                 text: root.text
+                textFormat: Text.PlainText
                 color: Theme.text
                 font.pixelSize: 15
-                elide: Text.ElideRight
+                wrapMode: Text.Wrap
             }
             Label {
+                id: detailLabel
                 Layout.fillWidth: true
                 visible: root.description !== ""
                 text: root.description
+                textFormat: Text.PlainText
                 color: Theme.textMuted
                 font.pixelSize: 13
-                elide: Text.ElideRight
+                wrapMode: Text.Wrap
             }
         }
         Rectangle {

@@ -20,9 +20,11 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include "updateinstaller.h"
+#include "photoquality.h"
 #include <QDateTime>
 #include <QFileInfo>
 #include <QFile>
+#include <QFutureWatcher>
 #include <QGuiApplication>
 #include <QImage>
 #include <QImageReader>
@@ -32,17 +34,85 @@
 #include <QLocalServer>
 #include <QMimeData>
 #include <QProcess>
+#include <QPromise>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QThreadPool>
 #include <QUrl>
 #include <QUuid>
 
 #include <utility>
+#include <memory>
 
 namespace {
 constexpr auto protocolVersion = 1;
+
+struct DocumentSaveResult {
+    QString path;
+    QString error;
+};
+
+DocumentSaveResult saveDocumentCopy(const QString &sourcePath, QString name, const QString &directory)
+{
+    // Remote filenames are display data, never paths. Also keep the resulting
+    // basename portable to Windows and below common filesystem byte limits.
+    name.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    name = name.section(QLatin1Char('/'), -1).trimmed();
+    name.replace(QRegularExpression(QStringLiteral("[\\x00-\\x1f\\x7f<>:\"/\\\\|?*]")), QStringLiteral("_"));
+    name.remove(QRegularExpression(QStringLiteral("^[. ]+|[. ]+$")));
+    if (name.isEmpty())
+        name = QStringLiteral("Document");
+    static const QRegularExpression reserved(QStringLiteral("^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\.|$)"),
+                                            QRegularExpression::CaseInsensitiveOption);
+    if (reserved.match(name).hasMatch())
+        name.prepend(QLatin1Char('_'));
+    const auto suffix = QFileInfo(name).suffix();
+    const auto extension = suffix.isEmpty() ? QString() : QLatin1Char('.') + suffix.left(16);
+    auto stem = suffix.isEmpty() ? name : QFileInfo(name).completeBaseName();
+    while (stem.toUtf8().size() > 180)
+        stem.chop(1);
+    if (!stem.isEmpty() && stem.back().isHighSurrogate())
+        stem.chop(1);
+    name = stem + extension;
+
+    const auto fail = [](const QString &detail) {
+        return DocumentSaveResult{{}, detail};
+    };
+    QFile source(sourcePath);
+    if (!QFileInfo(sourcePath).isFile() || !source.open(QIODevice::ReadOnly))
+        return fail(QCoreApplication::translate("RpcClient", "Could not read this document."));
+    if (directory.isEmpty() || !QDir().mkpath(directory))
+        return fail(QCoreApplication::translate("RpcClient", "Could not create the Downloads folder."));
+
+    // Exclusive creation also protects against concurrent downloads and
+    // symlinks; never truncate or replace a file that was already there.
+    for (int n = 0; n < 10000; ++n) {
+        const auto candidate = n == 0 ? name : stem + QStringLiteral(" (%1)").arg(n) + extension;
+        QFile output(QDir(directory).filePath(candidate));
+        if (!output.open(QIODevice::WriteOnly | QIODevice::NewOnly,
+                         QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+            const QFileInfo existing(output.fileName());
+            if (existing.exists() || existing.isSymLink())
+                continue;
+            return fail(QCoreApplication::translate("RpcClient", "Could not save the document: %1").arg(output.errorString()));
+        }
+        while (!source.atEnd()) {
+            const auto block = source.read(256 * 1024);
+            if (source.error() != QFileDevice::NoError || output.write(block) != block.size()) {
+                output.remove(); // Only the partial file exclusively created above.
+                return fail(QCoreApplication::translate("RpcClient", "Could not finish saving the document."));
+            }
+        }
+        if (!output.flush()) {
+            output.remove();
+            return fail(QCoreApplication::translate("RpcClient", "Could not finish saving the document."));
+        }
+        return {output.fileName(), {}};
+    }
+    return fail(QCoreApplication::translate("RpcClient", "Too many files with this name in Downloads."));
+}
 
 QString daemonName()
 {
@@ -218,6 +288,9 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     m_reconnectTimer.setInterval(1500);
     m_reconnectTimer.setSingleShot(true);
     connect(&m_reconnectTimer, &QTimer::timeout, this, &RpcClient::connectSocket);
+    m_chatRefreshTimer.setInterval(50);
+    m_chatRefreshTimer.setSingleShot(true);
+    connect(&m_chatRefreshTimer, &QTimer::timeout, this, &RpcClient::performChatRefresh);
     // Typing/recording are transient hints, not durable contact status. A
     // paused event can be lost when the sender closes the app or loses signal.
     m_chatPresenceExpiryTimer.setParent(this);
@@ -240,7 +313,9 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     connect(&m_socket, &QLocalSocket::connected, this, [this] {
         emit daemonConnectedChanged();
         refreshStatus();
+        refreshLocalSettings();
         refreshChats();
+        performChatRefresh(); // First paint need not wait for a burst window.
         refreshArchived();
         refreshUpdateStatus();
         // Anything that arrived while the connection was down is missing from
@@ -262,6 +337,8 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         }
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
+        m_chatRefreshTimer.stop();
+        m_chatRefreshAgain = false;
         m_chatPresenceExpiryTimer.stop();
         ++m_privacyRequestGeneration;
         m_privacySettings.clear();
@@ -495,7 +572,9 @@ bool RpcClient::loggedIn() const
 
 bool RpcClient::clipboardHasImage() const
 {
-    return QGuiApplication::clipboard()->mimeData()->hasImage();
+    const auto *clipboard = QGuiApplication::clipboard();
+    const auto *data = clipboard ? clipboard->mimeData() : nullptr;
+    return data && data->hasImage();
 }
 
 QString RpcClient::socketPath() const
@@ -634,6 +713,17 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         ++m_privacyRequestGeneration;
         m_privacySettings = data.toObject().value(QStringLiteral("settings")).toObject().toVariantMap();
         emit privacySettingsChanged();
+    } else if (name == QStringLiteral("profile.changed")) {
+        ++m_ownProfileGeneration;
+        m_ownProfileLoading = false;
+        m_ownProfileError.clear();
+        const auto payload = data.toObject();
+        if (payload.contains(QStringLiteral("about")))
+            m_ownProfile.insert(QStringLiteral("about"), payload.value(QStringLiteral("about")).toString());
+        if (payload.value(QStringLiteral("photo")).toBool())
+            m_ownProfile.remove(QStringLiteral("avatar_path"));
+        emit ownProfileChanged();
+        if (payload.value(QStringLiteral("photo")).toBool()) refreshOwnProfile();
     } else if (name == QStringLiteral("contact.presence")) {
         const auto payload = data.toObject();
         if (bareJid(payload.value(QStringLiteral("jid")).toString())
@@ -751,6 +841,9 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
     } else if (name == QStringLiteral("message.pinned")) {
         if (data.toObject().value(QStringLiteral("chat_jid")).toString() == m_selectedChat.value(QStringLiteral("jid")).toString())
             refreshChatInfo();
+    } else if (name == QStringLiteral("group.updated")) {
+        if (!m_groupInfoJid.isEmpty() && data.toObject().value(QStringLiteral("jid")).toString() == m_groupInfoJid)
+            refreshGroupInfo();
     } else if (name == QStringLiteral("chat.updated")) {
         const auto payload = data.toObject();
         const auto avatarPath = payload.value(QStringLiteral("avatar_path")).toString();
@@ -782,7 +875,16 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
 			loadRemoteHistoryPage();
     } else if (name == QStringLiteral("call.upsert") || name == QStringLiteral("calls.synced")) {
 		refreshCalls();
+    } else if (name == QStringLiteral("preferences.updated")) {
+        m_localSettings = data.toObject().toVariantMap();
+        if (m_localSettings.value(QStringLiteral("disable_link_previews")).toBool())
+            clearComposerLinkPreview();
+        emit localSettingsChanged();
+    } else if (name == QStringLiteral("notifications.updated")) {
+        m_notificationSettings = data.toObject().toVariantMap();
+        emit notificationSettingsChanged();
     } else if (name == QStringLiteral("notification.received")) {
+        // Per-profile preferences were already applied by the backend.
         const auto payload = data.toObject();
         // "handled" means the daemon already showed this through the desktop's
         // own notification service, which is what happens on Linux. Presenting
@@ -817,6 +919,22 @@ void RpcClient::refreshStatus()
 
 void RpcClient::refreshChats()
 {
+    // Do not postpone an already scheduled refresh: continuous traffic must
+    // still update the sidebar. At most one snapshot can be in flight.
+    m_chatRefreshAgain = true;
+    if (!m_chatRefreshInFlight && !m_chatRefreshTimer.isActive())
+        m_chatRefreshTimer.start();
+}
+
+void RpcClient::performChatRefresh()
+{
+    if (m_chatRefreshInFlight || !m_chatRefreshAgain)
+        return;
+    m_chatRefreshTimer.stop();
+    m_chatRefreshAgain = false;
+    if (!daemonConnected())
+        return; // The connected handler requests a fresh snapshot.
+    m_chatRefreshInFlight = true;
     // The unfiltered list backs the sidebar, the unread total and the new-chat
     // picker, so a search never narrows it; the query keeps its own results.
     // A refresh asks for as much as the sidebar had scrolled to, or the pages
@@ -826,6 +944,9 @@ void RpcClient::refreshChats()
     sendRequest(QStringLiteral("chats.list"),
                 {{QStringLiteral("limit"), wanted}, {QStringLiteral("offset"), 0}, {QStringLiteral("query"), QString()}},
                 [this, wanted](const QJsonValue &result, const QJsonObject &error) {
+                    m_chatRefreshInFlight = false;
+                    if (m_chatRefreshAgain && daemonConnected())
+                        m_chatRefreshTimer.start();
                     if (!error.isEmpty())
                         return;
                     m_chats = result.toArray().toVariantList();
@@ -841,11 +962,14 @@ void RpcClient::refreshChats()
                             if (chat.value(QStringLiteral("jid")).toString() != selectedJid)
                                 continue;
                             const auto retainedAvatar = m_selectedChat.value(QStringLiteral("avatar_path"));
-                            m_selectedChat = chat;
-                            if (m_selectedChat.value(QStringLiteral("avatar_path")).toString().isEmpty()
+                            auto selected = chat;
+                            if (selected.value(QStringLiteral("avatar_path")).toString().isEmpty()
                                 && !retainedAvatar.toString().isEmpty())
-                                m_selectedChat.insert(QStringLiteral("avatar_path"), retainedAvatar);
-                            emit selectedChatChanged();
+                                selected.insert(QStringLiteral("avatar_path"), retainedAvatar);
+                            if (m_selectedChat != selected) {
+                                m_selectedChat = selected;
+                                emit selectedChatChanged();
+                            }
                             break;
                         }
                     }
@@ -1026,15 +1150,38 @@ void RpcClient::rememberMessages(const QString &chatJid, const QVariantList &mes
 {
     if (chatJid.isEmpty())
         return;
-    m_messageCache.insert(chatJid, messages);
-    m_messageCacheOrder.removeAll(chatJid);
+    // Reopening starts at the latest page. Retaining thousands of older rows
+    // wastes memory and constructs a much larger view before that page lands.
+    // This is only a disposable UI cache; SQLite history is never trimmed.
+    constexpr qsizetype cacheBudget = 2 * 1024 * 1024;
+    const auto page = messages.sliced(qMax(qsizetype(0), messages.size() - 50));
+    const auto cost = QJsonDocument::fromVariant(page).toJson(QJsonDocument::Compact).size();
+    forgetMessages(chatJid);
+    if (cost > cacheBudget || page.isEmpty())
+        return;
+    m_messageCache.insert(chatJid, page);
+    m_messageCacheCosts.insert(chatJid, cost);
     m_messageCacheOrder.append(chatJid);
-    while (m_messageCacheOrder.size() > 12)
-        m_messageCache.remove(m_messageCacheOrder.takeFirst());
+    qsizetype total = 0;
+    for (const auto bytes : std::as_const(m_messageCacheCosts))
+        total += bytes;
+    while (m_messageCacheOrder.size() > 12 || total > cacheBudget) {
+        const auto oldest = m_messageCacheOrder.first();
+        total -= m_messageCacheCosts.value(oldest);
+        forgetMessages(oldest);
+    }
+}
+
+void RpcClient::forgetMessages(const QString &chatJid)
+{
+    m_messageCache.remove(chatJid);
+    m_messageCacheCosts.remove(chatJid);
+    m_messageCacheOrder.removeAll(chatJid);
 }
 
 void RpcClient::upgradeSmallLinkPreviews(const QVariantList &messages)
 {
+    if (m_localSettings.value(QStringLiteral("disable_link_previews")).toBool()) return;
     const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
     if (chatJid.isEmpty() || !daemonConnected())
         return;
@@ -1070,6 +1217,13 @@ void RpcClient::upgradeSmallLinkPreviews(const QVariantList &messages)
 
 void RpcClient::openChat(const QString &jid, const QString &title)
 {
+    // Native notification clicks and --chat use this entry point. Statuses
+    // belong to their own page; never expose the broadcast as a conversation
+    // or disturb the current chat and its unsent draft.
+    if (jid == QStringLiteral("status@broadcast")) {
+        emit statusPageRequested();
+        return;
+    }
     const auto generation = ++m_chatOpenGeneration;
     m_openingMessages = true;
     m_openingMessageUpdates.clear();
@@ -1099,9 +1253,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
         sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}},
                     {}, OnFailure::StayQuiet);
     refreshChatInfo();
-    // The daemon serves requests sequentially per connection. Read its local
-    // database before asking WhatsApp for a remote refresh so opening a chat
-    // is never held behind network history synchronisation.
+    // Show the local page without waiting for remote history synchronisation.
     sendRequest(QStringLiteral("messages.list"),
                 {{QStringLiteral("chat_jid"), jid}, {QStringLiteral("before"), 0}, {QStringLiteral("limit"), 50}},
                 [this, jid, generation](const QJsonValue &result, const QJsonObject &error) {
@@ -1117,7 +1269,19 @@ void RpcClient::openChat(const QString &jid, const QString &title)
                     rememberMessages(jid, loadedMessages);
                     m_messages.setUnreadBoundary(page.value(QStringLiteral("first_unread_id")).toString(),
                                                  page.value(QStringLiteral("unread_count")).toInt());
-                    m_messages.reset(loadedMessages);
+                    bool sameRows = m_messages.count() == loadedMessages.size();
+                    for (int row = 0; sameRows && row < loadedMessages.size(); ++row)
+                        sameRows = m_messages.at(row).value(QStringLiteral("id"))
+                            == loadedMessages.at(row).toMap().value(QStringLiteral("id"));
+                    if (sameRows) {
+                        // The cached page usually has the same identities.
+                        // Refresh metadata without constructing every bubble
+                        // a second time during the same chat activation.
+                        for (const auto &entry : loadedMessages)
+                            m_messages.upsert(entry.toMap());
+                    } else {
+                        m_messages.reset(loadedMessages);
+                    }
                     // Events can arrive while the first page is in flight.
                     // Replay them after its snapshot; IDs already in that page
                     // are updates, not a second unread message.
@@ -1229,7 +1393,7 @@ void RpcClient::clearChat(const QString &jid)
                     // The chat stays, so the open conversation is reloaded rather
                     // than closed: it is simply empty now.
                     if (m_selectedChat.value(QStringLiteral("jid")).toString() == jid) {
-                        m_messageCache.remove(jid);
+                        forgetMessages(jid);
                         openChat(jid, m_selectedChat.value(QStringLiteral("title")).toString());
                     }
                     refreshChats();
@@ -1346,6 +1510,91 @@ void RpcClient::refreshChatInfo()
                 });
 }
 
+void RpcClient::refreshGroupInfo()
+{
+    if (!m_selectedChat.value(QStringLiteral("jid")).toString().endsWith(QStringLiteral("@g.us")))
+        return;
+    if (m_groupInfoLoading) {
+        m_groupRefreshAgain = true;
+        return;
+    }
+    m_groupInfoJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    const auto jid = m_groupInfoJid;
+    const auto generation = m_groupGeneration;
+    m_groupInfoLoading = true;
+    emit groupInfoChanged();
+    sendRequest(QStringLiteral("group.info"), {{QStringLiteral("chat_jid"), jid}},
+                [this, jid, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_groupGeneration || m_groupInfoJid != jid)
+                        return;
+                    m_groupInfoLoading = false;
+                    if (error.isEmpty()) {
+                        m_groupInfo = result.toObject().toVariantMap();
+                        m_groupInfoError.clear();
+                    } else {
+                        m_groupInfoError = error.value(QStringLiteral("message")).toString();
+                    }
+                    emit groupInfoChanged();
+                    if (m_groupRefreshAgain) {
+                        m_groupRefreshAgain = false;
+                        refreshGroupInfo();
+                    }
+                }, OnFailure::StayQuiet);
+}
+
+void RpcClient::runGroupAction(const QString &jid, const QString &method, const QString &action, QJsonObject params)
+{
+    if (m_groupActionBusy || jid.isEmpty() || jid != m_groupInfoJid
+        || jid != m_selectedChat.value(QStringLiteral("jid")).toString())
+        return;
+    const auto generation = m_groupGeneration;
+    m_groupActionBusy = true;
+    m_groupInfoError.clear();
+    if (action == QStringLiteral("invite"))
+        m_groupInviteLink.clear();
+    emit groupInfoChanged();
+    params.insert(QStringLiteral("chat_jid"), jid);
+    sendRequest(method, params, [this, jid, action, generation](const QJsonValue &result, const QJsonObject &error) {
+        if (generation != m_groupGeneration || jid != m_groupInfoJid)
+            return;
+        m_groupActionBusy = false;
+        if (!error.isEmpty()) {
+            m_groupInfoError = error.value(QStringLiteral("message")).toString();
+        } else if (action == QStringLiteral("invite")) {
+            m_groupInviteLink = result.toObject().value(QStringLiteral("link")).toString();
+        } else if (action == QStringLiteral("leave")) {
+            // A metadata request started before the exit may still describe
+            // us as a member. Do not let that late reply restore permissions.
+            ++m_groupGeneration;
+            m_groupInfoLoading = m_groupRefreshAgain = false;
+            m_groupInfo.insert(QStringLiteral("is_member"), false);
+            m_groupInfo.insert(QStringLiteral("can_add"), false);
+            m_groupInfo.insert(QStringLiteral("can_invite"), false);
+            m_groupInfo.insert(QStringLiteral("can_manage"), false);
+        }
+        emit groupInfoChanged();
+        emit groupActionFinished(jid, action, error.isEmpty());
+        if (action != QStringLiteral("invite") && action != QStringLiteral("leave"))
+            refreshGroupInfo(); // Also refresh partial member-change failures.
+    }, OnFailure::StayQuiet);
+}
+
+void RpcClient::changeGroupMembers(const QString &jid, const QString &action, const QStringList &members)
+{
+    runGroupAction(jid, QStringLiteral("group.members"), action,
+                   {{QStringLiteral("action"), action}, {QStringLiteral("participants"), QJsonArray::fromStringList(members)}});
+}
+
+void RpcClient::requestGroupInviteLink(const QString &jid, bool reset)
+{
+    runGroupAction(jid, QStringLiteral("group.invite_link"), QStringLiteral("invite"), {{QStringLiteral("reset"), reset}});
+}
+
+void RpcClient::leaveGroup(const QString &jid)
+{
+    runGroupAction(jid, QStringLiteral("group.leave"), QStringLiteral("leave"), {});
+}
+
 // The media browser is the same content without a chat filter, so it keeps its
 // own page state rather than fighting the contact drawer over one buffer.
 void RpcClient::refreshChatLabels()
@@ -1419,6 +1668,39 @@ void RpcClient::refreshPrivacySettings()
                 }, OnFailure::StayQuiet);
 }
 
+void RpcClient::refreshNotificationSettings()
+{
+    if (!daemonConnected() || m_notificationSettingsBusy)
+        return;
+    const auto generation = ++m_notificationSettingsGeneration;
+    sendRequest(QStringLiteral("notifications.get"), {},
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || generation != m_notificationSettingsGeneration)
+                        return;
+                    m_notificationSettings = result.toObject().toVariantMap();
+                    emit notificationSettingsChanged();
+                });
+}
+
+void RpcClient::setNotificationSetting(const QString &name, bool value)
+{
+    if (!daemonConnected() || m_notificationSettingsBusy)
+        return;
+    const auto generation = ++m_notificationSettingsGeneration;
+    m_notificationSettingsBusy = true;
+    emit notificationSettingsChanged();
+    sendRequest(QStringLiteral("notifications.set"),
+                {{QStringLiteral("name"), name}, {QStringLiteral("value"), value}},
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_notificationSettingsGeneration)
+                        return;
+                    m_notificationSettingsBusy = false;
+                    if (error.isEmpty())
+                        m_notificationSettings = result.toObject().toVariantMap();
+                    emit notificationSettingsChanged();
+                });
+}
+
 void RpcClient::setPrivacySetting(const QString &name, const QString &value)
 {
     const auto generation = ++m_privacyRequestGeneration;
@@ -1437,6 +1719,192 @@ void RpcClient::setPrivacySetting(const QString &name, const QString &value)
                     m_privacySettings = result.toObject().toVariantMap();
                     emit privacySettingsChanged();
                 });
+}
+
+void RpcClient::testNotificationSound(const QString &kind)
+{
+    sendRequest(QStringLiteral("notifications.test_sound"), {{QStringLiteral("kind"), kind}},
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    if (error.isEmpty()) emit noticeOccurred(tr("Sound played. If you did not hear it, check your desktop volume and output device."));
+                });
+}
+
+void RpcClient::refreshLocalSettings()
+{
+    if (!daemonConnected() || m_localSettingsBusy) return;
+    const auto generation = ++m_localSettingsGeneration;
+    sendRequest(QStringLiteral("preferences.get"), {},
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || generation != m_localSettingsGeneration) return;
+                    m_localSettings = result.toObject().toVariantMap();
+                    if (m_localSettings.value(QStringLiteral("disable_link_previews")).toBool()) clearComposerLinkPreview();
+                    emit localSettingsChanged();
+                });
+}
+
+void RpcClient::setLocalSetting(const QString &name, bool value)
+{
+    if (!daemonConnected() || m_localSettingsBusy) return;
+    const auto generation = ++m_localSettingsGeneration;
+    m_localSettingsBusy = true;
+    emit localSettingsChanged();
+    sendRequest(QStringLiteral("preferences.set"), {{QStringLiteral("name"), name}, {QStringLiteral("value"), value}},
+                [this, generation](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_localSettingsGeneration) return;
+                    m_localSettingsBusy = false;
+                    if (error.isEmpty()) m_localSettings = result.toObject().toVariantMap();
+                    if (m_localSettings.value(QStringLiteral("disable_link_previews")).toBool()) clearComposerLinkPreview();
+                    emit localSettingsChanged();
+                });
+}
+
+void RpcClient::setProfileName(const QString &name)
+{
+    const auto profile = m_profile;
+    sendRequest(QStringLiteral("profile.set_name"), {{QStringLiteral("name"), name}},
+                [this, profile](const QJsonValue &, const QJsonObject &error) {
+                    if (!error.isEmpty() || profile != m_profile) return;
+                    emit noticeOccurred(tr("Profile name updated."));
+                    refreshStatus();
+                });
+}
+
+void RpcClient::refreshOwnProfile()
+{
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool() || m_ownProfileLoading) return;
+    const auto generation = ++m_ownProfileGeneration;
+    m_ownProfileLoading = true;
+    m_ownProfileError.clear();
+    emit ownProfileChanged();
+    sendRequest(QStringLiteral("profile.get"), {}, [this, generation](const QJsonValue &result, const QJsonObject &error) {
+        if (generation != m_ownProfileGeneration) return;
+        m_ownProfileLoading = false;
+        m_ownProfileError = error.value(QStringLiteral("message")).toString();
+        if (error.isEmpty()) m_ownProfile = result.toObject().toVariantMap();
+        emit ownProfileChanged();
+    }, OnFailure::StayQuiet);
+}
+
+QString RpcClient::profilePhotoPreview() const
+{
+    return m_profilePhoto.path.isEmpty() ? QString() : QUrl::fromLocalFile(m_profilePhoto.path).toString();
+}
+
+void RpcClient::clearProfilePhoto()
+{
+    ++m_profilePhotoGeneration;
+    m_profilePhoto = {};
+    m_profilePhotoError.clear();
+    m_profilePhotoPreparing = false;
+    emit profilePhotoChanged();
+}
+
+void RpcClient::prepareProfilePhoto(const QString &localUrl)
+{
+    if (m_profilePhotoSaving || m_profilePhotoPreparing) return;
+    clearProfilePhoto();
+    const QUrl url(localUrl);
+    if (!url.isLocalFile()) {
+        m_profilePhotoError = tr("Choose a photo from your computer.");
+        emit profilePhotoChanged();
+        return;
+    }
+    const auto generation = m_profilePhotoGeneration;
+    const auto path = url.toLocalFile();
+    m_profilePhotoPreparing = true;
+    emit profilePhotoChanged();
+    auto promise = std::make_shared<QPromise<PhotoQuality::Prepared>>();
+    auto *watcher = new QFutureWatcher<PhotoQuality::Prepared>(this);
+    connect(watcher, &QFutureWatcher<PhotoQuality::Prepared>::finished, this, [this, watcher, generation] {
+        const auto prepared = watcher->result();
+        watcher->deleteLater();
+        if (generation != m_profilePhotoGeneration) return;
+        m_profilePhotoPreparing = false;
+        m_profilePhoto = prepared;
+        m_profilePhotoError = prepared.error;
+        emit profilePhotoChanged();
+    });
+    promise->start();
+    watcher->setFuture(promise->future());
+    static QThreadPool profilePhotoPool;
+    profilePhotoPool.setMaxThreadCount(1);
+    profilePhotoPool.start([promise, path] {
+        promise->addResult(PhotoQuality::prepareProfilePhoto(path));
+        promise->finish();
+    });
+}
+
+void RpcClient::saveProfilePhoto(bool remove)
+{
+    if (m_profilePhotoSaving || m_profilePhotoPreparing) return;
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool()) {
+        m_profilePhotoError = tr("Connect to WhatsApp before changing your photo.");
+        emit profilePhotoChanged();
+        return;
+    }
+    if (!remove && m_profilePhoto.path.isEmpty()) return;
+    const auto generation = ++m_profilePhotoSaveGeneration;
+    // Hold the private copy until the daemon acknowledges, even if the popup
+    // closes or the account changes while the upload is in flight.
+    const auto prepared = m_profilePhoto;
+    m_profilePhotoSaving = true;
+    m_profilePhotoError.clear();
+    emit profilePhotoChanged();
+    sendRequest(QStringLiteral("profile.set_photo"),
+                {{QStringLiteral("path"), remove ? QString() : prepared.path}, {QStringLiteral("remove"), remove}},
+                [this, generation, prepared, remove](const QJsonValue &, const QJsonObject &error) {
+        if (generation != m_profilePhotoSaveGeneration) return;
+        m_profilePhotoSaving = false;
+        m_profilePhotoError = error.value(QStringLiteral("message")).toString();
+        if (!error.isEmpty()) {
+            emit profilePhotoChanged();
+            // The reader may have closed the popup during an upload.
+            emit noticeOccurred(tr("Could not update the profile photo: %1").arg(m_profilePhotoError));
+            return;
+        }
+        clearProfilePhoto();
+        ++m_ownProfileGeneration;
+        m_ownProfileLoading = false;
+        m_ownProfile.remove(QStringLiteral("avatar_path"));
+        emit ownProfileChanged();
+        refreshOwnProfile();
+        emit profilePhotoSaved();
+        emit noticeOccurred(remove ? tr("Profile photo removed.") : tr("Profile photo updated."));
+    }, OnFailure::StayQuiet);
+}
+
+void RpcClient::refreshStatusAudience()
+{
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool() || m_statusAudienceLoading) return;
+    const auto generation = ++m_statusAudienceGeneration;
+    m_statusAudienceLoading = true;
+    m_statusAudienceError.clear();
+    emit statusAudienceChanged();
+    sendRequest(QStringLiteral("status.audience"), {}, [this, generation](const QJsonValue &result, const QJsonObject &error) {
+        if (generation != m_statusAudienceGeneration) return;
+        m_statusAudienceLoading = false;
+        m_statusAudienceError = error.value(QStringLiteral("message")).toString();
+        if (error.isEmpty()) m_statusAudience = result.toObject().toVariantMap();
+        emit statusAudienceChanged();
+    }, OnFailure::StayQuiet);
+}
+
+void RpcClient::setDefaultMessageTimer(int seconds)
+{
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool() || m_defaultTimerBusy) return;
+    const auto generation = ++m_defaultTimerGeneration;
+    m_defaultTimerBusy = true;
+    emit defaultTimerBusyChanged();
+    sendRequest(QStringLiteral("privacy.default_timer.set"), {{QStringLiteral("seconds"), seconds}},
+                [this, generation](const QJsonValue &, const QJsonObject &error) {
+        if (generation != m_defaultTimerGeneration) return;
+        m_defaultTimerBusy = false;
+        emit defaultTimerBusyChanged();
+        if (error.isEmpty()) {
+            emit defaultTimerSaved();
+            emit noticeOccurred(tr("Default timer updated for new chats. Existing chat timers were not changed."));
+        }
+    });
 }
 
 void RpcClient::createChannel(const QString &name, const QString &description)
@@ -1568,14 +2036,16 @@ void RpcClient::postMediaStatus(const QString &localUrl, const QString &caption)
 
 void RpcClient::setAbout(const QString &text)
 {
+    const auto profile = m_profile;
     sendRequest(QStringLiteral("profile.set_about"), {{QStringLiteral("text"), text}},
-                [this](const QJsonValue &, const QJsonObject &error) {
+                [this, profile](const QJsonValue &, const QJsonObject &error) {
+                    if (profile != m_profile) return;
                     if (!error.isEmpty()) {
                         emit errorOccurred(error.value(QStringLiteral("message")).toString());
                         return;
                     }
                     emit noticeOccurred(tr("About updated."));
-                    refreshStatus();
+                    refreshOwnProfile();
                 });
 }
 
@@ -1668,6 +2138,13 @@ void RpcClient::refreshSharedContent(const QString &category, bool append)
 
 void RpcClient::clearChatInfo()
 {
+    ++m_groupGeneration;
+    m_groupInfo.clear();
+    m_groupInfoJid.clear();
+    m_groupInfoError.clear();
+    m_groupInviteLink.clear();
+    m_groupInfoLoading = m_groupRefreshAgain = m_groupActionBusy = false;
+    emit groupInfoChanged();
     const bool hadInfo = !m_chatInfo.isEmpty();
     const bool hadContent = !m_sharedContent.isEmpty() || !m_sharedContentCategory.isEmpty()
         || m_sharedContentHasMore || m_sharedContentLoading;
@@ -1858,6 +2335,10 @@ void RpcClient::sendStatusReply(const QString &recipientJid, const QString &stat
 
 void RpcClient::requestLinkPreview(const QString &text)
 {
+    if (m_localSettings.value(QStringLiteral("disable_link_previews")).toBool()) {
+        clearComposerLinkPreview();
+        return;
+    }
     static const QRegularExpression urlPattern(QStringLiteral("https?://[^\\s<>\\\"']+"),
                                                 QRegularExpression::CaseInsensitiveOption);
     const auto match = urlPattern.match(text);
@@ -1897,28 +2378,162 @@ void RpcClient::clearComposerLinkPreview()
     emit composerLinkPreviewChanged();
 }
 
-void RpcClient::sendFile(const QString &localUrl, const QString &caption, const QString &replyTo, bool document)
+void RpcClient::sendFile(const QString &localUrl, const QString &caption, const QString &replyTo, bool document, const QString &photoQuality)
 {
-    if (m_selectedChat.isEmpty())
+    sendPreparedAttachment(localUrl, caption, replyTo, document, false, photoQuality);
+}
+
+void RpcClient::loadStickers(bool favorites, bool more)
+{
+    if (more && (m_stickersLoading || !m_stickersHasMore || m_stickers.size() >= 240)) return;
+    if (!more || m_stickersFavorites != favorites) {
+        ++m_stickerGeneration;
+        m_stickers.clear(); m_stickersHasMore = false;
+    }
+    m_stickersFavorites = favorites;
+    const auto generation = m_stickerGeneration, session = m_attachmentSession;
+    const int offset = m_stickers.size();
+    m_stickersLoading = true; m_stickersError.clear(); emit stickersChanged();
+    sendRequest(QStringLiteral("media.shared"), {{QStringLiteral("category"), favorites ? QStringLiteral("starred_stickers") : QStringLiteral("stickers")}, {QStringLiteral("offset"), offset}, {QStringLiteral("limit"), 48}},
+        [this, generation, session](const QJsonValue &result, const QJsonObject &error) {
+            if (generation != m_stickerGeneration || session != m_attachmentSession) return;
+            m_stickersLoading = false;
+            if (!error.isEmpty()) m_stickersError = tr("Could not load stickers. Reconnect and retry.");
+            else {
+                const auto page = result.toObject();
+                m_stickers += page.value(QStringLiteral("messages")).toArray().toVariantList();
+                m_stickersHasMore = page.value(QStringLiteral("has_more")).toBool() && m_stickers.size() < 240;
+            }
+            emit stickersChanged();
+        }, OnFailure::StayQuiet);
+}
+
+void RpcClient::sendGif(const QString &url, const QString &profile, const QString &chatJid, const QString &replyTo)
+{
+    const auto path = QUrl(url).toLocalFile();
+    if (path.isEmpty()) { emit expressionSendFinished(url, false); return; }
+    sendExpressionRequest(QStringLiteral("message.send_media"), {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("path"), path}, {QStringLiteral("gif"), true}, {QStringLiteral("reply_to"), replyTo}}, url, profile, chatJid, replyTo);
+}
+
+void RpcClient::sendSticker(const QString &fromChat, const QString &messageId, const QString &profile, const QString &chatJid, const QString &replyTo)
+{
+    const auto token = QStringLiteral("sticker:") + fromChat + QStringLiteral("/") + messageId;
+    sendExpressionRequest(QStringLiteral("sticker.send"), {{QStringLiteral("chat_jid"), fromChat}, {QStringLiteral("message_id"), messageId}, {QStringLiteral("to_chat_jid"), chatJid}, {QStringLiteral("reply_to"), replyTo}}, token, profile, chatJid, replyTo);
+}
+
+void RpcClient::sendCreatedSticker(const QString &url, const QString &profile, const QString &chatJid, const QString &replyTo)
+{
+    const auto path = QUrl(url).toLocalFile();
+    if (path.isEmpty()) { emit expressionSendFinished(url, false); return; }
+    sendExpressionRequest(QStringLiteral("message.send_media"), {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("path"), path}, {QStringLiteral("sticker"), true}, {QStringLiteral("reply_to"), replyTo}}, url, profile, chatJid, replyTo);
+}
+
+void RpcClient::searchShareContacts(const QString &query, const QString &token)
+{
+    if (!daemonConnected()) {
+        emit shareContactsReady(token, {}, tr("The local service is disconnected. Reconnect and retry."));
         return;
-    const auto path = QUrl(localUrl).toLocalFile();
-    if (path.isEmpty())
+    }
+    const auto session = m_attachmentSession;
+    sendRequest(QStringLiteral("contacts.shareable"), {{QStringLiteral("query"), query}},
+        [this, token, session](const QJsonValue &result, const QJsonObject &error) {
+            if (session != m_attachmentSession) return;
+            emit shareContactsReady(token, result.toArray().toVariantList(), error.isEmpty() ? QString() :
+                tr("Could not load contacts. Retry or enter a name and number."));
+        }, OnFailure::StayQuiet);
+}
+
+void RpcClient::sendContactCard(const QString &name, const QString &phone, const QString &token,
+                                const QString &profile, const QString &chatJid, const QString &replyTo)
+{
+    if (!m_status.value(QStringLiteral("connected")).toBool()) {
+        emit errorOccurred(tr("Reconnect to WhatsApp before sharing a contact."));
+        emit expressionSendFinished(token, false);
         return;
+    }
+    sendExpressionRequest(QStringLiteral("message.send_contact"), {
+        {QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("reply_to"), replyTo},
+        {QStringLiteral("contact"), QJsonObject{{QStringLiteral("name"), name}, {QStringLiteral("phone"), phone}}}
+    }, token, profile, chatJid, replyTo);
+}
+
+void RpcClient::sendExpressionRequest(const QString &method, QJsonObject params, const QString &token, const QString &profile, const QString &chatJid, const QString &replyTo)
+{
+    if (m_busy || profile != m_profile || chatJid.isEmpty() || m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid || !daemonConnected()) {
+        emit errorOccurred(tr("The conversation changed or is busy. Open the picker again before sending."));
+        emit expressionSendFinished(token, false);
+        return;
+    }
+    const auto session = m_attachmentSession;
+    setBusy(true);
+    sendRequest(method, params, [this, token, session, profile, chatJid, replyTo](const QJsonValue &, const QJsonObject &error) {
+        if (session == m_attachmentSession) setBusy(false);
+        const bool success = error.isEmpty();
+        emit expressionSendFinished(token, success);
+        emit attachmentSendFinished(profile, chatJid, replyTo, success);
+        if (success) emit messageSent();
+    });
+}
+
+void RpcClient::sendPreparedAttachment(const QString &localUrl, const QString &caption, const QString &replyTo, bool document, bool clipboard, const QString &quality)
+{
     const auto sentProfile = m_profile;
     const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    const auto generation = m_attachmentSession;
+    const auto path = QUrl(localUrl).toLocalFile();
+    const auto finish = [this, sentProfile, generation, chatJid, localUrl, replyTo, clipboard, path](bool success) {
+        if (generation == m_attachmentSession) setBusy(false);
+        if (clipboard) {
+            if (success) { QFile::remove(path); emit noticeOccurred(tr("Image sent")); }
+            emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, success);
+        } else {
+            emit attachmentSendFinished(sentProfile, chatJid, replyTo, success);
+        }
+        if (success) emit messageSent();
+    };
+    if (chatJid.isEmpty() || path.isEmpty() || (clipboard && !isClipboardFile(path))) {
+        emit errorOccurred(tr("The attachment is no longer available."));
+        finish(false);
+        return;
+    }
     setBusy(true);
-    // WhatsApp Web quotes a message whatever is attached to the reply, so the
-    // reply the composer is showing travels with the file.
-    sendRequest(QStringLiteral("message.send_media"),
-                {{QStringLiteral("chat_jid"), chatJid},
-                 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
-                 {QStringLiteral("reply_to"), replyTo}, {QStringLiteral("document"), document}},
-                [this, sentProfile, chatJid, replyTo](const QJsonValue &, const QJsonObject &error) {
-                    setBusy(false);
-                    emit attachmentSendFinished(sentProfile, chatJid, replyTo, error.isEmpty());
-                    if (error.isEmpty())
-                        emit messageSent();
-                });
+    const auto upload = [this, sentProfile, generation, chatJid, caption, replyTo, document, finish](const PhotoQuality::Prepared &prepared) {
+        if (m_profile != sentProfile || generation != m_attachmentSession || !daemonConnected()) {
+            finish(false);
+            return;
+        }
+        if (!prepared.error.isEmpty()) {
+            emit errorOccurred(prepared.error);
+            finish(false);
+            return;
+        }
+        sendRequest(QStringLiteral("message.send_media"),
+                    {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("path"), prepared.path},
+                     {QStringLiteral("caption"), caption}, {QStringLiteral("reply_to"), replyTo},
+                     {QStringLiteral("document"), document}},
+                    [finish, prepared](const QJsonValue &, const QJsonObject &error) { finish(error.isEmpty()); });
+    };
+    if (document || (quality != QStringLiteral("standard") && quality != QStringLiteral("hd"))) {
+        upload(PhotoQuality::Prepared{path, {}, {}});
+        return;
+    }
+    auto promise = std::make_shared<QPromise<PhotoQuality::Prepared>>();
+    auto *watcher = new QFutureWatcher<PhotoQuality::Prepared>(this);
+    connect(watcher, &QFutureWatcher<PhotoQuality::Prepared>::finished, this, [watcher, upload] {
+        const auto prepared = watcher->result();
+        watcher->deleteLater();
+        upload(prepared);
+    });
+    promise->start();
+    watcher->setFuture(promise->future());
+    // A dedicated single-worker queue bounds image allocations and keeps the
+    // UI and document downloads responsive even for multi-file selections.
+    static QThreadPool photoPool;
+    photoPool.setMaxThreadCount(1);
+    photoPool.start([promise, path, quality] {
+        promise->addResult(PhotoQuality::prepare(path, quality));
+        promise->finish();
+    });
 }
 
 void RpcClient::sendVoice(const QString &localUrl, const QString &chatJid, const QString &recordingProfile, const QString &replyTo)
@@ -2143,15 +2758,49 @@ void RpcClient::switchProfile(const QString &profile)
 {
     if (profile == m_profile || !m_profiles.contains(profile))
         return;
+    ++m_profilePhotoGeneration;
+    ++m_profilePhotoSaveGeneration;
     ++m_chatOpenGeneration;
     m_openingMessages = false;
     m_openingMessageUpdates.clear();
     m_chatPresenceExpiryTimer.stop();
     m_reconnectTimer.stop();
+    m_chatRefreshTimer.stop();
+    m_chatRefreshAgain = false;
     m_socket.abort();
     abandonPendingRequests(tr("The account was changed."), false);
     m_profile = profile;
+    m_profilePhoto = {};
+    m_profilePhotoError.clear();
+    m_profilePhotoPreparing = false;
+    m_profilePhotoSaving = false;
+    emit profilePhotoChanged();
     m_status.clear();
+    ++m_notificationSettingsGeneration;
+    m_notificationSettings.clear();
+    m_notificationSettingsBusy = false;
+    emit notificationSettingsChanged();
+    ++m_localSettingsGeneration;
+    m_localSettings.clear();
+    m_localSettingsBusy = false;
+    ++m_attachmentSession;
+    ++m_stickerGeneration;
+    m_stickers.clear(); m_stickersLoading = false; m_stickersHasMore = false; m_stickersError.clear();
+    emit stickersChanged();
+    ++m_ownProfileGeneration;
+    m_ownProfile.clear();
+    m_ownProfileError.clear();
+    m_ownProfileLoading = false;
+    emit ownProfileChanged();
+    ++m_statusAudienceGeneration;
+    m_statusAudience.clear();
+    m_statusAudienceError.clear();
+    m_statusAudienceLoading = false;
+    emit statusAudienceChanged();
+    ++m_defaultTimerGeneration;
+    m_defaultTimerBusy = false;
+    emit defaultTimerBusyChanged();
+    emit localSettingsChanged();
     ++m_privacyRequestGeneration;
     m_privacySettings.clear();
     emit privacySettingsChanged();
@@ -2170,6 +2819,7 @@ void RpcClient::switchProfile(const QString &profile)
     m_archivedCount = 0;
     m_messages.clear();
     m_messageCache.clear();
+    m_messageCacheCosts.clear();
     m_messageCacheOrder.clear();
     m_selectedChat.clear();
     m_searchResults.clear();
@@ -2189,6 +2839,7 @@ void RpcClient::switchProfile(const QString &profile)
 	clearComposerLinkPreview();
     QSettings().setValue(QStringLiteral("accounts/current"), m_profile);
     emit profileChanged();
+    emit documentDownloadsChanged();
     emit statusChanged();
     emit chatsChanged();
     emit archivedChatsChanged();
@@ -2663,6 +3314,89 @@ void RpcClient::downloadMedia(const QString &messageId)
 		});
 }
 
+QStringList RpcClient::documentDownloads() const
+{
+    QStringList result;
+    const auto prefix = m_profile + QLatin1Char('/');
+    for (const auto &key : m_documentDownloads) {
+        if (key.startsWith(prefix))
+            result.append(key.mid(prefix.size()));
+    }
+    return result;
+}
+
+void RpcClient::downloadDocument(const QVariantMap &requested)
+{
+    const auto id = requested.value(QStringLiteral("id")).toString();
+    const auto chat = requested.value(QStringLiteral("chat_jid")).toString();
+    if (id.isEmpty() || chat.isEmpty() || requested.value(QStringLiteral("kind")).toString() != QStringLiteral("document"))
+        return;
+    const auto profile = m_profile;
+    const auto key = profile + QLatin1Char('/') + chat + QLatin1Char('/') + id;
+    if (m_documentDownloads.contains(key))
+        return;
+    m_documentDownloads.insert(key);
+    emit documentDownloadsChanged();
+
+    const auto save = [this, key, profile](const QVariantMap &message) {
+        const auto path = message.value(QStringLiteral("media_path")).toString();
+        auto name = message.value(QStringLiteral("media_name")).toString();
+        if (name.isEmpty())
+            name = QFileInfo(path).fileName();
+        const auto directory = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        // Disk copying must not block scrolling or typing, even for a large
+        // document. The watcher delivers completion safely on our UI thread.
+        auto promise = std::make_shared<QPromise<DocumentSaveResult>>();
+        auto *watcher = new QFutureWatcher<DocumentSaveResult>(this);
+        connect(watcher, &QFutureWatcher<DocumentSaveResult>::finished, this,
+                [this, watcher, key, profile] {
+                    const auto result = watcher->result();
+                    watcher->deleteLater();
+                    m_documentDownloads.remove(key);
+                    emit documentDownloadsChanged();
+                    if (m_profile != profile)
+                        return;
+                    if (!result.error.isEmpty())
+                        emit errorOccurred(result.error);
+                    else
+                        emit noticeOccurred(tr("File saved to %1").arg(result.path));
+                });
+        promise->start();
+        watcher->setFuture(promise->future());
+        QThreadPool::globalInstance()->start([promise, path, name, directory] {
+            promise->addResult(saveDocumentCopy(path, name, directory));
+            promise->finish();
+        });
+    };
+
+    // A cached attachment can be saved offline. A missing/evicted cache entry
+    // goes through the existing media recovery and download endpoint.
+    if (QFileInfo(requested.value(QStringLiteral("media_path")).toString()).isFile()) {
+        save(requested);
+        return;
+    }
+    sendRequest(QStringLiteral("message.download"),
+                {{QStringLiteral("chat_jid"), chat}, {QStringLiteral("message_id"), id}},
+                [this, profile, key, id, save](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty() || m_profile != profile) {
+                        m_documentDownloads.remove(key);
+                        emit documentDownloadsChanged();
+                        return;
+                    }
+                    const auto message = result.toObject().toVariantMap();
+                    if (message.value(QStringLiteral("id")).toString() != id
+                        || message.value(QStringLiteral("kind")).toString() != QStringLiteral("document")) {
+                        m_documentDownloads.remove(key);
+                        emit documentDownloadsChanged();
+                        emit errorOccurred(tr("Could not download this document."));
+                        return;
+                    }
+                    if (belongsToOpenChat(message))
+                        upsertMessage(message);
+                    save(message);
+                });
+}
+
 void RpcClient::sweepClipboardDirectory(const QString &directory, qint64 maxAgeSeconds)
 {
 	// A pasted image is written to disk, sent, and deleted. Anything still
@@ -2744,34 +3478,9 @@ QString RpcClient::rotatedImage(const QString &localUrl, int degrees)
 	return QUrl::fromLocalFile(turned).toString();
 }
 
-void RpcClient::sendClipboardImage(const QString &localUrl, const QString &caption, const QString &replyTo)
+void RpcClient::sendClipboardImage(const QString &localUrl, const QString &caption, const QString &replyTo, const QString &photoQuality)
 {
-	const auto sentProfile = m_profile;
-	const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
-	if (chatJid.isEmpty()) {
-		emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, false);
-		return;
-	}
-	const auto path = QUrl(localUrl).toLocalFile();
-	if (path.isEmpty() || !isClipboardFile(path)) {
-		emit errorOccurred(tr("The pasted image is no longer available."));
-		emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, false);
-		return;
-	}
-	setBusy(true);
-	sendRequest(QStringLiteral("message.send_media"),
-		{{QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
-		 {QStringLiteral("path"), path}, {QStringLiteral("caption"), caption},
-		 {QStringLiteral("reply_to"), replyTo}},
-		[this, path, sentProfile, chatJid, localUrl, replyTo](const QJsonValue &, const QJsonObject &error) {
-			setBusy(false);
-			if (error.isEmpty()) {
-				QFile::remove(path);
-				emit noticeOccurred(tr("Image sent"));
-				emit messageSent();
-			}
-			emit clipboardSendFinished(sentProfile, chatJid, localUrl, replyTo, error.isEmpty());
-		});
+    sendPreparedAttachment(localUrl, caption, replyTo, false, true, photoQuality);
 }
 
 void RpcClient::discardClipboardImage(const QString &localUrl)
@@ -2926,6 +3635,22 @@ void RpcClient::applyChatAvatar(const QString &jid, const QString &path)
     if (update(m_chats)) {
         syncChatListModel();
         emit chatsChanged();
+    }
+    auto members = m_groupInfo.value(QStringLiteral("participants")).toList();
+    bool membersChanged = false;
+    for (auto &entry : members) {
+        auto member = entry.toMap();
+        if ((member.value(QStringLiteral("jid")).toString() == jid
+             || member.value(QStringLiteral("aliases")).toStringList().contains(jid))
+            && member.value(QStringLiteral("avatar_path")).toString() != path) {
+            member.insert(QStringLiteral("avatar_path"), path);
+            entry = member;
+            membersChanged = true;
+        }
+    }
+    if (membersChanged) {
+        m_groupInfo.insert(QStringLiteral("participants"), members);
+        emit groupInfoChanged();
     }
     if (update(m_archivedChats)) {
         m_archivedChatList.sync(m_archivedChats);

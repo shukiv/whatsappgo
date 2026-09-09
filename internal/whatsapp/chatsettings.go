@@ -500,6 +500,12 @@ func (c *Client) ForwardMessage(ctx context.Context, fromChatJID, messageID, toC
 	if original.Revoked {
 		return model.Message{}, errors.New("a deleted message cannot be forwarded")
 	}
+	if original.Kind == "view_once" {
+		return model.Message{}, errors.New("view-once messages cannot be forwarded")
+	}
+	if original.Kind == "sticker" {
+		return c.sendStoredSticker(ctx, fromChatJID, messageID, toChatJID, "", original.ForwardingScore+1)
+	}
 	if original.MediaPath == "" {
 		switch original.Kind {
 		case "image", "video", "audio", "document", "sticker":
@@ -515,6 +521,7 @@ func (c *Client) ForwardMessage(ctx context.Context, fromChatJID, messageID, toC
 			Path:            original.MediaPath,
 			Caption:         original.Body,
 			Document:        original.Kind == "document",
+			GIF:             original.GIFPlayback,
 			ForwardingScore: original.ForwardingScore + 1,
 		})
 	}

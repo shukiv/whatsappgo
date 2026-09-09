@@ -1,6 +1,7 @@
 #pragma once
 
 #include "messagemodel.h"
+#include "photoquality.h"
 
 #include <QAbstractItemModel>
 #include <QHash>
@@ -33,8 +34,28 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
     Q_PROPERTY(QVariantMap selectedPresence READ selectedPresence NOTIFY selectedPresenceChanged)
     Q_PROPERTY(QVariantMap chatInfo READ chatInfo NOTIFY chatInfoChanged)
+    Q_PROPERTY(QVariantMap groupInfo READ groupInfo NOTIFY groupInfoChanged)
+    Q_PROPERTY(bool groupInfoLoading READ groupInfoLoading NOTIFY groupInfoChanged)
+    Q_PROPERTY(QString groupInfoError READ groupInfoError NOTIFY groupInfoChanged)
+    Q_PROPERTY(bool groupActionBusy READ groupActionBusy NOTIFY groupInfoChanged)
+    Q_PROPERTY(QString groupInviteLink READ groupInviteLink NOTIFY groupInfoChanged)
     Q_PROPERTY(QStringList blockedContacts READ blockedContacts NOTIFY blockedContactsChanged)
     Q_PROPERTY(QVariantMap privacySettings READ privacySettings NOTIFY privacySettingsChanged)
+    Q_PROPERTY(QVariantMap notificationSettings READ notificationSettings NOTIFY notificationSettingsChanged)
+    Q_PROPERTY(bool notificationSettingsBusy READ notificationSettingsBusy NOTIFY notificationSettingsChanged)
+    Q_PROPERTY(QVariantMap localSettings READ localSettings NOTIFY localSettingsChanged)
+    Q_PROPERTY(bool localSettingsBusy READ localSettingsBusy NOTIFY localSettingsChanged)
+    Q_PROPERTY(QVariantMap ownProfile READ ownProfile NOTIFY ownProfileChanged)
+    Q_PROPERTY(bool ownProfileLoading READ ownProfileLoading NOTIFY ownProfileChanged)
+    Q_PROPERTY(QString ownProfileError READ ownProfileError NOTIFY ownProfileChanged)
+    Q_PROPERTY(QString profilePhotoPreview READ profilePhotoPreview NOTIFY profilePhotoChanged)
+    Q_PROPERTY(bool profilePhotoPreparing READ profilePhotoPreparing NOTIFY profilePhotoChanged)
+    Q_PROPERTY(bool profilePhotoSaving READ profilePhotoSaving NOTIFY profilePhotoChanged)
+    Q_PROPERTY(QString profilePhotoError READ profilePhotoError NOTIFY profilePhotoChanged)
+    Q_PROPERTY(QVariantMap statusAudience READ statusAudience NOTIFY statusAudienceChanged)
+    Q_PROPERTY(bool statusAudienceLoading READ statusAudienceLoading NOTIFY statusAudienceChanged)
+    Q_PROPERTY(QString statusAudienceError READ statusAudienceError NOTIFY statusAudienceChanged)
+    Q_PROPERTY(bool defaultTimerBusy READ defaultTimerBusy NOTIFY defaultTimerBusyChanged)
     Q_PROPERTY(QVariantList chatLabels READ chatLabels NOTIFY chatLabelsChanged)
     Q_PROPERTY(QVariantList mediaLibrary READ mediaLibrary NOTIFY mediaLibraryChanged)
     Q_PROPERTY(bool mediaLibraryHasMore READ mediaLibraryHasMore NOTIFY mediaLibraryChanged)
@@ -71,8 +92,24 @@ class RpcClient final : public QObject
     // True while a check the reader asked for is in flight, so the control
     // they pressed can show that something is happening.
     Q_PROPERTY(bool checkingForUpdates READ checkingForUpdates NOTIFY checkingForUpdatesChanged)
+    Q_PROPERTY(QStringList documentDownloads READ documentDownloads NOTIFY documentDownloadsChanged)
+    Q_PROPERTY(QVariantList stickers READ stickers NOTIFY stickersChanged)
+    Q_PROPERTY(bool stickersLoading READ stickersLoading NOTIFY stickersChanged)
+    Q_PROPERTY(bool stickersHasMore READ stickersHasMore NOTIFY stickersChanged)
+    Q_PROPERTY(QString stickersError READ stickersError NOTIFY stickersChanged)
 
 public:
+    QVariantList stickers() const { return m_stickers; }
+    bool stickersLoading() const { return m_stickersLoading; }
+    bool stickersHasMore() const { return m_stickersHasMore; }
+    QString stickersError() const { return m_stickersError; }
+    Q_INVOKABLE void loadStickers(bool favorites = false, bool more = false);
+    Q_INVOKABLE void sendGif(const QString &url, const QString &profile, const QString &chatJid, const QString &replyTo);
+    Q_INVOKABLE void sendSticker(const QString &fromChat, const QString &messageId, const QString &profile, const QString &chatJid, const QString &replyTo);
+    Q_INVOKABLE void sendCreatedSticker(const QString &url, const QString &profile, const QString &chatJid, const QString &replyTo);
+    Q_INVOKABLE void searchShareContacts(const QString &query, const QString &token);
+    Q_INVOKABLE void sendContactCard(const QString &name, const QString &phone, const QString &token,
+                                    const QString &profile, const QString &chatJid, const QString &replyTo);
     explicit RpcClient(const QString &initialProfile = QString(), const QString &initialChat = QString(), QObject *parent = nullptr);
     ~RpcClient() override;
 
@@ -104,8 +141,28 @@ public:
     QVariantMap selectedChat() const { return m_selectedChat; }
     QVariantMap selectedPresence() const { return m_selectedPresence; }
     QVariantMap chatInfo() const { return m_chatInfo; }
+    QVariantMap groupInfo() const { return m_groupInfo; }
+    bool groupInfoLoading() const { return m_groupInfoLoading; }
+    QString groupInfoError() const { return m_groupInfoError; }
+    bool groupActionBusy() const { return m_groupActionBusy; }
+    QString groupInviteLink() const { return m_groupInviteLink; }
     QStringList blockedContacts() const { return m_blockedContacts; }
     QVariantMap privacySettings() const { return m_privacySettings; }
+    QVariantMap notificationSettings() const { return m_notificationSettings; }
+    bool notificationSettingsBusy() const { return m_notificationSettingsBusy; }
+    QVariantMap localSettings() const { return m_localSettings; }
+    bool localSettingsBusy() const { return m_localSettingsBusy; }
+    QVariantMap ownProfile() const { return m_ownProfile; }
+    bool ownProfileLoading() const { return m_ownProfileLoading; }
+    QString ownProfileError() const { return m_ownProfileError; }
+    QString profilePhotoPreview() const;
+    bool profilePhotoPreparing() const { return m_profilePhotoPreparing; }
+    bool profilePhotoSaving() const { return m_profilePhotoSaving; }
+    QString profilePhotoError() const { return m_profilePhotoError; }
+    QVariantMap statusAudience() const { return m_statusAudience; }
+    bool statusAudienceLoading() const { return m_statusAudienceLoading; }
+    QString statusAudienceError() const { return m_statusAudienceError; }
+    bool defaultTimerBusy() const { return m_defaultTimerBusy; }
     QVariantList chatLabels() const { return m_chatLabels; }
     QVariantList mediaLibrary() const { return m_mediaLibrary; }
     bool mediaLibraryHasMore() const { return m_mediaLibraryHasMore; }
@@ -159,10 +216,26 @@ public:
     Q_INVOKABLE void openChat(const QString &jid, const QString &title);
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void refreshChatInfo();
+    Q_INVOKABLE void refreshGroupInfo();
+    Q_INVOKABLE void changeGroupMembers(const QString &jid, const QString &action, const QStringList &members);
+    Q_INVOKABLE void requestGroupInviteLink(const QString &jid, bool reset = false);
+    Q_INVOKABLE void leaveGroup(const QString &jid);
     Q_INVOKABLE void refreshSharedContent(const QString &category, bool append = false);
     Q_INVOKABLE void refreshMediaLibrary(const QString &category, bool append = false);
     Q_INVOKABLE void refreshBlockedContacts();
     Q_INVOKABLE void refreshPrivacySettings();
+    Q_INVOKABLE void refreshNotificationSettings();
+    Q_INVOKABLE void setNotificationSetting(const QString &name, bool value);
+    Q_INVOKABLE void testNotificationSound(const QString &kind);
+    Q_INVOKABLE void refreshLocalSettings();
+    Q_INVOKABLE void setLocalSetting(const QString &name, bool value);
+    Q_INVOKABLE void setProfileName(const QString &name);
+    Q_INVOKABLE void refreshOwnProfile();
+    Q_INVOKABLE void prepareProfilePhoto(const QString &localUrl);
+    Q_INVOKABLE void clearProfilePhoto();
+    Q_INVOKABLE void saveProfilePhoto(bool remove = false);
+    Q_INVOKABLE void refreshStatusAudience();
+    Q_INVOKABLE void setDefaultMessageTimer(int seconds);
     Q_INVOKABLE void setPrivacySetting(const QString &name, const QString &value);
     Q_INVOKABLE void setAbout(const QString &text);
     Q_INVOKABLE void setChannelFollowed(const QString &jid, bool followed);
@@ -210,7 +283,7 @@ public:
     Q_INVOKABLE void sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text);
     Q_INVOKABLE void requestLinkPreview(const QString &text);
     Q_INVOKABLE void clearComposerLinkPreview();
-    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {}, bool document = false);
+    Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {}, bool document = false, const QString &photoQuality = QStringLiteral("original"));
     Q_INVOKABLE void sendVoice(const QString &localUrl, const QString &chatJid, const QString &recordingProfile, const QString &replyTo = {});
     Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
     Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
@@ -239,6 +312,9 @@ public:
     Q_INVOKABLE void loadStarredMessages(const QString &chatJid = {});
     Q_INVOKABLE void openFile(const QString &path);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
+    // Save a document to Downloads without launching an external application.
+    Q_INVOKABLE void downloadDocument(const QVariantMap &message);
+    QStringList documentDownloads() const;
     // Fetches a picture that has no preview, a few at a time.
     Q_INVOKABLE void ensureMedia(const QString &messageId);
     // The voice note that follows the given message, when the conversation
@@ -249,7 +325,7 @@ public:
     // is sent is the one the preview was showing. Returns the original URL when
     // there is nothing to turn.
     Q_INVOKABLE QString rotatedImage(const QString &localUrl, int degrees);
-    Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {});
+    Q_INVOKABLE void sendClipboardImage(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {}, const QString &photoQuality = QStringLiteral("original"));
     Q_INVOKABLE void discardClipboardImage(const QString &localUrl);
     Q_INVOKABLE void copyImage(const QString &messageId, const QString &path = {});
     Q_INVOKABLE void saveImage(const QString &path, const QString &destination);
@@ -271,12 +347,21 @@ signals:
     // Explicit activation, including reselecting the same sidebar row. Unlike
     // selectedChatChanged this is never emitted for title/avatar refreshes.
     void chatOpened(const QString &chatJid);
+    void statusPageRequested();
     void selectedPresenceChanged();
     void chatInfoChanged();
+    void groupInfoChanged();
+    void groupActionFinished(const QString &jid, const QString &action, bool success);
     void sharedContentChanged();
     void mediaLibraryChanged();
     void blockedContactsChanged();
     void privacySettingsChanged();
+    void ownProfileChanged();
+    void profilePhotoChanged();
+    void profilePhotoSaved();
+    void statusAudienceChanged();
+    void defaultTimerBusyChanged();
+    void defaultTimerSaved();
     void chatLabelsChanged();
     void pairingQrChanged();
     void pairingCodeChanged();
@@ -319,8 +404,20 @@ signals:
     void bugReportFinished(bool success, const QString &message, const QString &url);
     // A message's file is cached and can be played or opened.
     void mediaReady(const QString &messageId, const QString &path);
+    void documentDownloadsChanged();
+    void stickersChanged();
+    void expressionSendFinished(const QString &token, bool success);
+    void shareContactsReady(const QString &token, const QVariantList &contacts, const QString &error);
+    void notificationSettingsChanged();
+    void localSettingsChanged();
 
 private:
+    void sendExpressionRequest(const QString &method, QJsonObject params, const QString &token, const QString &profile, const QString &chatJid, const QString &replyTo);
+    QVariantList m_stickers;
+    bool m_stickersLoading = false, m_stickersHasMore = false, m_stickersFavorites = false;
+    QString m_stickersError;
+    quint64 m_stickerGeneration = 0;
+    void sendPreparedAttachment(const QString &localUrl, const QString &caption, const QString &replyTo, bool document, bool clipboard, const QString &quality);
     using Callback = std::function<void(const QJsonValue &, const QJsonObject &)>;
 
     // Whether a failed request is worth interrupting the reader over. A
@@ -342,6 +439,8 @@ private:
     void refreshOneMessage(const QString &messageId);
     void acknowledgeIncoming(const QVariantMap &message);
     void rememberMessages(const QString &chatJid, const QVariantList &messages);
+    void forgetMessages(const QString &chatJid);
+    void performChatRefresh();
     void upgradeSmallLinkPreviews(const QVariantList &messages);
     void requestRemoteHistory();
     void loadRemoteHistoryPage();
@@ -352,6 +451,7 @@ private:
     void syncChatListModel();
     void runSidebarSearch(const QString &query);
     void applyChatAvatar(const QString &jid, const QString &path);
+    void runGroupAction(const QString &jid, const QString &method, const QString &action, QJsonObject params);
     bool copyImageFile(const QString &path);
     QString clipboardDirectory() const;
     bool isClipboardFile(const QString &path) const;
@@ -363,6 +463,9 @@ private:
     QLocalSocket m_socket;
     QTimer m_reconnectTimer;
     QTimer m_searchReplayTimer;
+    QTimer m_chatRefreshTimer;
+    bool m_chatRefreshInFlight = false;
+    bool m_chatRefreshAgain = false;
     QTimer m_chatPresenceExpiryTimer;
     QByteArray m_readBuffer;
     quint64 m_nextId = 0;
@@ -391,13 +494,46 @@ private:
     bool m_openingMessages = false;
     QVariantList m_openingMessageUpdates;
     QHash<QString, QVariantList> m_messageCache;
+    QHash<QString, qsizetype> m_messageCacheCosts;
     QStringList m_messageCacheOrder;
     QVariantMap m_selectedChat;
+    QSet<QString> m_documentDownloads;
     QVariantMap m_selectedPresence;
     QVariantMap m_chatInfo;
+    QVariantMap m_groupInfo;
+    QString m_groupInfoJid;
+    QString m_groupInfoError;
+    QString m_groupInviteLink;
+    bool m_groupInfoLoading = false;
+    bool m_groupRefreshAgain = false;
+    bool m_groupActionBusy = false;
+    quint64 m_groupGeneration = 0;
     QStringList m_blockedContacts;
     QVariantMap m_privacySettings;
+    QVariantMap m_notificationSettings;
+    bool m_notificationSettingsBusy = false;
+    quint64 m_notificationSettingsGeneration = 0;
+    QVariantMap m_localSettings;
+    bool m_localSettingsBusy = false;
+    quint64 m_localSettingsGeneration = 0;
     quint64 m_privacyRequestGeneration = 0;
+    QVariantMap m_ownProfile;
+    QString m_ownProfileError;
+    bool m_ownProfileLoading = false;
+    quint64 m_ownProfileGeneration = 0;
+    PhotoQuality::Prepared m_profilePhoto;
+    QString m_profilePhotoError;
+    bool m_profilePhotoPreparing = false;
+    bool m_profilePhotoSaving = false;
+    quint64 m_profilePhotoGeneration = 0;
+    quint64 m_profilePhotoSaveGeneration = 0;
+    QVariantMap m_statusAudience;
+    QString m_statusAudienceError;
+    bool m_statusAudienceLoading = false;
+    quint64 m_statusAudienceGeneration = 0;
+    bool m_defaultTimerBusy = false;
+    quint64 m_defaultTimerGeneration = 0;
+    quint64 m_attachmentSession = 0;
     QVariantList m_chatLabels;
     QVariantList m_mediaLibrary;
     bool m_mediaLibraryHasMore = false;

@@ -24,6 +24,8 @@ type PrivacySettings struct {
 	ReadReceipts string `json:"read_receipts"`
 	GroupAdd     string `json:"group_add"`
 	CallAdd      string `json:"call_add"`
+	Messages     string `json:"messages"`
+	Defense      string `json:"defense"`
 }
 
 type Chat struct {
@@ -62,32 +64,37 @@ type Label struct {
 }
 
 type Message struct {
-	ID              string     `json:"id"`
-	ChatJID         string     `json:"chat_jid"`
-	SenderJID       string     `json:"sender_jid,omitempty"`
-	SenderName      string     `json:"sender_name,omitempty"`
-	Timestamp       int64      `json:"timestamp"`
-	Kind            string     `json:"kind"`
-	Body            string     `json:"body,omitempty"`
-	FromMe          bool       `json:"from_me"`
-	Status          string     `json:"status"`
-	DeliveredAt     int64      `json:"delivered_at,omitempty"`
-	ReadAt          int64      `json:"read_at,omitempty"`
-	PlayedAt        int64      `json:"played_at,omitempty"`
-	Starred         bool       `json:"starred,omitempty"`
-	ChatTitle       string     `json:"chat_title,omitempty"`
-	ForwardingScore int        `json:"forwarding_score,omitempty"`
-	ReplyTo         string     `json:"reply_to,omitempty"`
-	ReplyPreview    string     `json:"reply_preview,omitempty"`
-	ReplySender     string     `json:"reply_sender,omitempty"`
-	ReplyFromMe     bool       `json:"reply_from_me,omitempty"`
-	Edited          bool       `json:"edited"`
-	Revoked         bool       `json:"revoked"`
-	MediaMIME       string     `json:"media_mime,omitempty"`
-	MediaName       string     `json:"media_name,omitempty"`
-	MediaPath       string     `json:"media_path,omitempty"`
-	MediaThumbnail  string     `json:"media_thumbnail,omitempty"`
-	MediaSize       int64      `json:"media_size,omitempty"`
+	ID              string `json:"id"`
+	ChatJID         string `json:"chat_jid"`
+	SenderJID       string `json:"sender_jid,omitempty"`
+	SenderName      string `json:"sender_name,omitempty"`
+	Timestamp       int64  `json:"timestamp"`
+	Kind            string `json:"kind"`
+	Body            string `json:"body,omitempty"`
+	FromMe          bool   `json:"from_me"`
+	Status          string `json:"status"`
+	DeliveredAt     int64  `json:"delivered_at,omitempty"`
+	ReadAt          int64  `json:"read_at,omitempty"`
+	PlayedAt        int64  `json:"played_at,omitempty"`
+	Starred         bool   `json:"starred,omitempty"`
+	ChatTitle       string `json:"chat_title,omitempty"`
+	ForwardingScore int    `json:"forwarding_score,omitempty"`
+	ReplyTo         string `json:"reply_to,omitempty"`
+	ReplyPreview    string `json:"reply_preview,omitempty"`
+	ReplySender     string `json:"reply_sender,omitempty"`
+	ReplyFromMe     bool   `json:"reply_from_me,omitempty"`
+	ReplyViewOnce   bool   `json:"reply_view_once,omitempty"`
+	Edited          bool   `json:"edited"`
+	Revoked         bool   `json:"revoked"`
+	MediaMIME       string `json:"media_mime,omitempty"`
+	MediaName       string `json:"media_name,omitempty"`
+	MediaPath       string `json:"media_path,omitempty"`
+	MediaThumbnail  string `json:"media_thumbnail,omitempty"`
+	MediaSize       int64  `json:"media_size,omitempty"`
+	GIFPlayback     bool   `json:"gif_playback,omitempty"`
+	// Display-only original retained beside the PNG sticker fallback.
+	StickerSource   string     `json:"sticker_source,omitempty"`
+	StickerAnimated bool       `json:"sticker_animated,omitempty"`
 	Reactions       []Reaction `json:"reactions,omitempty"`
 
 	// Voice notes carry the amplitude bars their sender recorded, plus the

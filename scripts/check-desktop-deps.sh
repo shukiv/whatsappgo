@@ -31,7 +31,7 @@ fi
 
 case "${ID:-}" in
     debian|ubuntu|linuxmint|pop)
-        install_hint="sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build pkg-config qt6-base-dev qt6-declarative-dev qt6-multimedia-dev libqt6svg6-dev qml6-module-org-kde-desktop qml6-module-qtquick-controls qml6-module-qtmultimedia"
+        install_hint="sudo apt-get update && sudo apt-get install -y build-essential cmake ninja-build pkg-config qt6-base-dev qt6-declarative-dev qt6-multimedia-dev libqt6svg6-dev qml6-module-org-kde-desktop qt6-gtk-platformtheme qml6-module-qtquick-controls qml6-module-qtmultimedia"
         ;;
     fedora|rhel|centos)
         install_hint="sudo dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtsvg-devel qt6-qtquickcontrols2 kf6-qqc2-desktop-style"

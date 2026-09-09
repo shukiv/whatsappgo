@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import org.whatsappgo
 
 Item {
@@ -23,20 +24,39 @@ Item {
     signal starRequested(string messageId, string senderJid, bool fromMe, bool starred)
     signal forwardRequested(string messageId)
     signal imagePreviewRequested(var message)
+    property bool animationSelected: false
+    signal animationRequested(string messageId)
+    signal animationFailed(string message)
     signal quotedMessageRequested(string messageId)
+    signal viewOnceNoticeRequested()
 	signal infoRequested(var message)
 
-    readonly property bool hasReply: Boolean(modelData.reply_to)
-    readonly property bool hasMedia: Boolean(modelData.media_path)
+    readonly property bool hasReply: !viewOnceKind && Boolean(modelData.reply_to)
+    readonly property bool viewOnceKind: modelData.kind === "view_once"
+    readonly property bool hasMedia: !viewOnceKind && Boolean(modelData.media_path)
     readonly property bool mediaKind: ["image", "video", "audio", "document", "sticker"].indexOf(modelData.kind) >= 0
     // WhatsApp Web puts a sticker on the conversation itself. It is drawn to
     // be seen against the wallpaper, so a panel behind it is wrong twice: it
     // fills in the transparency the sticker was drawn around, and it frames a
     // picture that is meant to be loose on the page.
     readonly property bool stickerKind: modelData.kind === "sticker"
+    readonly property bool gifKind: modelData.kind === "video" && Boolean(modelData.gif_playback)
+    readonly property bool animatedSticker: stickerKind && Boolean(modelData.sticker_animated) && Boolean(modelData.sticker_source)
+    readonly property bool animatedKind: gifKind || animatedSticker
+    // ListView retains offscreen delegates; visibility alone is not a viewport
+    // check. The ID is owned by Main, so at most one chat animation is selected.
+    readonly property bool inViewport: {
+        const view = root.ListView.view
+        // Validate the attached QObject before reading its geometry. A plain
+        // JS null guard can still warn in compiled QML during view teardown.
+        if (!Qt.isQtObject(view)) return false
+        return root.y + root.height > view.contentY && root.y < view.contentY + view.height
+    }
+    readonly property bool animationRunning: animationSelected && animatedKind && inViewport && visible && actionsEnabled && !selectionActive && !modelData.revoked
     readonly property bool visualKind: ["image", "video", "sticker"].indexOf(modelData.kind) >= 0
     readonly property bool framedVisualKind: modelData.kind === "image" || modelData.kind === "video"
     readonly property bool audioKind: modelData.kind === "audio"
+    readonly property bool documentKind: modelData.kind === "document"
     // WhatsApp Web marks the reaction the reader themselves left, so it can be
     // replaced or taken back knowingly. The self reaction is the one whose
     // sender is this account; comparison is on the user part because the same
@@ -140,12 +160,12 @@ Item {
     // use the text-message limit left a large blank panel beside the preview.
     // 336 logical px matches the ~420 px reference at 125% desktop scaling.
     readonly property real maxBubbleWidth: Math.max(180,
-        Math.min(root.width * 0.68, framedVisualKind ? 336 : 620))
+        Math.min(root.width * 0.68, framedVisualKind || documentKind ? 336 : 620))
     readonly property real contentMaxWidth: maxBubbleWidth - 2 * horizontalPadding
     readonly property real linkCardWidth: Math.min(contentMaxWidth,
         Math.max(320, Math.min(root.width * 0.46, 420)))
     // Images sit closer to the bubble edge; captions retain the text gutter.
-    readonly property real mediaHorizontalPadding: framedVisualKind ? 4 : horizontalPadding
+    readonly property real mediaHorizontalPadding: framedVisualKind || documentKind ? 4 : horizontalPadding
     readonly property real mediaOutset: horizontalPadding - mediaHorizontalPadding
     readonly property real mediaWidth: Math.min(contentMaxWidth + 2 * mediaOutset,
         modelData.kind === "sticker" ? 160 : 328)
@@ -176,6 +196,7 @@ Item {
     // does, instead of spending a whole line on it.
     readonly property bool metaBeside: bodyText.visible && !bodyText.wrapped
         && !mediaFrame.visible && !voiceRow.visible && !fileRow.visible
+        && !documentCard.visible
         && !linkPreview.visible && !contactCard.visible && !locationCard.visible
         && (bodyText.implicitWidth + metaRow.implicitWidth + 12) <= contentMaxWidth
 
@@ -190,10 +211,12 @@ Item {
         replyBox.visible ? Math.min(Math.max(replyBox.naturalWidth, 96), contentMaxWidth) : 0,
         mediaFrame.visible ? mediaWidth - 2 * mediaOutset : 0,
         voiceRow.visible ? 284 : 0,
+        documentCard.visible ? 328 - 2 * mediaOutset : 0,
         fileRow.visible ? Math.min(fileRow.implicitWidth, contentMaxWidth) : 0,
         linkPreview.visible ? linkCardWidth : 0,
         contactCard.visible ? Math.min(Math.max(contactCard.naturalWidth, 220), contentMaxWidth) : 0,
         locationCard.visible ? Math.min(260, contentMaxWidth) : 0,
+        viewOnceNotice.visible ? Math.min(480, contentMaxWidth) : 0,
         bodyText.visible ? (linkPreview.visible ? Math.min(bodyText.implicitWidth, linkCardWidth)
             : (metaBeside ? bodyText.implicitWidth + metaRow.implicitWidth + 12 : bodyText.implicitWidth)) : 0,
         unsupportedLabel.visible ? unsupportedLabel.implicitWidth : 0,
@@ -203,13 +226,14 @@ Item {
     readonly property string mediaLabel: {
         switch (modelData.kind) {
         case "image": return qsTr("Photo")
-        case "video": return qsTr("Video")
+        case "video": return gifKind ? qsTr("GIF") : qsTr("Video")
         case "audio": return qsTr("Voice message")
         case "document": return modelData.media_name || qsTr("Document")
         case "sticker": return qsTr("Sticker")
         case "contact": return qsTr("Contact")
         case "location": return qsTr("Location")
         case "poll": return qsTr("Poll")
+        case "view_once": return qsTr("View once message")
         default: return ""
         }
     }
@@ -223,6 +247,11 @@ Item {
     }
 
     function openVisualMedia() {
+        if (animatedKind) {
+            animationRequested(String(modelData.id || ""))
+            if (!hasMedia) backend.downloadMedia(modelData.id)
+            return
+        }
         if (modelData.kind === "video") {
             Playback.start(modelData.id, modelData.media_path || "", true)
             return
@@ -242,6 +271,8 @@ Item {
     // the shape is derived from the message id, so it is stable while
     // scrolling instead of changing on every redraw.
     readonly property var waveformBars: {
+        if (!audioKind)
+            return []
         const stored = modelData.audio_waveform
         const source = (stored && stored.length > 0) ? stored : syntheticWaveform()
         const target = 44
@@ -282,12 +313,37 @@ Item {
         return Math.max(8, Math.min(popup.parent.height - shownHeight - 8, value))
     }
 
+    // Menus contain hundreds of objects. Keep them out of the scrolling hot
+    // path and construct them synchronously only for the message being used.
+    readonly property var contextMenu: actionsLoader.item ? actionsLoader.item.contextMenu : null
+    readonly property var quickReactionPopup: actionsLoader.item ? actionsLoader.item.quickReactionPopup : null
+    readonly property var fullReactionPicker: actionsLoader.item ? actionsLoader.item.fullReactionPicker : null
+    readonly property var reactionDetailsPopup: actionsLoader.item ? actionsLoader.item.reactionDetailsPopup : null
+    property string actionMessageId: ""
+
+    function ensureActions() {
+        actionMessageId = String(modelData.id || "")
+        actionsLoader.active = true
+    }
+
+    function releaseActions() {
+        closeActionPopups()
+        actionsLoader.active = false
+        actionMessageId = ""
+    }
+
+    ListView.onPooled: releaseActions()
+
     function openMessageMenuAt(x, y) {
+        ensureActions()
         contextMenu.capturedSelection = bodyText.selectedText
+        const messageId = actionMessageId
         // Visibility-dependent rows change the popup's implicit height. Let
         // those bindings settle before positioning so the bottom clamp uses
         // the complete menu rather than an earlier, shorter action set.
         Qt.callLater(function() {
+            if (!contextMenu || actionMessageId !== messageId)
+                return
             try {
                 openMessagePopups(x, y)
             } catch (error) {
@@ -300,6 +356,7 @@ Item {
     }
 
     function openMessagePopups(x, y) {
+        ensureActions()
         {
             contextMenu.x = clampPopupX(contextMenu, x)
             contextMenu.y = clampPopupY(contextMenu, y)
@@ -317,12 +374,14 @@ Item {
     }
 
     function openMessageMenuFromButton() {
+        ensureActions()
         const mapped = messageMenuButton.mapToItem(
             contextMenu.parent, messageMenuButton.width, messageMenuButton.height)
         openMessageMenuAt(mapped.x - contextMenu.width, mapped.y + 2)
     }
 
     function openReactionTray(anchorItem) {
+        ensureActions()
         contextMenu.close()
         fullReactionPicker.close()
         quickReactionPopup.pairedWithMenu = false
@@ -337,6 +396,7 @@ Item {
     }
 
     function openFullReactionPicker() {
+        ensureActions()
         const preferredX = quickReactionPopup.x + quickReactionPopup.width - fullReactionPicker.width
         let preferredY = quickReactionPopup.y + quickReactionPopup.height + 6
         if (preferredY + fullReactionPicker.height > fullReactionPicker.parent.height - 8)
@@ -355,6 +415,7 @@ Item {
         if (root.reactionSummary.length === 0)
             return
         closeActionPopups()
+        ensureActions()
         reactionDetailsPopup.shownEmoji = ""
         const mapped = reactionsFlow.mapToItem(
             reactionDetailsPopup.parent, 0, reactionsFlow.height)
@@ -367,16 +428,14 @@ Item {
 
     function reactWith(emoji) {
         backend.reactMessage(root.modelData.id, root.modelData.sender_jid || "", emoji)
-        contextMenu.close()
-        quickReactionPopup.close()
-        fullReactionPicker.close()
+        closeActionPopups()
     }
 
     function closeActionPopups() {
-        contextMenu.close()
-        quickReactionPopup.close()
-        fullReactionPicker.close()
-        reactionDetailsPopup.close()
+        if (contextMenu) contextMenu.close()
+        if (quickReactionPopup) quickReactionPopup.close()
+        if (fullReactionPicker) fullReactionPicker.close()
+        if (reactionDetailsPopup) reactionDetailsPopup.close()
     }
 
     // The first message of a calendar day carries the date above it, which is
@@ -467,7 +526,11 @@ Item {
             backend.ensureMedia(modelData.id)
     }
     Component.onCompleted: fetchMediaIfNeeded()
-    onModelDataChanged: fetchMediaIfNeeded()
+    onModelDataChanged: {
+        if (actionMessageId !== "" && actionMessageId !== String(modelData.id || ""))
+            releaseActions()
+        fetchMediaIfNeeded()
+    }
 
     Rectangle {
         id: bubble
@@ -670,7 +733,7 @@ Item {
                 id: replyBox
                 visible: root.hasReply
                 // What the quoted message would need if it were not elided.
-                readonly property real naturalWidth: Math.max(replySender.implicitWidth, replyLabel.implicitWidth) + 19
+                readonly property real naturalWidth: Math.max(replySender.implicitWidth, replyLabel.implicitWidth + (root.modelData.reply_view_once ? 21 : 0)) + 19
                 width: root.contentWidth
                 height: visible ? Math.max(44, replyPreviewColumn.implicitHeight + 10) : 0
                 color: Theme.replyBackground
@@ -700,16 +763,28 @@ Item {
                         font.weight: Font.Medium
                         elide: Text.ElideRight
                     }
-                    Label {
-                        id: replyLabel
+                    Row {
                         width: parent.width
-                        text: Theme.emojiRichText(root.modelData.reply_preview || qsTr("Replied message"))
-                        color: Theme.textMuted
-                        font.pixelSize: 12
-                        elide: Text.ElideRight
-                        maximumLineCount: 2
-                        wrapMode: Text.Wrap
-                        textFormat: Text.RichText
+                        spacing: root.modelData.reply_view_once ? 5 : 0
+                        TintedIcon {
+                            visible: Boolean(root.modelData.reply_view_once)
+                            width: visible ? 16 : 0
+                            height: 16
+                            source: Qt.resolvedUrl("icons/view-once.svg")
+                            tint: Theme.textMuted
+                        }
+                        Label {
+                            id: replyLabel
+                            width: parent.width - (root.modelData.reply_view_once ? 21 : 0)
+                            text: root.modelData.reply_view_once ? qsTr("View once message")
+                                : Theme.emojiRichText(root.modelData.reply_preview || qsTr("Replied message"))
+                            color: Theme.textMuted
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                            maximumLineCount: 2
+                            wrapMode: Text.Wrap
+                            textFormat: Text.RichText
+                        }
                     }
                 }
 
@@ -718,10 +793,15 @@ Item {
                     anchors.fill: parent
                     flat: true
                     focusPolicy: Qt.TabFocus
-                    Accessible.name: qsTr("Go to quoted message")
+                    Accessible.name: root.modelData.reply_view_once ? qsTr("View once message. Open WhatsApp on your phone.") : qsTr("Go to quoted message")
                     background: Item {}
                     contentItem: Item {}
-                    onClicked: root.quotedMessageRequested(String(root.modelData.reply_to || ""))
+                    onClicked: {
+                        if (root.modelData.reply_view_once)
+                            root.viewOnceNoticeRequested()
+                        else
+                            root.quotedMessageRequested(String(root.modelData.reply_to || ""))
+                    }
 
                     HoverHandler {
                         cursorShape: Qt.PointingHandCursor
@@ -754,32 +834,56 @@ Item {
                     id: mediaImage
                     objectName: "messageMedia"
                     anchors.fill: parent
-                    visible: mediaFrame.previewReady
+                    visible: mediaFrame.previewReady && (!animationLoader.item || !animationLoader.item.hasFrame)
                     source: root.hasPreview ? Theme.fileUrl(root.previewPath) : ""
                     fillMode: root.modelData.kind === "sticker" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
                     smooth: true
+                    // Limit decoding, not the original file. The viewer still
+                    // opens the full-resolution image for zooming.
+                    sourceSize: Qt.size(Math.ceil(width * root.Screen.devicePixelRatio),
+                                        Math.ceil(height * root.Screen.devicePixelRatio))
                     mipmap: root.previewIsThumbnail
                     Accessible.name: root.modelData.body || root.mediaLabel
                 }
 
+                Loader {
+                    id: animationLoader
+                    anchors.fill: parent
+                    active: root.animationRunning && root.hasMedia
+                    sourceComponent: InlineAnimation {
+                        source: Theme.fileUrl(root.animatedSticker ? root.modelData.sticker_source : root.modelData.media_path)
+                        sticker: root.animatedSticker
+                        onFailed: message => root.animationFailed(message)
+                    }
+                }
+
                 Rectangle {
                     objectName: "mediaPlayBadge"
-                    visible: root.modelData.kind === "video"
+                    visible: (root.modelData.kind === "video" || root.animatedSticker)
+                        && (!root.animationRunning || mediaOpenButton.hovered || mediaOpenButton.activeFocus)
                     anchors.centerIn: parent
-                    width: 48
-                    height: 48
-                    radius: 24
+                    width: root.animatedSticker ? 32 : 48
+                    height: width
+                    radius: width / 2
                     color: "#99000000"
                     TintedIcon {
                         anchors.centerIn: parent
-                        width: 24
-                        height: 24
-                        source: root.playingThis && Playback.playing
+                        width: root.animatedSticker ? 18 : 24
+                        height: width
+                        source: (root.animatedKind ? root.animationRunning : root.playingThis && Playback.playing)
                             ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
                         tint: "#FFFFFF"
                     }
+                }
+
+                Rectangle {
+                    visible: root.gifKind
+                    anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 8
+                    width: 32; height: 20; radius: 4
+                    color: "#99000000"
+                    Label { anchors.centerIn: parent; text: "GIF"; color: "white"; font.pixelSize: 11; font.bold: true }
                 }
 
                 Button {
@@ -808,102 +912,112 @@ Item {
                     onClicked: backend.downloadMedia(root.modelData.id)
                 }
 
-                MouseArea {
+                Button {
+                    id: mediaOpenButton
                     objectName: "messageMediaOpenArea"
                     z: 1
                     anchors.fill: parent
                     enabled: root.modelData.kind === "video" || root.hasPreview
-                    cursorShape: Qt.PointingHandCursor
+                    Accessible.name: root.animatedKind
+                        ? (root.animationRunning ? qsTr("Pause %1").arg(root.mediaLabel) : qsTr("Play %1").arg(root.mediaLabel))
+                        : qsTr("View %1").arg(root.mediaLabel)
+                    background: Rectangle { color: "transparent"; border.width: parent.activeFocus ? 2 : 0; border.color: Theme.primary }
+                    contentItem: Item {}
+                    HoverHandler { cursorShape: Qt.PointingHandCursor }
                     onClicked: root.openVisualMedia()
                 }
             }
 
             // Voice notes and audio files play in place.
-            RowLayout {
+            Loader {
                 id: voiceRow
-                objectName: "voiceRow"
                 visible: root.audioKind
+                active: root.audioKind
                 width: root.contentWidth
-                spacing: 8
+                height: item ? item.implicitHeight : 0
+                sourceComponent: RowLayout {
+                    objectName: "voiceRow"
+                    spacing: 8
 
-                ThemedToolButton {
-                    objectName: "voicePlayButton"
-                    Layout.preferredWidth: 30
-                    Layout.preferredHeight: 30
-                    iconSource: root.playingThis && Playback.playing
-                        ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
-                    iconSize: 18
-                    padding: 0
-                    Accessible.name: root.playingThis && Playback.playing
-                        ? qsTr("Pause voice message")
-                        : qsTr("Play voice message")
-                    // WhatsApp Web draws the play control as a bare glyph on the
-                    // bubble. A filled circle behind it read as a button pasted
-                    // onto the message.
-                    background: null
-                    onClicked: Playback.start(root.modelData.id, root.modelData.media_path || "", false)
-                }
+                    ThemedToolButton {
+                        objectName: "voicePlayButton"
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
+                        iconSource: root.playingThis && Playback.playing
+                            ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
+                        iconSize: 18
+                        padding: 0
+                        Accessible.name: root.playingThis && Playback.playing
+                            ? qsTr("Pause voice message")
+                            : qsTr("Play voice message")
+                        // WhatsApp Web draws the play control as a bare glyph on the
+                        // bubble. A filled circle behind it read as a button pasted
+                        // onto the message.
+                        background: null
+                        onClicked: Playback.start(root.modelData.id, root.modelData.media_path || "", false)
+                    }
 
-                Item {
-                    objectName: "voiceProgress"
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    Layout.preferredHeight: 26
+                    Item {
+                        objectName: "voiceProgress"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.preferredHeight: 26
 
-                    Row {
-                        id: waveform
-                        objectName: "voiceWaveform"
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        height: 24
-                        spacing: 2
-                        Repeater {
-                            model: root.waveformBars
-                            Rectangle {
-                                required property int index
-                                required property var modelData
-                                width: Math.max(1, (waveform.width - waveform.spacing * (root.waveformBars.length - 1))
-                                    / Math.max(1, root.waveformBars.length))
-                                height: Math.max(3, Math.min(24, modelData * 0.24))
-                                radius: width / 2
-                                anchors.verticalCenter: parent.verticalCenter
-                                // Everything up to the playing position is
-                                // filled in, the way a played recording reads.
-                                color: root.playingThis && (index / Math.max(1, root.waveformBars.length)) <= root.playProgress
-                                    ? Theme.primary
-                                    : (root.modelData.from_me ? Qt.darker(Theme.outgoingBubble, 1.35) : Theme.scrollbarHandle)
+                        Row {
+                            id: waveform
+                            objectName: "voiceWaveform"
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: 24
+                            spacing: 2
+                            Repeater {
+                                model: root.waveformBars
+                                Rectangle {
+                                    required property int index
+                                    required property var modelData
+                                    width: Math.max(1, (waveform.width - waveform.spacing * (root.waveformBars.length - 1))
+                                        / Math.max(1, root.waveformBars.length))
+                                    height: Math.max(3, Math.min(24, modelData * 0.24))
+                                    radius: width / 2
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    // Everything up to the playing position is
+                                    // filled in, the way a played recording reads.
+                                    color: root.playingThis && (index / Math.max(1, root.waveformBars.length)) <= root.playProgress
+                                        ? Theme.primary
+                                        : (root.modelData.from_me ? Qt.darker(Theme.outgoingBubble, 1.35) : Theme.scrollbarHandle)
+                                }
                             }
+                        }
+
+                        Rectangle {
+                            visible: root.playingThis
+                            width: 9
+                            height: 9
+                            radius: 4.5
+                            color: Theme.primary
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: Math.max(0, Math.min(parent.width - width, parent.width * root.playProgress - width / 2))
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: root.playingThis && Playback.duration > 0
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: mouse => Playback.seek(Playback.duration * (mouse.x / Math.max(1, width)))
                         }
                     }
 
-                    Rectangle {
-                        visible: root.playingThis
-                        width: 9
-                        height: 9
-                        radius: 4.5
-                        color: Theme.primary
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: Math.max(0, Math.min(parent.width - width, parent.width * root.playProgress - width / 2))
+                    Avatar {
+                        id: voiceAvatar
+                        objectName: "voiceAvatar"
+                        Layout.preferredWidth: 44
+                        Layout.preferredHeight: 44
+                        diameter: 44
+                        title: root.modelData.from_me ? root.ownTitle : root.chatTitle
+                        source: root.modelData.from_me ? "" : root.chatAvatarSource
+                        fallbackIdentity: Boolean(root.modelData.from_me)
                     }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: root.playingThis && Playback.duration > 0
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: mouse => Playback.seek(Playback.duration * (mouse.x / Math.max(1, width)))
-                    }
-                }
-
-                Avatar {
-                    id: voiceAvatar
-                    objectName: "voiceAvatar"
-                    Layout.preferredWidth: 44
-                    Layout.preferredHeight: 44
-                    diameter: 44
-                    title: root.modelData.from_me ? root.ownTitle : root.chatTitle
-                    source: root.modelData.from_me ? "" : root.chatAvatarSource
-					fallbackIdentity: Boolean(root.modelData.from_me)
                 }
             }
 
@@ -1047,11 +1161,23 @@ Item {
                 }
             }
 
+            Loader {
+                id: documentCard
+                active: root.documentKind
+                visible: active
+                x: -root.mediaOutset
+                width: root.contentWidth + 2 * root.mediaOutset
+                sourceComponent: DocumentCard {
+                    message: root.modelData
+                    enabled: root.actionsEnabled && !root.selectionActive && !root.modelData.revoked
+                }
+            }
+
             RowLayout {
                 id: fileRow
                 // Files that have no picture of their own keep the descriptive
                 // row; a photo or video only falls back to it without a preview.
-                visible: (root.mediaKind && !root.audioKind && !mediaFrame.visible)
+                visible: (root.mediaKind && !root.audioKind && !root.documentKind && !mediaFrame.visible)
                     || root.modelData.kind === "poll" 
                 width: root.contentWidth
                 spacing: 8
@@ -1081,7 +1207,7 @@ Item {
                     elide: Text.ElideRight
                 }
                 ToolButton {
-                    objectName: "mediaAction"
+                    objectName: root.documentKind ? "fallbackMediaAction" : "mediaAction"
                     visible: root.mediaKind
                     text: root.modelData.kind === "video"
                         ? qsTr("Play")
@@ -1107,7 +1233,7 @@ Item {
             Rectangle {
                 id: linkPreview
                 objectName: "linkPreview"
-                visible: Boolean(root.modelData.link_url)
+                visible: !root.viewOnceKind && Boolean(root.modelData.link_url)
                 readonly property real naturalWidth: Math.max(
                     linkTitle.visible ? linkTitle.implicitWidth + 20 : 0,
                     linkDescription.visible ? linkDescription.implicitWidth + 20 : 0,
@@ -1130,6 +1256,8 @@ Item {
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
+                    sourceSize: Qt.size(Math.ceil(width * root.Screen.devicePixelRatio),
+                                        Math.ceil(height * root.Screen.devicePixelRatio))
                     Accessible.name: root.modelData.link_title || root.linkHost(root.modelData.link_url)
                 }
 
@@ -1182,12 +1310,39 @@ Item {
                 }
             }
 
+            Row {
+                id: viewOnceNotice
+                objectName: "viewOnceNotice"
+                visible: root.viewOnceKind && !root.modelData.revoked
+                width: root.contentWidth
+                spacing: 9
+                TintedIcon {
+                    width: 22
+                    height: 22
+                    source: Qt.resolvedUrl("icons/view-once.svg")
+                    tint: Theme.textMuted
+                }
+                Label {
+                    objectName: "viewOnceNoticeText"
+                    width: parent.width - 31
+                    text: qsTr("This message was set to view once. For added privacy, you can only open it on your phone.")
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    color: Theme.textMuted
+                    font.pixelSize: root.captionFontSize
+                    font.italic: true
+                    Accessible.name: text
+                }
+            }
+
             SelectableMessageText {
                 id: bodyText
-                visible: Boolean(root.modelData.body) && !root.contactKind && !root.locationKind
+                visible: (Boolean(root.modelData.body) || (root.viewOnceKind && Boolean(root.modelData.revoked)))
+                    && !root.contactKind && !root.locationKind && (!root.viewOnceKind || Boolean(root.modelData.revoked))
                 width: root.metaBeside ? implicitWidth : root.contentWidth
                 maximumWidth: root.contentMaxWidth
-                plainText: root.modelData.revoked ? qsTr("This message was deleted") : root.modelData.body || ""
+                plainText: root.modelData.revoked ? qsTr("This message was deleted")
+                    : root.viewOnceKind ? "" : root.modelData.body || ""
                 color: root.modelData.revoked ? Theme.textMuted : Theme.text
                 font.pixelSize: root.bodyFontSize
                 font.italic: Boolean(root.modelData.revoked)
@@ -1195,7 +1350,7 @@ Item {
 
             Label {
                 id: unsupportedLabel
-                visible: !Boolean(root.modelData.body) && !root.mediaKind && root.modelData.kind !== "system"
+                visible: !Boolean(root.modelData.body) && !root.mediaKind && !root.viewOnceKind && root.modelData.kind !== "system"
                 text: qsTr("Unsupported message")
                 color: Theme.textMuted
                 font.pixelSize: root.captionFontSize
@@ -1213,11 +1368,11 @@ Item {
             y: 1
             z: 12
             focusPolicy: Qt.TabFocus
-            opacity: bubbleHover.hovered || hovered || activeFocus || contextMenu.opened ? 1 : 0
+            opacity: bubbleHover.hovered || hovered || activeFocus || (root.contextMenu && root.contextMenu.opened) ? 1 : 0
 			visible: root.actionsEnabled && !root.selectionActive
 			enabled: visible && root.modelData.kind !== "system"
             Accessible.name: qsTr("Message actions")
-            Accessible.description: contextMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
+            Accessible.description: root.contextMenu && root.contextMenu.opened ? qsTr("Menu open") : qsTr("Menu closed")
             ToolTip.visible: hovered
             ToolTip.text: Accessible.name
             onClicked: root.openMessageMenuFromButton()
@@ -1253,7 +1408,7 @@ Item {
         z: 8
         focusPolicy: Qt.TabFocus
         opacity: bubbleHover.hovered || hovered || activeFocus
-            || (quickReactionPopup.opened && !quickReactionPopup.pairedWithMenu) ? 1 : 0
+            || (root.quickReactionPopup && root.quickReactionPopup.opened && !root.quickReactionPopup.pairedWithMenu) ? 1 : 0
 		visible: root.actionsEnabled && !root.selectionActive
 		enabled: visible && root.modelData.kind !== "system" && !root.modelData.revoked
         Accessible.name: qsTr("React to message")
@@ -1355,420 +1510,433 @@ Item {
 		enabled: root.actionsEnabled && !root.selectionActive
         acceptedButtons: Qt.RightButton
         onTapped: (eventPoint, button) => {
+            root.ensureActions()
             const mapped = root.mapToItem(contextMenu.parent, eventPoint.position.x, eventPoint.position.y)
             root.openMessageMenuAt(mapped.x, mapped.y)
         }
     }
 
-    Popup {
-        id: reactionDetailsPopup
-        objectName: "reactionDetailsPopup"
-        parent: Overlay.overlay
-        // Empty means everybody; otherwise only the people who left this
-        // emoji, which is what the headings along the top switch between.
-        property string shownEmoji: ""
-        readonly property var shownPeople: root.reactionPeople.filter(function(person) {
-            return reactionDetailsPopup.shownEmoji === "" || person.key === reactionDetailsPopup.shownEmoji
-        })
-        width: 320
-        implicitHeight: Math.min(384, reactionDetailsColumn.implicitHeight + 24)
-        padding: 12
-        modal: false
-        focus: true
-        // See quickReactionPopup: this is positioned inside the application
-        // window, so it has to be an item in that window's overlay.
-        Component.onCompleted: {
-            if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
-                popupType = Popup.Item
-        }
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle {
-            radius: 12
-            color: Theme.surfaceRaised
-            border.color: Theme.border
-        }
+    Loader {
+        id: actionsLoader
+        active: false
+        sourceComponent: Item {
+            property alias contextMenu: contextMenu
+            property alias quickReactionPopup: quickReactionPopup
+            property alias fullReactionPicker: fullReactionPicker
+            property alias reactionDetailsPopup: reactionDetailsPopup
 
-        contentItem: Column {
-            id: reactionDetailsColumn
-            spacing: 8
-
-            Label {
-                objectName: "reactionDetailsTitle"
-                // "1 reaction", "4 reactions": what WhatsApp Web heads the
-                // panel with. "1 emoji reactions" was neither.
-                text: root.reactionTotal === 1
-                    ? qsTr("1 reaction") : qsTr("%1 reactions").arg(root.reactionTotal)
-                color: Theme.text
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
-
-            Row {
-                spacing: 6
-
-                Repeater {
-                    // "All" is a choice between emoji, so it appears once
-                    // there is more than one to choose between.
-                    model: (root.reactionSummary.length > 1
-                        ? [{ emoji: "", count: root.reactionTotal }] : []).concat(root.reactionSummary)
-                    delegate: Rectangle {
-                        required property var modelData
-                        readonly property bool current: reactionDetailsPopup.shownEmoji === String(modelData.emoji)
-                        width: headingRow.implicitWidth + 18
-                        height: 28
-                        radius: 14
-                        color: current ? Theme.selectedRow : "transparent"
-                        border.color: current ? Theme.primary : Theme.border
-                        border.width: 1
-
-                        Row {
-                            id: headingRow
-                            anchors.centerIn: parent
-                            spacing: 4
-                            Label {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: String(parent.parent.modelData.emoji) === ""
-                                    ? qsTr("All") : String(parent.parent.modelData.emoji)
-                                font.family: Theme.emojiFontFamily
-                                font.pixelSize: 14
-                                color: Theme.text
-                            }
-                            Label {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: Number(parent.parent.modelData.count)
-                                font.pixelSize: 12
-                                color: Theme.textMuted
-                            }
-                        }
-
-                        TapHandler {
-                            onTapped: reactionDetailsPopup.shownEmoji = String(parent.modelData.emoji)
-                        }
-                    }
+            Popup {
+                id: reactionDetailsPopup
+                objectName: "reactionDetailsPopup"
+                parent: Overlay.overlay
+                // Empty means everybody; otherwise only the people who left this
+                // emoji, which is what the headings along the top switch between.
+                property string shownEmoji: ""
+                readonly property var shownPeople: root.reactionPeople.filter(function(person) {
+                    return reactionDetailsPopup.shownEmoji === "" || person.key === reactionDetailsPopup.shownEmoji
+                })
+                width: 320
+                implicitHeight: Math.min(384, reactionDetailsColumn.implicitHeight + 24)
+                padding: 12
+                modal: false
+                focus: true
+                // See quickReactionPopup: this is positioned inside the application
+                // window, so it has to be an item in that window's overlay.
+                Component.onCompleted: {
+                    if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
+                        popupType = Popup.Item
                 }
-            }
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                background: Rectangle {
+                    radius: 12
+                    color: Theme.surfaceRaised
+                    border.color: Theme.border
+                }
 
-            ListView {
-                objectName: "reactionDetailsList"
-                width: parent.width
-                height: Math.min(288, Math.max(48, contentHeight))
-                clip: true
-                model: reactionDetailsPopup.shownPeople
-                boundsBehavior: Flickable.StopAtBounds
-                delegate: Item {
-                    required property var modelData
-                    width: ListView.view.width
-                    height: 48
-
-                    Avatar {
-                        id: reactorAvatar
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        diameter: 36
-                        title: String(parent.modelData.name || parent.modelData.number)
-                        source: parent.modelData.avatar ? Theme.fileUrl(String(parent.modelData.avatar)) : ""
-                        fallbackIdentity: source.toString() === ""
-                    }
-
-                    Column {
-                        anchors.left: reactorAvatar.right
-                        anchors.leftMargin: 10
-                        anchors.right: reactorEmoji.left
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 1
-
-                        Label {
-                            width: parent.width
-                            elide: Text.ElideRight
-                            text: parent.parent.modelData.mine
-                                ? qsTr("You")
-                                : (String(parent.parent.modelData.name)
-                                    || String(parent.parent.modelData.number)
-                                    || qsTr("Unknown"))
-                            color: Theme.text
-                            font.pixelSize: 14
-                        }
-                        Label {
-                            width: parent.width
-                            elide: Text.ElideRight
-                            // WhatsApp Web puts the number under a saved name,
-                            // and tells the reader their own can be taken back.
-                            visible: text !== ""
-                            text: parent.parent.modelData.mine
-                                ? qsTr("Click to remove")
-                                : (String(parent.parent.modelData.name) !== ""
-                                    ? String(parent.parent.modelData.number) : "")
-                            color: Theme.textMuted
-                            font.pixelSize: 12
-                        }
-                    }
+                contentItem: Column {
+                    id: reactionDetailsColumn
+                    spacing: 8
 
                     Label {
-                        id: reactorEmoji
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: String(parent.modelData.emoji)
-                        font.family: Theme.emojiFontFamily
-                        font.pixelSize: 18
+                        objectName: "reactionDetailsTitle"
+                        // "1 reaction", "4 reactions": what WhatsApp Web heads the
+                        // panel with. "1 emoji reactions" was neither.
+                        text: root.reactionTotal === 1
+                            ? qsTr("1 reaction") : qsTr("%1 reactions").arg(root.reactionTotal)
+                        color: Theme.text
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
                     }
 
-                    TapHandler {
-                        enabled: parent.modelData !== undefined && parent.modelData.mine
-                        onTapped: {
-                            root.reactWith("")
-                            reactionDetailsPopup.close()
+                    Row {
+                        spacing: 6
+
+                        Repeater {
+                            // "All" is a choice between emoji, so it appears once
+                            // there is more than one to choose between.
+                            model: (root.reactionSummary.length > 1
+                                ? [{ emoji: "", count: root.reactionTotal }] : []).concat(root.reactionSummary)
+                            delegate: Rectangle {
+                                required property var modelData
+                                readonly property bool current: reactionDetailsPopup.shownEmoji === String(modelData.emoji)
+                                width: headingRow.implicitWidth + 18
+                                height: 28
+                                radius: 14
+                                color: current ? Theme.selectedRow : "transparent"
+                                border.color: current ? Theme.primary : Theme.border
+                                border.width: 1
+
+                                Row {
+                                    id: headingRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    Label {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: String(parent.parent.modelData.emoji) === ""
+                                            ? qsTr("All") : String(parent.parent.modelData.emoji)
+                                        font.family: Theme.emojiFontFamily
+                                        font.pixelSize: 14
+                                        color: Theme.text
+                                    }
+                                    Label {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: Number(parent.parent.modelData.count)
+                                        font.pixelSize: 12
+                                        color: Theme.textMuted
+                                    }
+                                }
+
+                                TapHandler {
+                                    onTapped: reactionDetailsPopup.shownEmoji = String(parent.modelData.emoji)
+                                }
+                            }
+                        }
+                    }
+
+                    ListView {
+                        objectName: "reactionDetailsList"
+                        width: parent.width
+                        height: Math.min(288, Math.max(48, contentHeight))
+                        clip: true
+                        model: reactionDetailsPopup.shownPeople
+                        boundsBehavior: Flickable.StopAtBounds
+                        delegate: Item {
+                            required property var modelData
+                            width: ListView.view.width
+                            height: 48
+
+                            Avatar {
+                                id: reactorAvatar
+                                anchors.left: parent.left
+                                anchors.verticalCenter: parent.verticalCenter
+                                diameter: 36
+                                title: String(parent.modelData.name || parent.modelData.number)
+                                source: parent.modelData.avatar ? Theme.fileUrl(String(parent.modelData.avatar)) : ""
+                                fallbackIdentity: source.toString() === ""
+                            }
+
+                            Column {
+                                anchors.left: reactorAvatar.right
+                                anchors.leftMargin: 10
+                                anchors.right: reactorEmoji.left
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 1
+
+                                Label {
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                    text: parent.parent.modelData.mine
+                                        ? qsTr("You")
+                                        : (String(parent.parent.modelData.name)
+                                            || String(parent.parent.modelData.number)
+                                            || qsTr("Unknown"))
+                                    color: Theme.text
+                                    font.pixelSize: 14
+                                }
+                                Label {
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                    // WhatsApp Web puts the number under a saved name,
+                                    // and tells the reader their own can be taken back.
+                                    visible: text !== ""
+                                    text: parent.parent.modelData.mine
+                                        ? qsTr("Click to remove")
+                                        : (String(parent.parent.modelData.name) !== ""
+                                            ? String(parent.parent.modelData.number) : "")
+                                    color: Theme.textMuted
+                                    font.pixelSize: 12
+                                }
+                            }
+
+                            Label {
+                                id: reactorEmoji
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: String(parent.modelData.emoji)
+                                font.family: Theme.emojiFontFamily
+                                font.pixelSize: 18
+                            }
+
+                            TapHandler {
+                                enabled: parent.modelData !== undefined && parent.modelData.mine
+                                onTapped: {
+                                    root.reactWith("")
+                                    reactionDetailsPopup.close()
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-    }
 
-    Popup {
-        id: quickReactionPopup
-        objectName: "quickReactionPopup"
-        parent: Overlay.overlay
-        property bool pairedWithMenu: false
-        width: quickReactionRow.implicitWidth + 12
-        height: 44
-        padding: 6
-        modal: false
-        focus: true
-        // Qt 6.8 added Popup.popupType, and 6.9 opens a plain Popup in its own
-        // window by default. This one is positioned by clamping it inside the
-        // application window - see clampPopupX and clampPopupY - so it has to
-        // be an item in that window's overlay. The guard keeps the file
-        // loadable on the Qt 6.5 the build still supports, where every popup
-        // was an item already.
-        Component.onCompleted: {
-            if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
-                popupType = Popup.Item
-        }
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        onClosed: {
-            if (pairedWithMenu) {
-                pairedWithMenu = false
-                contextMenu.close()
-            }
-        }
-        background: Item {
-            Rectangle {
-                anchors.fill: parent
-                anchors.leftMargin: 2
-                anchors.topMargin: 4
-                radius: 24
-                color: Theme.dark ? "#52000000" : "#26000000"
-            }
-            Rectangle {
-                anchors.fill: parent
-                anchors.rightMargin: 2
-                anchors.bottomMargin: 4
-                radius: 24
-                color: Theme.surfaceRaised
-                border.color: Theme.border
-            }
-        }
-        contentItem: Row {
-            id: quickReactionRow
-            spacing: 1
-            Repeater {
-                model: ["👍", "❤️", "😂", "😮", "😢", "🙏"]
-                ToolButton {
-                    required property string modelData
-                    width: 32
-                    height: 32
-                    focusPolicy: Qt.TabFocus
-                    Accessible.name: qsTr("React with %1").arg(modelData)
-                    onClicked: root.reactWith(modelData)
-                    contentItem: Label {
-                        text: parent.modelData
-                        font.family: Theme.emojiFontFamily
-                        font.pixelSize: 18
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        radius: 16
-                        color: parent.down ? Theme.pressedRow
-                            : parent.hovered || parent.activeFocus ? Theme.hoverRow : "transparent"
-                        border.width: parent.activeFocus ? 2 : 0
-                        border.color: Theme.primary
+            Popup {
+                id: quickReactionPopup
+                objectName: "quickReactionPopup"
+                parent: Overlay.overlay
+                property bool pairedWithMenu: false
+                width: quickReactionRow.implicitWidth + 12
+                height: 44
+                padding: 6
+                modal: false
+                focus: true
+                // Qt 6.8 added Popup.popupType, and 6.9 opens a plain Popup in its own
+                // window by default. This one is positioned by clamping it inside the
+                // application window - see clampPopupX and clampPopupY - so it has to
+                // be an item in that window's overlay. The guard keeps the file
+                // loadable on the Qt 6.5 the build still supports, where every popup
+                // was an item already.
+                Component.onCompleted: {
+                    if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
+                        popupType = Popup.Item
+                }
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                onClosed: {
+                    if (pairedWithMenu) {
+                        pairedWithMenu = false
+                        contextMenu.close()
                     }
                 }
-            }
-            ToolButton {
-                width: 32
-                height: 32
-                focusPolicy: Qt.TabFocus
-                Accessible.name: qsTr("More reactions")
-                onClicked: root.openFullReactionPicker()
-                contentItem: TintedIcon {
-                    source: Qt.resolvedUrl("icons/plus.svg")
-                    tint: Theme.icon
-                    anchors.margins: 8
+                background: Item {
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.leftMargin: 2
+                        anchors.topMargin: 4
+                        radius: 24
+                        color: Theme.dark ? "#52000000" : "#26000000"
+                    }
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.rightMargin: 2
+                        anchors.bottomMargin: 4
+                        radius: 24
+                        color: Theme.surfaceRaised
+                        border.color: Theme.border
+                    }
                 }
-                background: Rectangle {
-                    radius: 16
-                    color: parent.down ? Theme.pressedRow
-                        : parent.hovered || parent.activeFocus ? Theme.hoverRow : "transparent"
-                    border.width: parent.activeFocus ? 2 : 0
-                    border.color: Theme.primary
+                contentItem: Row {
+                    id: quickReactionRow
+                    spacing: 1
+                    Repeater {
+                        model: ["👍", "❤️", "😂", "😮", "😢", "🙏"]
+                        ToolButton {
+                            required property string modelData
+                            width: 32
+                            height: 32
+                            focusPolicy: Qt.TabFocus
+                            Accessible.name: qsTr("React with %1").arg(modelData)
+                            onClicked: root.reactWith(modelData)
+                            contentItem: Label {
+                                text: parent.modelData
+                                font.family: Theme.emojiFontFamily
+                                font.pixelSize: 18
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: 16
+                                color: parent.down ? Theme.pressedRow
+                                    : parent.hovered || parent.activeFocus ? Theme.hoverRow : "transparent"
+                                border.width: parent.activeFocus ? 2 : 0
+                                border.color: Theme.primary
+                            }
+                        }
+                    }
+                    ToolButton {
+                        width: 32
+                        height: 32
+                        focusPolicy: Qt.TabFocus
+                        Accessible.name: qsTr("More reactions")
+                        onClicked: root.openFullReactionPicker()
+                        contentItem: TintedIcon {
+                            source: Qt.resolvedUrl("icons/plus.svg")
+                            tint: Theme.icon
+                            anchors.margins: 8
+                        }
+                        background: Rectangle {
+                            radius: 16
+                            color: parent.down ? Theme.pressedRow
+                                : parent.hovered || parent.activeFocus ? Theme.hoverRow : "transparent"
+                            border.width: parent.activeFocus ? 2 : 0
+                            border.color: Theme.primary
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    EmojiPicker {
-        id: fullReactionPicker
-        objectName: "messageReactionPicker"
-        parent: Overlay.overlay
-        onEmojiChosen: emoji => root.reactWith(emoji)
-    }
+            EmojiPicker {
+                id: fullReactionPicker
+                objectName: "messageReactionPicker"
+                parent: Overlay.overlay
+                onEmojiChosen: emoji => root.reactWith(emoji)
+            }
 
-    WhatsAppMenuPopup {
-        id: contextMenu
-        objectName: "messageContextMenu"
-        parent: Overlay.overlay
-        width: 196
-        property string capturedSelection: ""
-        closePolicy: Popup.CloseOnEscape
-        // Qt 6.8 added Popup.popupType, and 6.9 opens a plain Popup in its own
-        // window by default. This one is positioned by clamping it inside the
-        // application window - see clampPopupX and clampPopupY - so it has to
-        // be an item in that window's overlay. The guard keeps the file
-        // loadable on the Qt 6.5 the build still supports, where every popup
-        // was an item already.
-        Component.onCompleted: {
-            if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
-                popupType = Popup.Item
-        }
+            WhatsAppMenuPopup {
+                id: contextMenu
+                objectName: "messageContextMenu"
+                parent: Overlay.overlay
+                width: 196
+                property string capturedSelection: ""
+                closePolicy: Popup.CloseOnEscape
+                // Qt 6.8 added Popup.popupType, and 6.9 opens a plain Popup in its own
+                // window by default. This one is positioned by clamping it inside the
+                // application window - see clampPopupX and clampPopupY - so it has to
+                // be an item in that window's overlay. The guard keeps the file
+                // loadable on the Qt 6.5 the build still supports, where every popup
+                // was an item already.
+                Component.onCompleted: {
+                    if (typeof popupType !== "undefined" && typeof Popup.Item !== "undefined")
+                        popupType = Popup.Item
+                }
 
-        WhatsAppMenuItem {
-			id: messageInfoAction
-			objectName: "messageInfoAction"
-			visible: Boolean(root.modelData.from_me)
-			height: visible ? 36 : 0
-			text: qsTr("Message info")
-			iconSource: Qt.resolvedUrl("icons/info.svg")
-			onClicked: {
-				root.closeActionPopups()
-				root.infoRequested(root.modelData)
-			}
-		}
+                WhatsAppMenuItem {
+                    id: messageInfoAction
+                    objectName: "messageInfoAction"
+                    visible: Boolean(root.modelData.from_me)
+                    height: visible ? 36 : 0
+                    text: qsTr("Message info")
+                    iconSource: Qt.resolvedUrl("icons/info.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.infoRequested(root.modelData)
+                    }
+                }
 
-		WhatsAppMenuItem {
-            visible: Boolean(contextMenu.capturedSelection)
-            height: visible ? 36 : 0
-            text: qsTr("Copy selected text")
-            iconSource: Qt.resolvedUrl("icons/copy.svg")
-            onClicked: {
-                backend.copyText(contextMenu.capturedSelection)
-                root.closeActionPopups()
-            }
-        }
+                WhatsAppMenuItem {
+                    visible: Boolean(contextMenu.capturedSelection)
+                    height: visible ? 36 : 0
+                    text: qsTr("Copy selected text")
+                    iconSource: Qt.resolvedUrl("icons/copy.svg")
+                    onClicked: {
+                        backend.copyText(contextMenu.capturedSelection)
+                        root.closeActionPopups()
+                    }
+                }
 
-        WhatsAppMenuItem {
-            visible: !Boolean(contextMenu.capturedSelection) && Boolean(root.modelData.body)
-            height: visible ? 36 : 0
-            text: qsTr("Copy")
-            iconSource: Qt.resolvedUrl("icons/copy.svg")
-            onClicked: {
-                backend.copyText(root.modelData.body || "")
-                root.closeActionPopups()
-            }
-        }
+                WhatsAppMenuItem {
+                    visible: !Boolean(contextMenu.capturedSelection) && Boolean(root.modelData.body) && !root.viewOnceKind
+                    height: visible ? 36 : 0
+                    text: qsTr("Copy")
+                    iconSource: Qt.resolvedUrl("icons/copy.svg")
+                    onClicked: {
+                        backend.copyText(root.modelData.body || "")
+                        root.closeActionPopups()
+                    }
+                }
 
-        WhatsAppMenuItem {
-            visible: root.modelData.kind === "image" || root.modelData.kind === "sticker"
-            height: visible ? 36 : 0
-            text: qsTr("Copy image")
-            iconSource: Qt.resolvedUrl("icons/copy.svg")
-            onClicked: {
-                root.closeActionPopups()
-                backend.copyImage(root.modelData.id, root.modelData.media_path || "")
-            }
-        }
+                WhatsAppMenuItem {
+                    visible: root.modelData.kind === "image" || root.modelData.kind === "sticker"
+                    height: visible ? 36 : 0
+                    text: qsTr("Copy image")
+                    iconSource: Qt.resolvedUrl("icons/copy.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        backend.copyImage(root.modelData.id, root.modelData.media_path || "")
+                    }
+                }
 
-        WhatsAppMenuItem {
-            text: qsTr("Reply")
-            iconSource: Qt.resolvedUrl("icons/reply.svg")
-            onClicked: {
-                root.closeActionPopups()
-                root.replyRequested(root.modelData.id, root.modelData.body || root.mediaLabel)
+                WhatsAppMenuItem {
+                    text: qsTr("Reply")
+                    iconSource: Qt.resolvedUrl("icons/reply.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.replyRequested(root.modelData.id, root.modelData.body || root.mediaLabel)
+                    }
+                }
+                WhatsAppMenuItem {
+                    text: qsTr("React")
+                    iconSource: Qt.resolvedUrl("icons/smile.svg")
+                    onClicked: {
+                        quickReactionPopup.pairedWithMenu = false
+                        contextMenu.close()
+                        root.openReactionTray(messageReactionButton)
+                    }
+                }
+                WhatsAppMenuItem {
+                    visible: !root.modelData.revoked
+                    height: visible ? 36 : 0
+                    text: qsTr("Pin")
+                    iconSource: Qt.resolvedUrl("icons/pin.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.pinRequested(root.modelData.id, root.modelData.sender_jid || "",
+                                          root.modelData.body || root.mediaLabel)
+                    }
+                }
+                WhatsAppMenuItem {
+                    objectName: "messageStarAction"
+                    visible: !root.modelData.revoked && !root.viewOnceKind
+                    height: visible ? 36 : 0
+                    // The label names the result, matching how the web client flips
+                    // between starring and removing a star on the same row.
+                    text: root.modelData.starred ? qsTr("Unstar") : qsTr("Star")
+                    iconSource: Qt.resolvedUrl(root.modelData.starred ? "icons/star-filled.svg" : "icons/star.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.starRequested(root.modelData.id, root.modelData.sender_jid || "",
+                                           Boolean(root.modelData.from_me), !root.modelData.starred)
+                    }
+                }
+                WhatsAppMenuItem {
+                    objectName: "messageForwardAction"
+                    visible: !root.modelData.revoked && !root.viewOnceKind
+                    height: visible ? 36 : 0
+                    text: qsTr("Forward")
+                    iconSource: Qt.resolvedUrl("icons/forward.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.forwardRequested(root.modelData.id)
+                    }
+                }
+                Rectangle {
+                    visible: Boolean(root.modelData.from_me)
+                    width: parent.width
+                    height: visible ? 1 : 0
+                    color: Theme.border
+                }
+                WhatsAppMenuItem {
+                    visible: Boolean(root.modelData.from_me) && root.modelData.kind === "text" && !root.modelData.revoked
+                    height: visible ? 36 : 0
+                    text: qsTr("Edit")
+                    iconSource: Qt.resolvedUrl("icons/edit.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.editRequested(root.modelData.id, root.modelData.body || "")
+                    }
+                }
+                WhatsAppMenuItem {
+                    visible: Boolean(root.modelData.from_me) && !root.modelData.revoked
+                    height: visible ? 36 : 0
+                    text: qsTr("Delete for everyone")
+                    iconSource: Qt.resolvedUrl("icons/delete.svg")
+                    destructive: true
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.deleteRequested(root.modelData.id, root.modelData.sender_jid || "")
+                    }
+                }
             }
-        }
-        WhatsAppMenuItem {
-            text: qsTr("React")
-            iconSource: Qt.resolvedUrl("icons/smile.svg")
-            onClicked: {
-                quickReactionPopup.pairedWithMenu = false
-                contextMenu.close()
-                root.openReactionTray(messageReactionButton)
-            }
-        }
-        WhatsAppMenuItem {
-            visible: !root.modelData.revoked
-            height: visible ? 36 : 0
-            text: qsTr("Pin")
-            iconSource: Qt.resolvedUrl("icons/pin.svg")
-            onClicked: {
-                root.closeActionPopups()
-                root.pinRequested(root.modelData.id, root.modelData.sender_jid || "",
-                                  root.modelData.body || root.mediaLabel)
-            }
-        }
-        WhatsAppMenuItem {
-            objectName: "messageStarAction"
-            visible: !root.modelData.revoked
-            height: visible ? 36 : 0
-            // The label names the result, matching how the web client flips
-            // between starring and removing a star on the same row.
-            text: root.modelData.starred ? qsTr("Unstar") : qsTr("Star")
-            iconSource: Qt.resolvedUrl(root.modelData.starred ? "icons/star-filled.svg" : "icons/star.svg")
-            onClicked: {
-                root.closeActionPopups()
-                root.starRequested(root.modelData.id, root.modelData.sender_jid || "",
-                                   Boolean(root.modelData.from_me), !root.modelData.starred)
-            }
-        }
-        WhatsAppMenuItem {
-            objectName: "messageForwardAction"
-            visible: !root.modelData.revoked
-            height: visible ? 36 : 0
-            text: qsTr("Forward")
-            iconSource: Qt.resolvedUrl("icons/forward.svg")
-            onClicked: {
-                root.closeActionPopups()
-                root.forwardRequested(root.modelData.id)
-            }
-        }
-        Rectangle {
-            visible: Boolean(root.modelData.from_me)
-            width: parent.width
-            height: visible ? 1 : 0
-            color: Theme.border
-        }
-        WhatsAppMenuItem {
-            visible: Boolean(root.modelData.from_me) && root.modelData.kind === "text" && !root.modelData.revoked
-            height: visible ? 36 : 0
-            text: qsTr("Edit")
-            iconSource: Qt.resolvedUrl("icons/edit.svg")
-            onClicked: {
-                root.closeActionPopups()
-                root.editRequested(root.modelData.id, root.modelData.body || "")
-            }
-        }
-        WhatsAppMenuItem {
-            visible: Boolean(root.modelData.from_me) && !root.modelData.revoked
-            height: visible ? 36 : 0
-            text: qsTr("Delete for everyone")
-            iconSource: Qt.resolvedUrl("icons/delete.svg")
-            destructive: true
-            onClicked: {
-                root.closeActionPopups()
-                root.deleteRequested(root.modelData.id, root.modelData.sender_jid || "")
-            }
+
         }
     }
 

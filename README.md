@@ -47,7 +47,7 @@ On Debian 13:
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev qt6-multimedia-dev \
-  qml6-module-org-kde-desktop \
+  qml6-module-org-kde-desktop qt6-gtk-platformtheme \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 
 git clone https://github.com/shukiv/whatsappgo.git

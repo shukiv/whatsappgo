@@ -56,6 +56,20 @@ func (c *Client) collectMedia(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		settings, err := c.store.LocalSettings(ctx)
+		if err != nil {
+			return
+		}
+		anyEnabled := false
+		for key, on := range settings {
+			if strings.HasPrefix(key, "download_") && on {
+				anyEnabled = true
+				break
+			}
+		}
+		if !anyEnabled {
+			return
+		}
 		pending, err := c.store.MessagesMissingMedia(ctx, cursor, mediaScanPageSize)
 		if err != nil {
 			return
@@ -71,7 +85,7 @@ func (c *Client) collectMedia(ctx context.Context) {
 				return
 			}
 			cursor = localstore.MessageCursor{Timestamp: item.Timestamp, MessageID: item.MessageID}
-			if item.Size > mediaSizeCeiling {
+			if item.Size > mediaSizeCeiling || !c.store.AutoDownloadAllowed(ctx, item.Kind) {
 				continue
 			}
 			if _, err := c.DownloadMedia(ctx, item.ChatJID, item.MessageID); err != nil {

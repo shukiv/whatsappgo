@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -94,6 +95,28 @@ func (c *Client) handleEvent(raw any) {
 		c.setStatus(func(s *model.ConnectionStatus) { s.State = "paired"; s.LoggedIn = true; s.UserJID = evt.ID.String() })
 	case *waEvents.Message:
 		c.handleMessage(evt)
+	case *waEvents.UndecryptableMessage:
+		// This is intentional unavailability, not a decryption failure to
+		// retry. Retain the timeline entry without requesting its contents.
+		if evt.IsUnavailable && evt.UnavailableType == waEvents.UnavailableTypeViewOnce {
+			c.handleMessage(&waEvents.Message{Info: evt.Info, IsViewOnce: true})
+		}
+	case *waEvents.CallOffer:
+		c.notifyCall(evt.BasicCallMeta)
+	case *waEvents.CallOfferNotice:
+		c.notifyCall(evt.BasicCallMeta)
+	case *waEvents.IdentityChange:
+		c.notifyIdentityChange(evt)
+	case *waEvents.UserAbout:
+		if c.isOwnIdentity(evt.JID) {
+			c.emit(gateway.Event{Name: "profile.changed", Data: map[string]any{"about": evt.Status}})
+		}
+	case *waEvents.PushNameSetting:
+		if evt.Action != nil {
+			c.setStatus(func(s *model.ConnectionStatus) { s.UserName = evt.Action.GetName() })
+		}
+	case *waEvents.PrivacySettings:
+		c.emit(gateway.Event{Name: "privacy.changed", Data: map[string]any{"settings": privacyModel(evt.NewSettings)}})
 	case *waEvents.Receipt:
 		c.handleReceipt(evt)
 	case *waEvents.MediaRetry:
@@ -169,6 +192,7 @@ func (c *Client) handleEvent(raw any) {
 		_ = c.store.UpsertChat(context.Background(), model.Chat{JID: evt.JID.String(), Title: evt.Name, IsGroup: true})
 		c.emit(gateway.Event{Name: "chat.updated", Data: map[string]string{"jid": evt.JID.String(), "title": evt.Name}})
 	case *waEvents.GroupInfo:
+		c.emit(gateway.Event{Name: "group.updated", Data: map[string]string{"jid": evt.JID.String()}})
 		if evt.Name != nil {
 			_ = c.store.UpdateChatTitle(context.Background(), evt.JID.String(), evt.Name.Name)
 			c.emit(gateway.Event{Name: "chat.updated", Data: map[string]string{"jid": evt.JID.String(), "title": evt.Name.Name}})
@@ -543,12 +567,16 @@ func (c *Client) enrichPlaceholderContacts(ctx context.Context) {
 }
 
 func (c *Client) handleMessage(evt *waEvents.Message) {
-	if evt.Message == nil {
+	if evt.Message == nil && !eventIsViewOnce(evt) {
 		return
 	}
 	if reaction := evt.Message.GetReactionMessage(); reaction != nil {
 		r := model.Reaction{ChatJID: evt.Info.Chat.String(), MessageID: reaction.GetKey().GetID(), SenderJID: c.reactionSenderJID(evt.Info.Sender, evt.Info.IsFromMe), Emoji: reaction.GetText(), Timestamp: evt.Info.Timestamp.UnixMilli()}
-		_ = c.recordReaction(context.Background(), r)
+		changed, err := c.store.UpsertReactionChanged(context.Background(), r)
+		if err == nil && changed {
+			c.emit(gateway.Event{Name: "message.reaction", Data: r})
+			c.notifyReaction(evt, r)
+		}
 		return
 	}
 	if pin := evt.Message.GetPinInChatMessage(); pin != nil {
@@ -586,6 +614,10 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	if msg.ID == "" || msg.ChatJID == "" {
 		return
 	}
+	previous, previousErr := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID)
+	if previous.Kind == "view_once" {
+		msg = model.ViewOncePlaceholder(msg)
+	}
 	msg = c.withCachedThumbnail(msg, evt.Message)
 	msg = c.withCachedLinkPreview(msg, evt.Message)
 	msg = c.withReplyPreview(context.Background(), msg)
@@ -599,12 +631,24 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	}
 	c.rememberMediaPayload(msg, evt.Message)
 	c.emit(gateway.Event{Name: "message.upsert", Data: msg})
-	if shouldNotifyMessage(msg) {
+	if errors.Is(previousErr, sql.ErrNoRows) {
+		c.notifyStatusUpdate(evt, msg)
+	}
+	if shouldNotifyMessage(msg) && errors.Is(previousErr, sql.ErrNoRows) && !evt.IsEdit && evt.SourceWebMsg == nil {
 		chatInfo, _ := c.store.GetChat(context.Background(), msg.ChatJID)
 		notifyTitle := notificationTitle(chatInfo, title, msg.ChatJID)
 		muted := chatInfo.MutedUntil > time.Now().UnixMilli()
-		if !muted {
+		preferences, preferenceErr := c.store.NotificationSettings(context.Background())
+		category := "messages"
+		if evt.Info.IsGroup {
+			category = "groups"
+		}
+		// A failed preference read must not leak a preview that was disabled.
+		if !muted && preferenceErr == nil && preferences[category] {
 			body := notificationBody(msg, evt.Info.IsGroup)
+			if !preferences["previews"] {
+				body = "New message"
+			}
 			// handled tells the desktop client whether this daemon already put
 			// the message on screen. On Linux the freedesktop service does it
 			// and the client must stay quiet; where no such service exists the
@@ -633,7 +677,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 				if err := c.notifier.Notify(context.Background(), notification); err != nil {
 					log.Printf("deliver desktop notification: %v", err)
 				}
-			}(notify.Message{ChatJID: msg.ChatJID, Title: notifyTitle, Body: body, IconPath: chatInfo.AvatarPath})
+			}(notify.Message{ChatJID: msg.ChatJID, Title: notifyTitle, Body: body, IconPath: chatInfo.AvatarPath, Silent: !preferences["sounds"] || !preferences[category+"_sound"]})
 		}
 	}
 	if downloadable := downloadableFromMessage(evt.Message); downloadable != nil && !evt.IsViewOnce {
@@ -663,6 +707,9 @@ func notificationTitle(chat model.Chat, pushName, chatJID string) string {
 // with the sender's name inside groups.
 func notificationBody(msg model.Message, isGroup bool) string {
 	body := msg.Body
+	if msg.Kind == "view_once" {
+		body = "View once message — open WhatsApp on your phone"
+	}
 	if body == "" {
 		body = capitalize(msg.Kind)
 	}
@@ -753,6 +800,9 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			msg := c.withSenderName(context.Background(), messageFromEvent(parsed))
 			if msg.ID == "" {
 				continue
+			}
+			if previous, err := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID); err == nil && previous.Kind == "view_once" {
+				msg = model.ViewOncePlaceholder(msg)
 			}
 			msg = c.withCachedThumbnail(msg, parsed.Message)
 			msg = c.withCachedLinkPreview(msg, parsed.Message)
@@ -890,7 +940,7 @@ func callLogFromRecord(record *waSyncAction.CallLogRecord) (model.CallLog, bool)
 }
 
 func (c *Client) rememberMediaPayload(msg model.Message, raw *waE2E.Message) {
-	if downloadableFromMessage(raw) == nil {
+	if msg.Kind == "view_once" || downloadableFromMessage(raw) == nil {
 		return
 	}
 	payload, err := proto.Marshal(raw)
@@ -919,6 +969,11 @@ func (c *Client) cacheMedia(msg model.Message, media whatsmeow.DownloadableMessa
 	}
 	ctx, cancel := context.WithTimeout(base, liveMediaTimeout)
 	defer cancel()
+	// Recheck after waiting for a transfer slot: preferences may have changed
+	// while this message was queued. Explicit downloads bypass this gate.
+	if !c.store.AutoDownloadAllowed(ctx, msg.Kind) || msg.MediaSize > mediaSizeCeiling {
+		return
+	}
 	_, _ = c.downloadMedia(ctx, msg, media, raw)
 }
 
@@ -931,6 +986,7 @@ func (c *Client) withDisplayableSticker(msg model.Message) model.Message {
 	if msg.Kind != "sticker" || msg.MediaPath == "" {
 		return msg
 	}
+	msg.StickerSource, msg.StickerAnimated = mediaformat.StickerSource(msg.MediaPath)
 	if path, err := mediaformat.StickerPNG(msg.MediaPath); err == nil {
 		msg.MediaPath = path
 	}
@@ -938,6 +994,9 @@ func (c *Client) withDisplayableSticker(msg model.Message) model.Message {
 }
 
 func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message) (model.Message, error) {
+	if msg.Kind == "view_once" || isViewOnce(raw) {
+		return model.Message{}, errors.New("view-once messages can only be opened on your phone")
+	}
 	dir := filepath.Join(c.mediaDir, msg.Kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return model.Message{}, err
@@ -1035,6 +1094,12 @@ func (c *Client) withReplyPreview(ctx context.Context, m model.Message) model.Me
 		return m
 	}
 	m.ReplyPreview = text
+	if m.ReplyViewOnce {
+		m.ReplyPreview = "View once message"
+	} else if text == "View once message" {
+		quoted, _ := c.store.GetMessage(ctx, m.ChatJID, m.ReplyTo)
+		m.ReplyViewOnce = quoted.Kind == "view_once"
+	}
 	m.ReplyFromMe = fromMe
 	if sender != "" {
 		m.ReplySender = sender
@@ -1082,6 +1147,9 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 	if m.FromMe {
 		m.Status = "sent"
 	}
+	if eventIsViewOnce(evt) {
+		return model.ViewOncePlaceholder(m)
+	}
 	if evt.IsEdit && evt.RawMessage != nil {
 		if wrapper := evt.RawMessage.GetEditedMessage().GetMessage(); wrapper != nil {
 			if protocol := wrapper.GetProtocolMessage(); protocol != nil && protocol.GetKey() != nil && protocol.GetKey().GetID() != "" {
@@ -1113,6 +1181,8 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 	case msg.GetVideoMessage() != nil:
 		v := msg.GetVideoMessage()
 		m.Kind = "video"
+		m.GIFPlayback = v.GetGifPlayback()
+		m.MediaDuration = int(v.GetSeconds())
 		m.Body = v.GetCaption()
 		m.MediaMIME = v.GetMimetype()
 		m.MediaSize = int64(v.GetFileLength())
@@ -1266,6 +1336,9 @@ func applyLinkPreview(m *model.Message, v *waE2E.ExtendedTextMessage) {
 // a reply. It is the only description available when the quoted message itself
 // is older than this device's history.
 func quotedPreview(msg *waE2E.Message) string {
+	if isViewOnce(msg) {
+		return "View once message"
+	}
 	if msg == nil {
 		return ""
 	}
@@ -1299,6 +1372,7 @@ func applyContext(m *model.Message, ctx *waE2E.ContextInfo) {
 		// preview shows until - and unless - the quoted message itself is
 		// found in this device's history.
 		m.ReplyPreview = quotedPreview(ctx.GetQuotedMessage())
+		m.ReplyViewOnce = isViewOnce(ctx.GetQuotedMessage())
 		if participant := ctx.GetParticipant(); participant != "" {
 			m.ReplySender = displayJID(participant)
 		}
@@ -1312,7 +1386,7 @@ func applyContext(m *model.Message, ctx *waE2E.ContextInfo) {
 	}
 }
 func downloadableFromMessage(msg *waE2E.Message) whatsmeow.DownloadableMessage {
-	if msg == nil {
+	if msg == nil || isViewOnce(msg) {
 		return nil
 	}
 	switch {

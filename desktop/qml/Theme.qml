@@ -4,6 +4,18 @@ import QtQuick
 QtObject {
     property string preferredMode: "system"
 
+    // The overlay itself may be visible while empty. Only a focused popup
+    // should own Escape; passive tooltips must not block back navigation.
+    function popupOwnsFocus(overlay, focusItem) {
+        if (!overlay)
+            return false
+        for (let item = focusItem; item; item = item.parent) {
+            if (item === overlay)
+                return true
+        }
+        return false
+    }
+
     // WhatsApp names the platform in its own empty state ("WhatsApp for
     // Windows"), so this application does the same rather than claiming Linux
     // everywhere.
@@ -68,6 +80,7 @@ QtObject {
     readonly property color danger: dark ? "#F15C6D" : "#EA0038"
     readonly property color dangerText: "#FFFFFF"
     readonly property color attachmentDocument: dark ? "#A78BFA" : "#7C4DFF"
+    readonly property color documentPdf: "#D9003A"
     readonly property color attachmentMedia: dark ? "#60A5FA" : "#1677FF"
     readonly property color attachmentCamera: dark ? "#FB7185" : "#F43F75"
     readonly property color attachmentAudio: dark ? "#FB923C" : "#F35A2C"

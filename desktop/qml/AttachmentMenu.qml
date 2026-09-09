@@ -11,6 +11,8 @@ WhatsAppMenuPopup {
     signal documentRequested()
     signal photosVideosRequested()
     signal audioRequested()
+    signal stickerRequested()
+    signal contactRequested()
     signal unavailableRequested(string feature)
 
     onOpened: documentAction.forceActiveFocus()
@@ -71,10 +73,10 @@ WhatsAppMenuPopup {
         text: qsTr("Contact")
         iconSource: Qt.resolvedUrl("icons/contact.svg")
         iconTint: Theme.attachmentContact
-        Accessible.description: qsTr("Sending contact cards is not supported by the linked-device API yet")
+        Accessible.description: qsTr("Choose a contact and review their name and phone number before sending")
         onClicked: {
             root.close()
-            root.unavailableRequested(text)
+            root.contactRequested()
         }
     }
 
@@ -110,10 +112,10 @@ WhatsAppMenuPopup {
         text: qsTr("New sticker")
         iconSource: Qt.resolvedUrl("icons/sticker.svg")
         iconTint: Theme.attachmentSticker
-        Accessible.description: qsTr("Creating stickers is not supported by the linked-device API yet")
+        Accessible.description: qsTr("Create a sticker from an image and preview it before sending")
         onClicked: {
             root.close()
-            root.unavailableRequested(text)
+            root.stickerRequested()
         }
     }
 }

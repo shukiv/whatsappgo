@@ -15,6 +15,12 @@ list, keeping their 24-unit view box and 2-unit rounded stroke.
 
 The app logo, status rings, and message artwork are not Lucide assets.
 
+The two `PoweredBy_200px-…_HorizLogo.png` files are unmodified official GIPHY
+attribution marks, not Lucide icons. Source: the archive linked from
+[GIPHY API attribution](https://developers.giphy.com/docs/#attribution),
+`https://media.giphy.com/giphy-attribution-marks.zip` (retrieved 2026-09-08).
+Use the supplied light/dark artwork without recoloring it.
+
 | App resource | Upstream icon |
 | --- | --- |
 | archive | archive |
@@ -66,6 +72,10 @@ The app logo, status rings, and message artwork are not Lucide assets.
 | rotate-right | rotate-cw |
 | search | search |
 | send | send |
+| settings | settings |
+| bell | bell |
+| shield | shield-half |
+| flag | flag |
 | smile | face-slightly-smiling |
 | sort | arrow-down-wide-narrow |
 | star | star |
@@ -77,3 +87,6 @@ The app logo, status rings, and message artwork are not Lucide assets.
 | user | user-round |
 | user-add | user-round-plus |
 | video | video |
+
+`view-once.svg` is a project-authored dashed-circle/1 status glyph, using the
+same 24-unit canvas and 2-unit stroke as the Lucide controls.

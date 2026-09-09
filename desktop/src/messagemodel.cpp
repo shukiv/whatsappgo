@@ -194,21 +194,29 @@ QDate dayOf(const QVariantMap &message)
 }
 }
 
-void MessageListModel::refreshDayStarts()
+void MessageListModel::refreshDayStarts(int first, int end)
 {
+    if (end < 0)
+        end = count();
     QDate previous;
-    for (int row = 0; row < count(); ++row) {
+    for (int row = first - 1; row >= 0 && !previous.isValid(); --row)
+        previous = dayOf(m_messages.at(row).toMap());
+    for (int row = first; row < count(); ++row) {
         auto message = m_messages.at(row).toMap();
         const auto day = dayOf(message);
         const bool starts = day.isValid() && day != previous;
         if (day.isValid())
             previous = day;
-        if (message.value(QStringLiteral("starts_day")).toBool() == starts)
-            continue;
-        message.insert(QStringLiteral("starts_day"), starts);
-        m_messages[row] = message;
-        const auto changed = index(count() - 1 - row, 0);
-        emit dataChanged(changed, changed, {MessageRole});
+        if (message.value(QStringLiteral("starts_day")).toBool() != starts) {
+            message.insert(QStringLiteral("starts_day"), starts);
+            m_messages[row] = message;
+            const auto changed = index(count() - 1 - row, 0);
+            emit dataChanged(changed, changed, {MessageRole});
+        }
+        // Include the next valid timestamp after the changed interval: its
+        // separator depends on the last date in that interval.
+        if (row >= end && day.isValid())
+            break;
     }
 }
 
@@ -242,7 +250,7 @@ void MessageListModel::prepend(const QVariantList &older)
     endInsertRows();
     // The message that used to open the conversation may now be in the middle
     // of a day, so this runs after the insert rather than inside it.
-    refreshDayStarts();
+    refreshDayStarts(0, static_cast<int>(older.size()));
     emit countChanged();
 }
 
@@ -271,7 +279,8 @@ void MessageListModel::upsert(const QVariantMap &message)
         emit dataChanged(changed, changed, {MessageRole});
         // A replacement can carry a different time, which moves where one day
         // ends and the next begins.
-        refreshDayStarts();
+        if (dayOf(stored) != dayOf(merged))
+            refreshDayStarts(row, row + 1);
         return;
     }
     const int row = count();
@@ -283,7 +292,7 @@ void MessageListModel::upsert(const QVariantMap &message)
     m_messages.append(prepared);
     m_rowById.insert(id, row);
     endInsertRows();
-    refreshDayStarts();
+    refreshDayStarts(row);
     emit countChanged();
     emit appended();
 }

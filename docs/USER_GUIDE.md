@@ -16,6 +16,64 @@ only while the application is open.
 `whatsappctl` can control that same app-owned backend from a shell or bot. It
 does not start another daemon. See [Command-line and bot API](API.md).
 
+## View-once messages
+
+View-once messages appear in chats as a dashed **1** icon and a notice to open
+WhatsApp on your phone. They cannot be opened, downloaded or forwarded from
+WhatsAppGo. Quoted view-once messages show a safe label, never their caption.
+Older entries that were completely discarded need WhatsApp to supply their
+metadata again; the app does not reconstruct protected content or invent rows.
+
+## WhatsAppGo settings
+
+Click the **gear at the top of the chat list** to open WhatsAppGo settings,
+separate from WhatsApp account/privacy settings. Enter your own **GIPHY** or
+**KLIPY** API key and choose a preferred provider, then click **Save**. Choose
+**None** to disable the preference while retaining keys. Closing without saving
+discards edits; clearing a key field and saving removes that key. A selected
+provider requires a nonempty key.
+
+Open the chat smile button and choose **GIFs**, or press **Ctrl+Alt+G**.
+GIPHY opens with trending GIFs; KLIPY opens with featured GIFs. Both support
+keyword search. Clear the search with the **×** button to return to browsing.
+Select a result to preview its silent animation, then click **Send**. Saving a key does
+not validate it; search reports invalid keys, connection problems and rate limits.
+Google retired the
+[Tenor API on June 30, 2026](https://support.google.com/tenor/answer/10455265?hl=en).
+A legacy Tenor key can be retained, but Tenor cannot be selected for search.
+
+Keys are masked in the form and stored in the desktop application's config
+directory, in `private/gif-providers.json`. The file is **not encrypted**; on
+Linux it is owner-readable/writable only (0600), in an owner-only directory
+(0700). These settings apply across all local accounts, are not synced to
+WhatsApp, and are not sent through the backend or included in diagnostics.
+
+Provider search words and your IP are shared with the chosen provider; chat
+contents, contact names and account identifiers are not. Search results are not
+kept after closing the picker. A selected GIF is downloaded to a temporary file;
+sent media is then kept as part of normal message history. Each search loads up
+to 24 results; **Load more** adds another page, up to 120 per search.
+
+The **Stickers** tab reuses stickers from this account's local history. Choose
+**Starred** to find sticker messages you starred, select one and click **Send**.
+No provider API key is needed. Unavailable originals may need downloading again.
+Animated stickers preview in the picker when their original is cached. Use
+**Pause** to stop a preview.
+
+Choose **Create** in the Stickers tab, or **New sticker** from the paperclip
+menu, to make a static sticker from a JPEG or PNG. The system file picker opens,
+then WhatsAppGo prepares a private copy locally and shows a preview. It preserves
+transparency and fits the whole image without cropping. Nothing is uploaded
+until you click **Send**. Escape returns to the sticker list; switching accounts
+or conversations discards an unsent sticker selection without changing your
+text draft. A failed send keeps the preview available for retry.
+
+Input is limited to 20 MiB and 32 megapixels. The result is a 512×512 WebP
+within the static-sticker size limit; the original stays untouched. Creation
+requires the build's optional libwebp support, not a GIF API key. Animated
+sticker creation, background removal, drawing tools and provider sticker packs
+are not available yet. Successfully sent stickers can be reused from history.
+
 ## Linking an account
 
 ### QR code
@@ -66,6 +124,10 @@ also returns to the bottom, even when you were reading older messages. Scrolling
 up releases automatic following; incoming messages and contact-detail refreshes
 do not pull you back down. Quoted-message and search-result navigation still
 opens at the selected message. Scroll upward to load older history in pages.
+While you are away from the latest message, a circular down-arrow appears at
+the bottom-right of the conversation, above the composer. Click it to jump to
+the newest message and resume following new messages. It disappears at the
+bottom; scrolling down manually to the bottom also resumes following.
 All messages delivered to the linked device are persisted in
 the profile's `messages.db` SQLite database; the UI does not keep the complete
 database in memory.
@@ -115,12 +177,17 @@ actions instead of displaying controls that would fail silently.
 
 - **Enter** sends a message; **Shift+Enter** inserts a line break.
 - The paperclip opens the compact attachment menu. **Document**, **Photos and
-  videos**, and **Audio** are functional. Camera, Contact, Poll, Event, and New
-  sticker are listed but report that the linked-device workflow is not supported
-  yet.
+  videos**, and **Audio** are functional. **New sticker** opens local image
+  selection and a preview before sending. **Contact** searches locally known
+  contacts or lets you enter a name and international phone number. Camera, Poll and Event are
+  listed but report that the linked-device workflow is not supported yet.
 - The smile button opens the native emoji picker.
 - **Document** sends the selected file as a document even when it is a photo
   or video. **Photos and videos** retains the normal inline media presentation.
+- File selection and saving use your system's native file picker (GTK on
+  GNOME), including attachment and status selection, image saving and chat
+  exports. If native integration is unavailable, Qt uses its built-in picker;
+  see [file-picker setup](TROUBLESHOOTING.md#file-selection-does-not-use-the-system-picker).
 - The microphone records a voice note; stop it to send. Switching conversations
   or accounts cancels the recording without sending it.
 - Right-click a message to copy, reply, react, edit eligible sent text, or
@@ -139,7 +206,11 @@ wheel or drag its handle to review earlier lines without scrolling the chat.
 | **Enter** | Sends the message. With **Enter is send** turned off in Settings the roles swap: Enter opens a line and **Ctrl+Enter** sends. |
 | **Shift+Enter** | Always opens a line. |
 | **Up arrow** | On an empty composer, opens the last message you sent for editing. Received messages, deleted ones, and anything that is not text are stepped over. A composer with something in it keeps the arrow for moving the cursor. |
-| **Escape** | Closes the open menu or emoji picker. |
+| **Escape** | Goes back one level: close the current menu/dialog or viewer first, then a nested panel/settings page, then the previous section. Chats is the starting page; Escape there never quits or discards the draft. |
+| **Ctrl+,** | Opens Settings. |
+| **Ctrl+Alt+P** | Opens your profile details. |
+| **Ctrl+Alt+E** | Toggles the emoji picker in a conversation. |
+| **Ctrl+Alt+Shift+P** | Pins or unpins the selected chat. |
 
 ## Reading a conversation
 
@@ -159,6 +230,29 @@ messages you received sit on the left. A tick beside your own time is one mark
 for sent, two for delivered, and two blue for read.
 
 ## Images and media
+
+Click a **GIF** or an animated sticker to play it directly in the conversation;
+click again to stop it. GIFs loop silently. Only one chat animation runs at a
+time, and it unloads when scrolled out of view, when another page/picker is
+shown, or when the app loses focus. There is no automatic animation of every
+message in a long chat. GIF identification is retained for newly received,
+sent and forwarded messages; old records without that flag still use the video
+viewer unless history supplies it again.
+
+Animated WebP playback requires a build with libwebp/libwebpdemux. The local
+Linux build includes it. Invalid or oversized stickers keep their static
+preview and show an error if playback is requested. Sending always preserves
+the original sticker, independent of local playback support.
+
+Documents appear as compact cards with a file-type icon, wrapping filename,
+type and available size. Click anywhere on the card (or focus it and press
+Space) to save the file to your system **Downloads** folder. There is no
+separate **Open** button, and saving does not launch another application.
+An existing filename is preserved; another download uses a numbered name such
+as `report (1).pdf`. A spinner indicates work in progress, and a notice shows
+the saved path. Cached files can be saved while offline; missing files must
+first be downloaded or recovered by the linked device. The shared-content
+drawer retains its separate open-in-application action.
 
 Photos, videos, and stickers appear as pictures as soon as the conversation
 loads. WhatsApp sends a small preview inside the message itself, so the image
@@ -217,6 +311,19 @@ older messages first, then the attachments belonging to them. Both run slowly on
 purpose and continue across restarts, so a freshly linked account fills in over
 hours rather than all at once.
 
+To share a contact, choose **paperclip → Contact**, search by name or number,
+and select a result. You can also enter the two fields manually. Review or edit
+the name and phone number, then press **Send contact**. The number needs `+`
+and its country code (7–15 digits). Only those two fields are shared, not the
+rest of the address-book entry. This currently sends one card at a time.
+Search includes archived contacts and resolves known phone aliases, but never
+mistakes an opaque WhatsApp identity for a phone number. Results are limited to
+100; narrow the search for larger address books. Escape returns from the review
+to the list, then back to chat. Closing or changing accounts/conversations
+before sending discards the selection without altering the composer draft.
+A failed send keeps the reviewed fields for retry; closing a send already in
+progress does not recall it.
+
 A shared contact appears as a card with the name and number from the card the
 sender sent, and a **Message** action that opens a conversation with that
 number. A shared place appears with the map picture the sender included;
@@ -252,6 +359,43 @@ persistent outbox; check delivery before retrying after a connection loss.
 Copying an image from a message places decoded image data on the desktop
 clipboard, not merely its local filename.
 
+## Group information
+
+Click a group's name or avatar in the chat header to open **Group info**. The
+panel fetches current membership from WhatsApp, separately from locally stored
+chat history. It shows the description, creation details, member count, available
+names/photos/phone numbers, **You**, and **Group admin** badges. An opaque WhatsApp
+identity is never displayed as a phone number. Loading failures offer **Retry**.
+
+The first eight members appear inline. Use the search icon or **View all members**
+to open the full searchable list. Click a person to message them; group admins
+also get confirmed remove/promote/demote actions for eligible members.
+Member details have small inline copy icons directly beside the full name and
+available phone number.
+The name/number at the top of contact info are copyable too (including group names).
+Use the copy icon for the whole value, or select text and press **Ctrl+C** or
+right-click **Copy** for a selection. Phone copies include the international `+`;
+copying your own member entry uses your name, not the label **You**.
+
+- **Add member** selects from available local contacts. WhatsApp's group and
+  invitation-privacy rules still apply; a rejected or partially applied request
+  shows an error and refreshes membership.
+- **Invite via link** loads and copies the group link for permitted members.
+  Admins can reset it after confirmation, invalidating the old link.
+- **Create similar group** starts with the current members selected (excluding
+  yourself), lets you adjust the name and selection, and requires confirmation.
+  Creation/addition is limited to 100 selected people per action.
+- **Notification settings**, starred messages, encryption information,
+  disappearing-message timers, favorites, custom lists, archive, export, and
+  clear-chat actions are available in the group panel.
+- **Exit group** asks for confirmation and leaves the group without deleting
+  this computer's local history or media. Deleting the retained chat is separate.
+
+Advanced chat privacy, member tags, and group reporting are not implemented by
+this client. Their entries explain the limitation and direct you to the official
+WhatsApp app; they do not pretend to change settings or submit a report.
+Disappearing timers likewise do not expire WhatsAppGo's locally retained history.
+
 ## Navigation sections
 
 - **Chats:** conversations, filters, search, and message history.
@@ -265,6 +409,21 @@ clipboard, not merely its local filename.
 Some sections can be empty until WhatsApp sends the corresponding data. An
 empty call list does not mean calling is implemented.
 
+### Viewing statuses
+
+Open a contact's status from the Status page or their chat avatar. **Escape**
+closes the emoji picker first if it is open, then the viewer, returning focus to
+the page/control you came from. Opening a status from a chat does not replace
+that chat or its draft; opening from Status returns to the Status page.
+
+The viewer has **Pause/Resume**, **Previous**, **Next**, and **Close** controls.
+Tab and Shift+Tab cycle within the viewer. Space pauses/resumes when the viewer
+itself is focused; in the reply field it types a space as usual. Typing a reply,
+choosing emoji or waiting for a reply to send also pauses automatic advancement.
+The explicit pause choice remains in effect when you move to another status,
+and resets when you reopen the viewer. Controls remain legible over bright
+photos and videos, and the overlay blocks input to the chat underneath.
+
 ## Appearance
 
 Choose **System**, **Light**, or **Dark** mode from the application controls.
@@ -276,6 +435,87 @@ Qt's software renderer is the default for consistent behavior on Linux. Users
 with a known-good GPU driver may launch with `QT_QUICK_BACKEND=rhi`.
 
 ## Notifications and presence
+
+Open the profile icon, then **Notifications**, to configure this account's
+desktop alerts. **Messages** and **Groups** each have notification, reaction-alert
+and sound switches. Reaction alerts default off and only apply to reactions to
+your own messages. **Status** offers optional alerts for newly received status
+updates and a separate sound switch. Status alerts default off; your own updates,
+muted contacts, edits and history sync stay quiet. Clicking an alert opens the
+Status page without changing the current chat or its draft. Likes and mentions
+are not supported yet. **Calls** enables one-time incoming-call alerts; answer on
+your phone, not in WhatsAppGo. **Show
+message previews** controls the notification body (the sender name still
+appears). **Allow incoming sounds** is the incoming-sound master switch.
+**Play a sound when sending messages** optionally plays a tone after successful
+text, attachment and forwarded sends, not failures or history sync. The two
+**Test sound** rows let you check the output without sending a message.
+Sound switches and previews are implemented on Linux; on other
+platforms use the operating system's notification settings. These preferences
+are saved on this computer per profile and do not change WhatsApp phone
+settings or unmute individual chats. Disabling alerts never stops history sync.
+
+Settings now includes search and Profile, Account, Privacy, Chats,
+Notifications, Keyboard shortcuts, and Help and feedback. Profile names and
+phone numbers are copyable; **Edit profile name** changes the WhatsApp name.
+**Chats → Media auto-download** controls photos, video/GIFs, audio/voice notes,
+documents and stickers independently. Manual downloads remain available, and
+already-running transfers may finish. Re-enabling a type also allows it in the
+next background history scan. **Privacy → Disable link previews** prevents new
+website requests for composer and upgraded chat previews; cached previews stay
+visible. Privacy also exposes who may call/message you and protection against
+high message volumes from unknown accounts, when WhatsApp returns those values.
+**Chats** includes system/light/dark appearance,
+doodle wallpaper, emoticon replacement and Enter-to-send preferences. Items
+not implemented in this client open an explanation, not a pretend toggle:
+account-report/deletion controls, app lock and call-IP protection remain
+unavailable here. Status like/mention alerts and answering voice/video calls are
+not implemented. Username editing still uses the official app.
+
+**Account → Security notifications** optionally alerts you when a contact's
+security code changes. Alerts are silent on Linux, respect muted chats and suppress
+duplicates. A code change can happen after reinstalling or changing phones;
+verify the code in the official app. Encryption does not depend on this toggle.
+Other desktops use their operating system's notification sound settings.
+
+**Profile** reads your current About and available profile photo. About edits
+remain in the field if saving fails. **Privacy → About** controls About
+visibility; **Status audience** separately displays the broadcast audience and
+the number of included/excluded contacts. Edit audience exception lists on the
+phone.
+
+**Profile → Change profile photo** opens the system file chooser (GNOME on a
+configured GNOME desktop). Select a still JPEG or PNG under 20 MiB and 32
+megapixels, review the centered square preview, then press **Save**. Preparation
+runs off the UI thread, respects photo orientation, removes location/EXIF
+metadata from the upload, and leaves your original unchanged. Transparent areas
+become white. Nothing is uploaded just by selecting a file; Escape/Cancel
+discards the selection. Failed saves keep the preview for retry. **Remove profile
+photo** requires a separate confirmation. Switching accounts discards an unsaved
+selection; closing the dialog after Save does not undo an already-submitted change.
+
+**Privacy → Default message timer** offers Off, 24 hours, 7 days and 90 days.
+Select a duration, then Apply and confirm. The current account default cannot
+be read by this linked-device library, so the picker starts without an assumed
+value. This changes new-chat defaults only. **WhatsAppGo retains its local
+history even when disappearing messages are enabled.**
+
+**Chats → Photo upload quality** applies to attached and pasted JPEG/PNG photos:
+Standard uses JPEG quality 80 with a 1600-pixel maximum edge; HD uses quality 90
+and 3840 pixels. Small images are not enlarged. Conversion honors camera
+orientation, flattens transparency to white and leaves the source file intact.
+Original is the default and sends unchanged bytes, including metadata.
+Documents, animations and videos are unchanged. These are WhatsAppGo's local
+resize presets, not a claim to reproduce WhatsApp's HD encoding or badge.
+
+**Chats → Spell check** enables offline Aspell checking in the main chat
+composer. Choose an installed dictionary, then right-click an underlined word
+for suggestions or Ignore word. Shift+F10 opens the same edit menu. Corrections
+support normal Undo. No draft text goes to a spelling service; URLs, addresses
+and inline backtick code are skipped. Captions and message-edit dialogs are not
+spell-checked yet. The feature is off by default and requires Aspell plus a
+dictionary; no packages are installed automatically. Drafts over 20,000
+characters pause spelling to keep typing responsive.
 
 Incoming messages use the native desktop notification service or portal unless
 the chat is muted; notification delivery does not depend on a tray icon. If a
@@ -291,7 +531,7 @@ arrives, or after 10 seconds without a fresh activity update if the stop event i
 lost. The header then returns to the available online/last-seen information, or
 stays blank when none is known. Changing chats or losing the connection also
 clears transient activity.
-Status-broadcast updates do not create desktop notifications.
+Status-broadcast updates stay quiet unless enabled in **Notifications → Status**.
 
 With a tray available, minimizing or closing the window hides it and keeps notifications and
 the linked-device connection active. Use **Quit WhatsAppGo** in the tray menu to

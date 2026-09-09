@@ -11,9 +11,14 @@ ItemDelegate {
     property var choices: []
     property var choiceLabels: []
     property string value: ""
+    property string emptyValueLabel: qsTr("Unknown")
     signal choiceSelected(string choice)
 
     implicitHeight: 56
+    opacity: enabled ? 1 : 0.5
+    focusPolicy: Qt.StrongFocus
+    Accessible.name: text
+    Accessible.description: valueLabel
     onClicked: choiceMenu.toggleUnder(root)
 
     readonly property string valueLabel: {
@@ -21,11 +26,14 @@ ItemDelegate {
             if (String(root.choices[i]) === root.value)
                 return String(root.choiceLabels[i])
         }
-        return root.value === "" ? qsTr("Unknown") : root.value
+        return root.value === "" ? root.emptyValueLabel : root.value
     }
 
     background: Rectangle {
         color: root.down ? Theme.pressedRow : root.hovered ? Theme.hoverRow : "transparent"
+        radius: 10
+        border.width: root.visualFocus ? 2 : 0
+        border.color: Theme.primary
     }
 
     contentItem: RowLayout {

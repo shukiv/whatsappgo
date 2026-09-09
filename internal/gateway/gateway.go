@@ -21,6 +21,10 @@ type MediaRequest struct {
 	Voice   bool
 	// Document keeps the attachment's file semantics even for image/video MIME types.
 	Document bool
+	// GIF sends an MP4 as a looping, silent WhatsApp animation.
+	GIF bool
+	// Sticker sends the original WebP, never its PNG display thumbnail.
+	Sticker bool
 	// ForwardingScore marks the attachment as forwarded and says how long the
 	// chain is. Zero means an ordinary send.
 	ForwardingScore int

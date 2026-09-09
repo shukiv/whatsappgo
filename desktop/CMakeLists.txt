@@ -7,6 +7,10 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 Network Multimedia Svg)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(WEBP QUIET IMPORTED_TARGET libwebp libwebpdemux)
+endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
 qt_policy(SET QTP0004 NEW)
@@ -21,6 +25,8 @@ qt_add_executable(whatsappgo
     src/profilemonitor.h
     src/rpcclient.cpp
     src/rpcclient.h
+    src/photoquality.cpp
+    src/photoquality.h
     src/updateinstaller.cpp
     src/updateinstaller.h
     src/traybehavior.cpp
@@ -85,8 +91,18 @@ qt_add_qml_module(whatsappgo
     VERSION 1.0
     NO_IMPORT_SCAN
     SOURCES
+        src/appsettings.cpp
+        src/appsettings.h
+        src/gifcatalog.cpp
+        src/gifcatalog.h
+        src/stickermaker.cpp
+        src/stickermaker.h
+        src/composertext.cpp
+        src/composertext.h
         src/videosurface.cpp
         src/videosurface.h
+        src/stickeranimation.cpp
+        src/stickeranimation.h
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -107,6 +123,7 @@ qt_add_qml_module(whatsappgo
         qml/ComposerLinkPreview.qml
         qml/NewChatPane.qml
         qml/MessageDelegate.qml
+        qml/DocumentCard.qml
         qml/SelectableMessageText.qml
         qml/FeatureSection.qml
         qml/Avatar.qml
@@ -115,8 +132,15 @@ qt_add_qml_module(whatsappgo
         qml/OverlayScrollBar.qml
         qml/ReadReceipt.qml
         qml/EmojiPicker.qml
+        qml/ExpressionPanel.qml
+        qml/InlineAnimation.qml
+        qml/ExpressionButton.qml
+        qml/ComposerEditMenu.qml
         qml/AttachmentMenu.qml
+        qml/ContactShareDialog.qml
         qml/SettingsPane.qml
+        qml/ProfilePhotoDialog.qml
+        qml/WhatsAppGoSettings.qml
         qml/SettingsRow.qml
         qml/SettingsToggleRow.qml
         qml/SettingsChoiceRow.qml
@@ -130,10 +154,20 @@ qt_add_qml_module(whatsappgo
         qml/MediaPreview.qml
         qml/ChatMediaViewer.qml
         qml/ContactInfoDrawer.qml
+        qml/CopyableInfoText.qml
+        qml/GroupInfoContent.qml
+        qml/GroupInfoRow.qml
+        qml/GroupMemberRow.qml
+        qml/GroupActions.qml
 		qml/MessageInfoDrawer.qml
     RESOURCES
+        qml/icons/PoweredBy_200px-Black_HorizLogo.png
+        qml/icons/PoweredBy_200px-White_HorizLogo.png
         qml/icons/LICENSE.lucide
         qml/icons/block.svg
+        qml/icons/bell.svg
+        qml/icons/shield.svg
+        qml/icons/flag.svg
         qml/icons/calls.svg
         qml/icons/channels.svg
         qml/icons/check.svg
@@ -147,6 +181,7 @@ qt_add_qml_module(whatsappgo
         qml/icons/play.svg
         qml/icons/profile.svg
         qml/icons/sort.svg
+        qml/icons/settings.svg
         qml/icons/star.svg
         qml/icons/star-filled.svg
         qml/icons/status.svg
@@ -191,6 +226,7 @@ qt_add_qml_module(whatsappgo
         qml/icons/link.svg
 		qml/icons/info.svg
         qml/icons/lock.svg
+        qml/icons/view-once.svg
         qml/icons/chevron-right.svg
         qml/icons/plus.svg
         qml/assets/chat-background.png
@@ -202,6 +238,10 @@ target_include_directories(whatsappgo PRIVATE src)
 target_link_libraries(whatsappgo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia Qt6::Svg
 )
+if(TARGET PkgConfig::WEBP)
+    target_link_libraries(whatsappgo PRIVATE PkgConfig::WEBP)
+    target_compile_definitions(whatsappgo PRIVATE WHATSAPPGO_WEBP=1)
+endif()
 
 target_compile_definitions(whatsappgo PRIVATE
     QT_NO_CAST_FROM_ASCII
@@ -436,6 +476,11 @@ if(BUILD_TESTING)
         src/updateinstaller.cpp
         src/updateinstaller.h
     )
+    foreach(rpc_target pairing-auto-start-test presence-updates-test update-flow-test
+            chat-list-updates-test conversation-updates-test notification-routing-test
+            backend-probe-test link-preview-upgrade-test profile-display-names-test)
+        target_sources(${rpc_target} PRIVATE src/photoquality.cpp src/photoquality.h)
+    endforeach()
     target_include_directories(profile-display-names-test PRIVATE src)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
     add_test(NAME desktop-profile-display-names COMMAND profile-display-names-test)

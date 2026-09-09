@@ -10,6 +10,7 @@ type Message struct {
 	Title    string
 	Body     string
 	IconPath string
+	Silent   bool
 }
 
 type Notifier interface {

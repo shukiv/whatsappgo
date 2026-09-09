@@ -147,6 +147,23 @@ static int testFailure(const char *file, int line)
 
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_LINUX
+    // Service/terminal launchers can omit the desktop identity. Qt then uses
+    // its generic Unix theme, which has no native file dialog, even when the
+    // GTK integration is installed. Use it in that otherwise-unidentified
+    // graphical session. Normal desktop detection and explicit theme choices
+    // (including KDE/portals) still win; headless runs stay independent of GTK.
+    const QByteArray platform = qgetenv("QT_QPA_PLATFORM");
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORMTHEME")
+        && qEnvironmentVariableIsEmpty("XDG_CURRENT_DESKTOP")
+        && qEnvironmentVariableIsEmpty("DESKTOP_SESSION")
+        && qEnvironmentVariableIsEmpty("KDE_FULL_SESSION")
+        && (platform.isEmpty() || platform.startsWith("xcb") || platform.startsWith("wayland"))
+        && (!qEnvironmentVariableIsEmpty("DISPLAY") || !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY"))) {
+        qputenv("QT_QPA_PLATFORMTHEME", QByteArrayLiteral("gtk3"));
+    }
+#endif
+
     // The client is a mostly static, low-memory UI. Qt's software scene graph
     // avoids fragile GLX/EGL setup on hybrid-GPU Linux systems and does not
     // create a persistent GPU context. Set QT_QUICK_BACKEND=rhi to opt back
@@ -550,8 +567,8 @@ int main(int argc, char *argv[])
             trayStatusAction->setText(label);
             icon->setToolTip(QStringLiteral("WhatsAppGo — %1").arg(label));
         };
-        QObject::connect(&backend, &RpcClient::statusChanged, &app, updateTrayStatus);
-        QObject::connect(&backend, &RpcClient::daemonConnectedChanged, &app, updateTrayStatus);
+        QObject::connect(&backend, &RpcClient::statusChanged, trayIcon.get(), updateTrayStatus);
+        QObject::connect(&backend, &RpcClient::daemonConnectedChanged, trayIcon.get(), updateTrayStatus);
         QObject::connect(&app, &QCoreApplication::aboutToQuit, trayIcon.get(), &QSystemTrayIcon::hide);
         const auto syncTrayAvailability = [&app, applicationWindow, activateWindow, icon = trayIcon.get(), &trayAvailable] {
             const bool availableNow = QSystemTrayIcon::isSystemTrayAvailable();
@@ -569,7 +586,10 @@ int main(int argc, char *argv[])
                 icon->show();
         };
         if (applicationWindow != nullptr) {
-            QObject::connect(applicationWindow, &QWindow::visibilityChanged, &app,
+            // The menu is destroyed before the QML window at shutdown. Scope
+            // this callback to its action, not QApplication, so destruction's
+            // visibilityChanged cannot dereference an already-freed action.
+            QObject::connect(applicationWindow, &QWindow::visibilityChanged, trayToggleAction,
                              [applicationWindow, updateToggleAction, &trayAvailable](QWindow::Visibility visibility) {
                 updateToggleAction();
                 if (TrayBehavior::shouldHideWindow(visibility, trayAvailable))
@@ -577,7 +597,7 @@ int main(int argc, char *argv[])
             });
         }
         trayAvailabilityTimer.setInterval(1500);
-        QObject::connect(&trayAvailabilityTimer, &QTimer::timeout, &app, syncTrayAvailability);
+        QObject::connect(&trayAvailabilityTimer, &QTimer::timeout, trayIcon.get(), syncTrayAvailability);
         trayAvailabilityTimer.start();
         updateToggleAction();
         updateTrayStatus();
@@ -1118,11 +1138,6 @@ QtObject {
         auto *reactionSummary = delegate->findChild<QObject *>(QStringLiteral("messageReactionSummary"));
         auto *reactionCount = delegate->findChild<QObject *>(QStringLiteral("messageReactionCount"));
         auto *bubble = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageBubble")));
-        auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
-        auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
-		auto *infoAction = delegate->findChild<QObject *>(QStringLiteral("messageInfoAction"));
-		auto *starAction = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageStarAction")));
-		auto *forwardAction = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageForwardAction")));
 		auto *infoDrawer = qobject_cast<QQuickItem *>(harness->findChild<QObject *>(QStringLiteral("messageInfoDrawerHarness")));
         auto *quotedMessagePreview = qobject_cast<QQuickItem *>(
             delegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview")));
@@ -1148,6 +1163,12 @@ QtObject {
 		QEventLoop popupPositioningLoop;
 		QTimer::singleShot(20, &popupPositioningLoop, &QEventLoop::quit);
 		popupPositioningLoop.exec();
+        // Menus are created by the click, not while an idle bubble is built.
+        auto *menu = delegate->findChild<QObject *>(QStringLiteral("messageContextMenu"));
+        auto *quickReactions = delegate->findChild<QObject *>(QStringLiteral("quickReactionPopup"));
+        auto *infoAction = delegate->findChild<QObject *>(QStringLiteral("messageInfoAction"));
+        auto *starAction = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageStarAction")));
+        auto *forwardAction = qobject_cast<QQuickItem *>(delegate->findChild<QObject *>(QStringLiteral("messageForwardAction")));
 		auto *menuParent = menu ? menu->property("parent").value<QObject *>() : nullptr;
 		auto *reactionParent = quickReactions ? quickReactions->property("parent").value<QObject *>() : nullptr;
 		const bool menuFitsWindow = menu && menuParent

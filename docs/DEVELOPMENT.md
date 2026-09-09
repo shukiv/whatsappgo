@@ -11,11 +11,116 @@ On Debian 13:
 sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev qt6-multimedia-dev libqt6svg6-dev \
-  qml6-module-org-kde-desktop \
+  qml6-module-org-kde-desktop qt6-gtk-platformtheme \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 ```
 
 Run `make check-desktop-deps` for a read-only prerequisite check.
+
+File open/save dialogs use Qt's native platform integration, independently of
+the Qt Quick Controls style. GNOME needs `qt6-gtk-platformtheme` (recommended by
+the Debian package). In graphical Linux sessions where a service/terminal
+launcher omits desktop identification, startup selects `gtk3` before creating
+`QApplication`. Existing desktop identification and `QT_QPA_PLATFORMTHEME`
+overrides are preserved; offscreen/minimal runs do not select GTK. Qt retains
+its built-in picker as a fallback when native integration is unavailable.
+
+### Document cards and jump-to-latest
+
+`DocumentCard.qml` is loaded only for document delegates. It bounds filenames
+to two wrapped/elided lines, exposes the full name in a tooltip and keeps the
+file type/size separate from the message timestamp. Activation calls
+`RpcClient::downloadDocument`: recover an uncached attachment through the
+existing RPC, then copy it to `QStandardPaths::DownloadLocation` on a worker
+thread. A per-profile/chat/message busy set prevents concurrent duplicate
+clicks. Save with exclusive creation, sanitized portable basenames, owner-only
+permissions and numbered collisions; never overwrite or auto-launch a file.
+Completion and errors return to the UI via `QFutureWatcher`.
+
+The conversation's jump-to-latest button overlays the message viewport, not
+the composer. Use the existing `nearTail()`/`returnToTail()` logic: this model
+is newest-first with a bottom-to-top `ListView`, so its newest edge is
+`positionViewAtBeginning()`. Explicit jumps cancel pending quote/search
+navigation and restore following; wheel and scrollbar input release following
+until the reader returns to the tail. Do not animate or rebuild message rows
+just to show the button.
+
+### Settings and back navigation
+
+For native animated-sticker playback, make libwebp and libwebpdemux available
+to pkg-config before configuring CMake (`libwebp-dev` on Debian/Ubuntu). CMake
+enables this optional decoder when both are present; no Qt WebP image plugin is
+needed. Without them the app builds with its existing static PNG fallback.
+Do not create a `MediaPlayer` or `VideoSurface` for every chat delegate: the
+inline animation loader must remain inactive until the user selects that
+visible message, and must unload offscreen.
+
+Settings uses the existing sidebar tree, with nested message/group notification
+pages returning to Notifications and blocked contacts returning to Privacy.
+The window keeps a bounded section history with Chats as its fallback. Escape
+leaves open Qt popups and media viewers in charge before navigating a panel or
+section; don't register two active Cancel shortcuts for the same overlay.
+Check whether the active focus item is inside the overlay, not the overlay's
+`visible` property: Qt can leave an empty overlay visible. Passive tooltips
+must not disable Escape. Verify with actual key presses after focusing the
+window, including a popup over a nested settings page.
+Wallpaper and emoticon replacement share the pane's existing local composer
+preferences. Unsupported settings show explicit availability guidance.
+
+Notification switches use `notifications.get` / `notifications.set` and the
+`notifications.updated` event. Each boolean lives in a separate metadata key
+in the profile's store, avoiding read/modify/write races between clients. The
+WhatsApp event handler applies category and preview preferences before either
+native notification delivery or the desktop fallback event. A failed
+preference read suppresses that alert rather than exposing a hidden preview.
+Linux sound suppression applies to freedesktop hints and fallback sound
+playback; Windows/macOS sound controls remain in the OS.
+
+Each Messages/Groups subpage has alert, reaction-alert and sound switches;
+Calls has alert and sound switches. Reactions are notified only after a changed
+store upsert, for recent incoming reactions to an existing outgoing message.
+History, removals and duplicates do not alert. Call offers/notices share a
+bounded five-minute dedup set and always direct the user to answer on the phone.
+Outgoing sounds run only after successful service sends are stored; the Linux
+player is bounded to one process with a five-second timeout. Sound preview RPCs
+do not create notifications or send messages.
+
+Local network switches use `preferences.get/set` and `preferences.updated`.
+Both live media caching (after acquiring its slot) and the background collector
+check per-type download settings. Explicit downloads remain available. The
+link-preview switch is enforced in the service composer/send paths and both
+historical/refreshed preview resolvers; QML is not the privacy boundary.
+`profile.set_name` uses the optional `gateway.ProfileEditor` and WhatsApp's
+push-name app-state patch, not the local profile alias. Native settings remain
+account-scoped and stale replies are rejected after profile changes.
+
+Security-code changes reuse the bounded alert deduplicator with a separate key
+namespace. `profile.get`, `status.audience` and default-timer editing use optional
+gateway capabilities. Keep About visibility separate from broadcast audiences;
+the legacy privacy `status` name means About. The default timer has no getter
+in the pinned library, so the UI asks for a new value with confirmation instead
+of presenting a guessed current value. About readbacks must not discard edits
+while a save fails or another request completes.
+
+Photo quality is a live composer-setting alias passed into attachment sends,
+not a second backend preference. `PhotoQuality::prepare` runs in a dedicated
+single-worker pool. Temporary files stay alive through the RPC callback and
+account-generation checks cancel a queued upload after a profile switch.
+Documents/animations/videos and Original photos bypass transformation.
+
+`ComposerText` shares one syntax highlighter between color emoji and spelling.
+Aspell discovery/checks/suggestions are asynchronous, debounced and bounded;
+never log their input/output or send draft text to a service. Dispose active
+process callbacks before destroying the helper's state. The composer edit menu
+must tolerate an empty clipboard: Qt may return null MIME data, especially
+under the offscreen platform.
+
+The 2026-09-08 follow-on pass was verified with the existing 44 desktop checks,
+Go suite/vet/race checks, cross-platform Go builds, and disposable native/photo/
+spelling/RPC probes. No new tests or test infrastructure were added. Native
+screenshots covered both themes, profile/audience readback and timer navigation;
+Escape dismissed the unaccepted confirmation before returning to Privacy.
+Real account-setting writes and security-code-change delivery were not triggered.
 
 ### Icons
 
@@ -52,6 +157,28 @@ unavailable. The `QProcess` is parented to `RpcClient` and terminated during
 desktop shutdown.
 
 ## Tests
+
+### Large-conversation performance
+
+Keep scroll-anchor stability while optimizing work per bubble: the message
+view's three-screen cache buffer is intentional. Prefer lazy controls and
+bounded image decoding over shrinking this buffer blindly. Menu popups now
+exist only after an interaction; UI inspection must locate them after opening
+the menu, rather than holding pointers captured before the click.
+
+Message updates should not scale with the number of loaded rows unless the
+operation genuinely affects every row. A date change touches its boundary and
+the next dated neighbour; an ordinary edit must not recalculate all dates.
+Sidebar event bursts must share refreshes, and cached chat reopening should
+not reset a same-identity message page unnecessarily. Cache eviction must
+never delete durable history or lower the quality of the full-screen viewer.
+
+For before/after measurements, use the same optimized build, renderer, display
+scale and synthetic dataset. Separate component construction, model update and
+SQL timings from end-to-end chat-opening/frame timings. A raw-QML/offscreen
+probe is useful for relative costs but is not a production frame-rate claim.
+
+### Running the existing checks
 
 ```bash
 go test ./...

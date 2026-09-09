@@ -25,6 +25,23 @@ QT_QUICK_CONTROLS_STYLE=Fusion ./desktop/build/whatsappgo
 
 The normal package should include the desktop style dependency.
 
+## File selection does not use the system picker
+
+Open/save dialogs use the desktop's native file chooser. On GNOME, install
+`qt6-gtk-platformtheme` and restart WhatsAppGo. This is separate from the
+`org.kde.desktop` Qt Quick Controls style; changing that style is not necessary.
+
+Service and terminal launches without desktop-identification variables now
+prefer GTK for graphical sessions. Explicit `QT_QPA_PLATFORMTHEME` settings
+remain respected, so check whether a launcher forces a theme without native
+dialogs. A diagnostic launch can select GTK explicitly:
+
+```bash
+QT_QPA_PLATFORMTHEME=gtk3 ./desktop/build/whatsappgo
+```
+
+If no native integration is installed, Qt falls back to its built-in chooser.
+
 ## Backend is not connected
 
 Do not run `whatsappd` manually. Rebuild both components and start the desktop:
@@ -219,6 +236,18 @@ appear, confirm that notifications are enabled in the desktop settings and run
 `notify-send "WhatsAppGo test"`. A `ServiceUnknown` error means the desktop did
 not install any notification provider; install `notification-daemon` or the
 notification component supplied by your desktop environment.
+
+## Sound alerts are silent
+
+In **Profile → Notifications**, enable **Allow incoming sounds**, then check
+the category's **Show notifications** and **Play sound** switches. Muted chats
+remain quiet. Use **Test incoming sound** to check the desktop output without
+sending a message. Linux needs `/usr/bin/paplay` and the freedesktop sound theme;
+missing dependencies and playback errors are reported by the preview action.
+Also check GNOME Do Not Disturb, notification sound permissions, the selected
+audio output and system volume. The test sound checks playback, not whether
+GNOME allows a notification banner or the notification server honors its sound
+hint. Outgoing sounds have a separate switch and default off.
 
 ## The WhatsAppGo icon is missing from the GNOME top bar
 

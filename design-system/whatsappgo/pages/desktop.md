@@ -57,6 +57,9 @@ themes. Keep the app logo, status rings and delivery/read marks distinct.
 | Contact avatar | `120 × 120 px` |
 | Photo/video bubble | `336 px` maximum outer width; also bounded by conversation width |
 | Photo/video horizontal image gutter | `4 px`; captions retain the `11 px` text gutter |
+| Document bubble | `336 px` maximum outer width; `4 px` horizontal card gutter |
+| Document card | Up to `328 px` wide, at least `66 px` high; grows for two-line names; `24 × 28 px` filled type badge; filename `14 px`, details `11 px` |
+| Jump to latest | `44 × 44 px` circle, `22 px` down-chevron; `16 px` from the viewport's right edge and `12 px` above its bottom |
 | Unread divider | Full-width `44 px` faint band, centered `32 px` rounded pill, `12 px` semibold label; `8 px` gap before the message |
 
 These values are component baselines, not permission to hard-code unrelated
@@ -94,6 +97,13 @@ treatment, and the full-size viewer is not limited by the chat preview cap.
   reset the user's scroll position.
 - Follow new messages only while the conversation is already at the latest
   message. Loading older history preserves the visible anchor.
+- Show the floating down-chevron away from the latest message. Activation
+  cancels pending history navigation, returns to the newest message and
+  restores following, without changing the message or composer layout.
+- Document cards wrap filenames to two lines with ellipsis and a full-name
+  tooltip. The whole card saves to Downloads; it has no separate Open button.
+  Use a PDF-red type badge and a muted inset panel, preserving keyboard focus
+  and busy feedback without changing card size.
 - The unread divider sits below any date pill and above the first unread
   incoming message. Use `Theme.unreadSeparator` and `unreadSeparatorBand`,
   with a complete count label and no focus changes or height animation.

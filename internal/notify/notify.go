@@ -241,7 +241,7 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	for _, old := range stale {
 		d.closeNotification(ctx, old)
 	}
-	if !d.serverPlaysSound && d.playSound != nil {
+	if !message.Silent && !d.serverPlaysSound && d.playSound != nil {
 		go d.playSound()
 	}
 	return nil
@@ -340,6 +340,10 @@ func freedesktopMessage(message Message) (string, map[string]dbus.Variant) {
 		"x-canonical-private-synchronous": dbus.MakeVariant("whatsappgo-" + message.ChatJID),
 	}
 	icon := notificationImagePath(message.IconPath)
+	if message.Silent {
+		delete(hints, "sound-name")
+		hints["suppress-sound"] = dbus.MakeVariant(true)
+	}
 	if icon != "" {
 		hints["image-path"] = dbus.MakeVariant(icon)
 	}
@@ -358,15 +362,7 @@ func notificationImagePath(path string) string {
 }
 
 func playNotificationSound() {
-	const player = "/usr/bin/paplay"
-	const sound = "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
-	if !isTrustedExecutable(player) || notificationImagePath(sound) == "" {
-		return
-	}
-	command := exec.Command(player, sound)
-	if command.Start() == nil {
-		_ = command.Process.Release()
-	}
+	_ = PlaySound(context.Background(), "incoming")
 }
 
 func (d *Desktop) notifyPortal(ctx context.Context, message Message) error {
@@ -393,7 +389,7 @@ func (d *Desktop) notifyPortal(ctx context.Context, message Message) error {
 		d.mu.Lock()
 		d.forgetPortalActionLocked(id)
 		d.mu.Unlock()
-	} else if d.playSound != nil {
+	} else if !message.Silent && d.playSound != nil {
 		go d.playSound()
 	}
 	return call.Err

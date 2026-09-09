@@ -8,6 +8,7 @@ import (
 	"errors"
 	"image"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,34 @@ import (
 
 const maxStickerBytes = 16 << 20
 
+// StickerSource locates the original retained by StickerPNG. This is only for
+// rendering a known local sticker cache entry; sending still uses the archive.
+func StickerSource(path string) (string, bool) {
+	ext := filepath.Ext(path)
+	if strings.EqualFold(ext, ".png") {
+		path = strings.TrimSuffix(path, ext) + ".webp"
+	} else if !strings.EqualFold(ext, ".webp") {
+		return "", false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return "", false
+	}
+	header := make([]byte, 21)
+	if _, err := io.ReadFull(file, header); err != nil || string(header[:4]) != "RIFF" || string(header[8:12]) != "WEBP" {
+		return "", false
+	}
+	return path, string(header[12:16]) == "VP8X" && header[20]&2 != 0
+}
+
 // StickerPNG returns a PNG cache path for a WebP sticker. Static WebP files
-// are decoded directly. For animated stickers, Qt's missing WebP plugin means
-// animation is unavailable, so the first frame is used as a stable fallback.
+// are decoded directly. Animated stickers use the first frame as a stable
+// fallback while the native player is paused, unavailable, or not selected.
 // The source file is retained because it remains the durable WhatsApp media.
 func StickerPNG(path string) (string, error) {
 	if path == "" || !strings.EqualFold(filepath.Ext(path), ".webp") {

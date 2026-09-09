@@ -166,7 +166,57 @@ JID and its recorded aliases. This also repairs lookup for profiles merged by
 older versions without copying or deleting durable attachment bytes. Metadata
 already discarded by an older merge cannot be reconstructed by this change.
 
+### Application integration settings
+
+`AppSettings` is a desktop-only QML singleton for application-wide integration
+preferences. The top-toolbar gear opens `WhatsAppGoSettings`, separate from
+WhatsApp account settings. Provider keys never cross RPC or enter profile
+databases or diagnostic context. Explicit Save validates fields and atomically
+writes `AppConfigLocation/private/gif-providers.json` with owner-only file and
+directory permissions on Unix; the file is not encrypted. The panel holds
+temporary edits, discards them on close, and masks keys again when reopened.
+`GifCatalog` makes direct, cancellable GIPHY/KLIPY requests on the desktop.
+It retains response ordering, pages up to 120 results, loads at most three
+bounded thumbnails concurrently, and restricts HTTPS media URLs and redirects
+to provider CDN hosts. Save does not verify credentials; the first search does.
+Legacy Tenor credentials remain storage-only. The expression picker lazily
+creates its player and video sink only for a downloaded preview, so opening
+emoji or starting the app does not initialize multimedia.
+
+The GIF/sticker send preview captures the account, chat and reply before
+selection. `RpcClient` rechecks the target before submission and holds selected
+temporary GIF files through acknowledgement. GIFs use MP4 with the protocol's
+GIF playback flag. The optional `gateway.StickerSender` restores an original
+WebP from durable media or the stored download payload; PNG display thumbnails
+are never sent as stickers. Recent/starred sticker lists reuse bounded shared
+media queries and remain account-scoped.
+
+`gif_playback` is an additive persisted message flag (the media kind remains
+`video`). Upserts and phone/LID alias merges preserve it, and forwarding copies
+it into `MediaRequest.GIF`. Existing rows default to false; filenames are not
+used to guess whether an ordinary video was a GIF.
+
+`InlineAnimation` lazily creates a silent MP4 player or `StickerAnimation` only
+for a selected, visible animation. Main owns one selected chat ID; the picker
+pauses chat animation. Offscreen delegates unload their decoder. Sticker PNGs
+remain static fallbacks. Transient `sticker_source` and `sticker_animated` fields
+point to the retained WebP original, including after a live download.
+The optional libwebp decoder reconstructs one composited RGBA frame at a time
+on a single-thread pool, copies it before returning to the UI, and uses a
+single-shot timer. Generation/cancellation guards discard late frames. No
+whole-animation frame cache is retained.
+
 ### Send acknowledgements
+
+Message and image-caption editors remain plain text. `ComposerText` applies a
+presentation-only syntax highlighter to emoji runs so mixed text uses the color
+emoji font without introducing HTML into drafts, the clipboard, or RPC payloads.
+On a space/newline key release it replaces the completed standalone ASCII
+emoticon; before sending it converts remaining eligible tokens before capturing
+the acknowledgement's draft text. Backtick-delimited code, escaped tokens, and
+URL/path fragments stay literal. Replacement uses the editor's native input
+event path as one undoable operation, preserving cursor/selection and leaving
+active IME composition alone. Existing message history is not rewritten.
 
 The composer parks text/reply drafts until the daemon acknowledges a send.
 Completion signals carry the captured profile, chat, text and quote; QML clears
@@ -280,6 +330,28 @@ on the network. `whatsappctl` is a thin same-user client for this protocol; it
 does not start a daemon. `rpc.discover` provides the installed method and event
 catalogue. See [Command-line and bot API](API.md).
 
+## Group information and membership
+
+`chat.info` stays a cheap local metadata/shared-content query. Opening group info
+also requests `group.info` through the optional `gateway.GroupManager` interface.
+The WhatsApp implementation obtains live metadata from whatsmeow, resolves
+participant PN/LID aliases against cached contacts/chats, and derives permissions
+from the current user's membership and group member-add mode. Member photos are
+requested through the existing avatar cache only for displayed rows.
+
+`RpcClient` keeps group state separate from chat history, coalesces in-flight
+metadata refreshes, and ignores responses from earlier chat/profile activations.
+`group.updated` refreshes previously opened group metadata without refetching it
+on every ordinary message update. Group actions have an in-flight guard and
+report errors independently of their confirmation dialog's lifetime.
+
+`GroupInfoContent` renders a bounded eight-member preview; `GroupActions` uses a
+virtualized full list for search and member selection. Permission-aware controls
+are backed by fresh server-side authorization checks. Per-participant failures
+are surfaced even when a batch partially succeeds. Leaving emits a group update
+but never removes locally retained history. Advanced chat privacy, member tags,
+and reporting remain explicitly unsupported rather than fabricated controls.
+
 ## Updates
 
 The daemon asks GitHub for the newest published release every three hours and
@@ -350,8 +422,10 @@ QML composer → RPC request → whatsmeow send → SQLite transaction
 newest-first, so a bottom-to-top view keeps row zero at the composer while older
 history grows away from the reader. It also marks the message that opens each
 calendar day, which is what the date pills are drawn from; a page of older
-history moves that mark rather than leaving two, so the recompute runs after
-every change to the list.
+history moves that mark rather than leaving two. Recalculation is limited to
+the changed interval and its next dated neighbour; body/receipt/media changes
+that keep the same date do not rescan the conversation. Undated rows preserve
+the preceding valid date when calculating the next boundary.
 
 The newest `messages.list` page includes an unread-count/first-message-ID
 snapshot before the desktop acknowledges the chat. SQLite reads this metadata
@@ -387,6 +461,21 @@ cancels queued positioning; there is no continuous content-height scroll loop.
 - One shared media player serves the whole window, created on first use so the
   multimedia backend is not started by an application that never plays anything.
 - QML `ListView` reuses chat and message delegates.
+- Message actions and reaction popups are created on first interaction, not
+  for every idle bubble. Pooled/reassigned delegates release them. Audio
+  controls and waveform bars are created only for audio messages.
+- Inline image/link previews limit decoded resolution to the displayed size
+  multiplied by screen pixel density. Original media files remain unchanged;
+  the full-screen viewer still uses the originals for zooming.
+- Sidebar refreshes are coalesced over 50 ms, with at most one snapshot in
+  flight and one follow-up if more changes arrive. Continuous traffic does not
+  restart the delay indefinitely. Unchanged selected-chat metadata emits no
+  redundant header update.
+- The reopening cache retains only the latest 50 messages per conversation,
+  up to 12 conversations and a combined 2 MiB of serialized message payloads
+  (a payload budget, not an exact heap-size limit). Older pages remain in
+  SQLite. If the refreshed page has the same IDs/order, update its rows in
+  place instead of rebuilding all cached bubbles a second time.
 - SQLite returns bounded pages rather than entire conversations.
 - Media is file-backed and downloaded outside the UI process.
 - Qt Quick uses the software backend by default to avoid unreliable GLX/EGL

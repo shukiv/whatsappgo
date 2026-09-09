@@ -16,6 +16,7 @@ import (
 	"github.com/shukiv/whatsappgo/internal/linkpreview"
 	"github.com/shukiv/whatsappgo/internal/mediaformat"
 	"github.com/shukiv/whatsappgo/internal/model"
+	"github.com/shukiv/whatsappgo/internal/notify"
 	"github.com/shukiv/whatsappgo/internal/store"
 )
 
@@ -74,6 +75,7 @@ func (s *Service) normalizeStickerMessages(ctx context.Context, messages []model
 		if message.Kind != "sticker" {
 			continue
 		}
+		message.StickerSource, message.StickerAnimated = mediaformat.StickerSource(message.MediaPath)
 		if converted, err := mediaformat.StickerPNG(message.MediaPath); err == nil && converted != message.MediaPath {
 			message.MediaPath = converted
 			_ = s.store.UpdateMediaPath(ctx, message.ChatJID, message.ID, converted)
@@ -129,6 +131,8 @@ type sendMediaParams struct {
 	ReplyTo  string `json:"reply_to"`
 	Voice    bool   `json:"voice"`
 	Document bool   `json:"document"`
+	GIF      bool   `json:"gif"`
+	Sticker  bool   `json:"sticker"`
 }
 type reactionParams struct {
 	ChatJID   string `json:"chat_jid"`
@@ -237,6 +241,50 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		return discoveryResult(), nil
 	case "status.get":
 		return s.gateway.Status(), nil
+	case "notifications.get":
+		return s.store.NotificationSettings(ctx)
+	case "notifications.test_sound":
+		var p struct {
+			Kind string `json:"kind"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return okResult(), notify.PlaySound(ctx, p.Kind)
+	case "preferences.get":
+		return s.store.LocalSettings(ctx)
+	case "preferences.set":
+		var p struct {
+			Name  string `json:"name"`
+			Value *bool  `json:"value"`
+		}
+		if err := decode(raw, &p); err != nil || p.Value == nil {
+			return nil, errors.New("name and boolean value are required")
+		}
+		if err := s.store.SetLocalSetting(ctx, p.Name, *p.Value); err != nil {
+			return nil, err
+		}
+		settings, err := s.store.LocalSettings(ctx)
+		if err == nil {
+			s.events.Publish(events.Event{Name: "preferences.updated", Data: settings})
+		}
+		return settings, err
+	case "notifications.set":
+		var p struct {
+			Name  string `json:"name"`
+			Value *bool  `json:"value"`
+		}
+		if err := decode(raw, &p); err != nil || p.Value == nil {
+			return nil, errors.New("name and boolean value are required")
+		}
+		if err := s.store.SetNotificationSetting(ctx, p.Name, *p.Value); err != nil {
+			return nil, err
+		}
+		settings, err := s.store.NotificationSettings(ctx)
+		if err == nil {
+			s.events.Publish(events.Event{Name: "notifications.updated", Data: settings})
+		}
+		return settings, err
 	case "update.status":
 		return s.updateStatus(), nil
 	case "update.check":
@@ -255,7 +303,7 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		environment := s.bugReportEnvironment()
 		return map[string]any{"fields": environment, "rendered": environment.Render(),
 			"program": bugreport.Program, "endpoint": bugreport.Endpoint,
-			"public_url": bugreport.PublicReportURL,
+			"public_url":              bugreport.PublicReportURL,
 			"authenticated_available": bugreport.AuthenticatedAvailable()}, nil
 	case "bugreport.submit":
 		var params struct {
@@ -439,6 +487,8 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return chat, nil
+	case "group.info", "group.invite_link", "group.members", "group.leave":
+		return s.handleGroup(ctx, method, raw)
 	case "chats.mark_all_read":
 		cleared, err := s.gateway.MarkAllChatsRead(ctx)
 		if err != nil {
@@ -558,6 +608,41 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return settings, nil
+	case "profile.get", "status.audience":
+		if err := decode(raw, &struct{}{}); err != nil {
+			return nil, err
+		}
+		reader, ok := s.gateway.(gateway.AccountSettingsReader)
+		if !ok {
+			return nil, errors.New("account settings are unavailable with this backend")
+		}
+		if method == "profile.get" {
+			return reader.OwnProfile(ctx)
+		}
+		return reader.StatusAudience(ctx)
+	case "privacy.default_timer.set":
+		var p struct {
+			Seconds *int64 `json:"seconds"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.Seconds == nil {
+			return nil, errors.New("seconds is required")
+		}
+		if *p.Seconds != 0 && *p.Seconds != 86400 && *p.Seconds != 604800 && *p.Seconds != 7776000 {
+			return nil, errors.New("seconds must be 0, 86400, 604800 or 7776000")
+		}
+		editor, ok := s.gateway.(gateway.DefaultTimerEditor)
+		if !ok {
+			return nil, errors.New("default timer editing is unavailable with this backend")
+		}
+		if err := editor.SetDefaultDisappearingTimer(ctx, time.Duration(*p.Seconds)*time.Second); err != nil {
+			return nil, err
+		}
+		// The library has a setter but no current-value getter. This is an
+		// acknowledgement, not a cached assertion about future account state.
+		return map[string]any{"ok": true, "seconds": *p.Seconds}, nil
 	case "privacy.set":
 		var p struct {
 			Name  string `json:"name"`
@@ -574,6 +659,37 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return settings, nil
+	case "profile.set_name":
+		var p struct {
+			Name string `json:"name"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		editor, ok := s.gateway.(gateway.ProfileEditor)
+		if !ok {
+			return nil, errors.New("profile editing is unavailable with this backend")
+		}
+		return okResult(), editor.SetProfileName(ctx, p.Name)
+	case "profile.set_photo":
+		var p struct {
+			Path   string `json:"path"`
+			Remove bool   `json:"remove"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if (p.Path == "") != p.Remove {
+			return nil, errors.New("provide a photo path, or remove=true without a path")
+		}
+		editor, ok := s.gateway.(gateway.ProfilePhotoEditor)
+		if !ok {
+			return nil, errors.New("profile photo editing is unavailable with this backend")
+		}
+		if err := editor.SetProfilePhoto(ctx, p.Path, p.Remove); err != nil {
+			return nil, err
+		}
+		return okResult(), nil
 	case "profile.set_about":
 		var p struct {
 			Text string `json:"text"`
@@ -667,10 +783,19 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return s.store.SearchContacts(ctx, p.Query, p.Limit)
+	case "contacts.shareable":
+		var p searchParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.store.ShareableContacts(ctx, p.Query)
 	case "link.preview":
 		var p linkPreviewParams
 		if err := decode(raw, &p); err != nil {
 			return nil, err
+		}
+		if !s.store.LinkPreviewsAllowed(ctx) {
+			return model.LinkPreview{}, nil
 		}
 		preview, err := linkpreview.Resolve(ctx, p.Text)
 		if err != nil {
@@ -737,7 +862,13 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if p.ChatJID == "" || p.MessageID == "" {
 			return nil, errors.New("chat_jid and message_id are required")
 		}
-		return s.gateway.DownloadMedia(ctx, p.ChatJID, p.MessageID)
+		message, err := s.gateway.DownloadMedia(ctx, p.ChatJID, p.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		items := []model.Message{message}
+		s.normalizeStickerMessages(ctx, items)
+		return items[0], nil
 	case "message.played":
 		var p playedParams
 		if err := decode(raw, &p); err != nil {
@@ -770,6 +901,9 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if strings.TrimSpace(p.Text) == "" {
 			return nil, errors.New("text is required")
 		}
+		if !s.store.LinkPreviewsAllowed(ctx) {
+			p.LinkPreview = model.LinkPreview{}
+		}
 		msg, err := s.gateway.SendText(ctx, gateway.TextRequest{
 			ChatJID: p.ChatJID, Text: p.Text, ReplyTo: p.ReplyTo,
 			ReplyChatJID: p.ReplyChatJID, Preview: p.LinkPreview,
@@ -781,6 +915,34 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, fmt.Errorf("save outgoing message: %w", err)
 		}
 		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
+		s.playOutgoingSound()
+		return msg, nil
+	case "message.send_contact":
+		var p gateway.ContactCardRequest
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.ChatJID) == "" {
+			return nil, errors.New("chat_jid is required")
+		}
+		card, err := model.NewContactCard(p.Contact.Name, p.Contact.Phone)
+		if err != nil {
+			return nil, err
+		}
+		p.Contact = card
+		sender, ok := s.gateway.(gateway.ContactCardSender)
+		if !ok {
+			return nil, errors.New("contact sharing is unavailable")
+		}
+		msg, err := sender.SendContactCard(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpsertMessage(ctx, msg, "", false); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
+		s.playOutgoingSound()
 		return msg, nil
 	case "message.send_media":
 		var p sendMediaParams
@@ -790,17 +952,57 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if p.ChatJID == "" || p.Path == "" {
 			return nil, errors.New("chat_jid and path are required")
 		}
-		if p.Document && p.Voice {
-			return nil, errors.New("document and voice cannot both be true")
+		modes := 0
+		for _, enabled := range []bool{p.Document, p.Voice, p.GIF, p.Sticker} {
+			if enabled {
+				modes++
+			}
 		}
-		msg, err := s.gateway.SendMedia(ctx, gateway.MediaRequest{ChatJID: p.ChatJID, Path: p.Path, Caption: p.Caption, ReplyTo: p.ReplyTo, Voice: p.Voice, Document: p.Document})
+		if modes > 1 {
+			return nil, errors.New("document, voice, gif and sticker are mutually exclusive")
+		}
+		msg, err := s.gateway.SendMedia(ctx, gateway.MediaRequest{ChatJID: p.ChatJID, Path: p.Path, Caption: p.Caption, ReplyTo: p.ReplyTo, Voice: p.Voice, Document: p.Document, GIF: p.GIF, Sticker: p.Sticker})
 		if err != nil {
 			return nil, err
 		}
 		if err := s.store.UpsertMessage(ctx, msg, "", false); err != nil {
 			return nil, err
 		}
+		display := []model.Message{msg}
+		s.normalizeStickerMessages(ctx, display)
+		msg = display[0]
 		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
+		s.playOutgoingSound()
+		return msg, nil
+	case "sticker.send":
+		var p struct {
+			ChatJID   string `json:"chat_jid"`
+			MessageID string `json:"message_id"`
+			ToChatJID string `json:"to_chat_jid"`
+			ReplyTo   string `json:"reply_to"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if p.ChatJID == "" || p.MessageID == "" || p.ToChatJID == "" {
+			return nil, errors.New("chat_jid, message_id and to_chat_jid are required")
+		}
+		sender, ok := s.gateway.(gateway.StickerSender)
+		if !ok {
+			return nil, errors.New("sticker sending is unavailable")
+		}
+		msg, err := sender.SendStoredSticker(ctx, p.ChatJID, p.MessageID, p.ToChatJID, p.ReplyTo)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpsertMessage(ctx, msg, "", false); err != nil {
+			return nil, err
+		}
+		display := []model.Message{msg}
+		s.normalizeStickerMessages(ctx, display)
+		msg = display[0]
+		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
+		s.playOutgoingSound()
 		return msg, nil
 	case "message.react":
 		var p reactionParams
@@ -872,7 +1074,11 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := s.store.UpsertMessage(ctx, sent, "", false); err != nil {
 			return nil, err
 		}
+		display := []model.Message{sent}
+		s.normalizeStickerMessages(ctx, display)
+		sent = display[0]
 		s.events.Publish(events.Event{Name: "message.upsert", Data: sent})
+		s.playOutgoingSound()
 		return sent, nil
 	case "message.edit":
 		var p editParams

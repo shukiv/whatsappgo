@@ -34,7 +34,7 @@ const linkPreviewBackfillMetadataKey = "youtube_link_preview_backfill_v3"
 // The preview arrives with the message itself, so a photo or video can be
 // shown before the full file has been downloaded.
 func thumbnailFromMessage(msg *waE2E.Message) ([]byte, string) {
-	if msg == nil {
+	if msg == nil || isViewOnce(msg) {
 		return nil, ""
 	}
 	switch {
@@ -104,7 +104,7 @@ func (c *Client) RefreshLinkPreview(ctx context.Context, chatJID, messageID stri
 	if err != nil {
 		return model.Message{}, err
 	}
-	if message.LinkURL == "" {
+	if message.LinkURL == "" || !c.store.LinkPreviewsAllowed(ctx) {
 		return message, nil
 	}
 	if file, err := os.Open(message.LinkThumbnail); err == nil {
@@ -201,6 +201,9 @@ func (c *Client) writeThumbnailFile(key string, data []byte, ext string, replace
 // withCachedThumbnail attaches the message's inline preview so it is stored by
 // the same write that stores the message.
 func (c *Client) withCachedThumbnail(msg model.Message, raw *waE2E.Message) model.Message {
+	if msg.Kind == "view_once" {
+		return model.ViewOncePlaceholder(msg)
+	}
 	if msg.MediaThumbnail != "" {
 		return msg
 	}
@@ -274,6 +277,9 @@ func (c *Client) backfillLinkPreviews() {
 			break
 		}
 		for _, item := range pending {
+			if !c.store.LinkPreviewsAllowed(ctx) {
+				return
+			}
 			text := item.LinkURL
 			if text == "" {
 				text = item.Body

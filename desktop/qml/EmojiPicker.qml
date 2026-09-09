@@ -1,15 +1,34 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 import org.whatsappgo
 
 Popup {
     id: root
     objectName: "emojiPicker"
     signal emojiChosen(string emoji)
+    signal settingsRequested()
+    property bool allowMedia: false
+    property Item anchorItem: null
+    property var client: null
+    property string replyTo: ""
+    property int selectedTab: 0
+    property string targetProfile: ""
+    property string targetChat: ""
+    property string targetTitle: ""
+    property string capturedReply: ""
+    property bool createStickerOnOpen: false
 
-    width: 390
-    height: 360
+    function openStickerCreator() {
+        if (!allowMedia || !client) return
+        selectedTab = 2
+        if (opened) expressionPanel.chooseStickerImage()
+        else { createStickerOnOpen = true; open() }
+    }
+
+    width: allowMedia ? 560 : 390
+    height: allowMedia ? 520 : 360
     padding: 0
     modal: false
     focus: true
@@ -19,6 +38,7 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     property int selectedCategory: 0
+    Settings { id: emojiPreferences; category: "emojiPicker"; property var recent: [] }
     readonly property var categories: [
         {
             name: qsTr("Smileys and people"), icon: "😀", items: [
@@ -154,7 +174,7 @@ Popup {
             for (let category of categories)
                 source.push(...category.items)
         } else {
-            source.push(...categories[selectedCategory].items)
+            source.push(...(selectedCategory < 0 ? emojiPreferences.recent : categories[selectedCategory].items))
         }
         return source.filter(entry => entry.toLowerCase().indexOf(query) >= 0)
     }
@@ -162,9 +182,42 @@ Popup {
     function glyph(entry) { return String(entry).split("|")[0] }
     function description(entry) { return String(entry).split("|")[1] || qsTr("Emoji") }
 
+    function positionAtAnchor() {
+        if (!anchorItem || !parent) return
+        const point = anchorItem.mapToItem(parent, 0, 0)
+        width = Math.min(allowMedia ? 560 : 390, parent.width - 24)
+        height = Math.min(allowMedia ? 520 : 360, Math.max(280, point.y - 20), parent.height - 24)
+        x = Math.max(12, Math.min(parent.width - width - 12, point.x + anchorItem.width - width))
+        y = Math.max(12, Math.min(parent.height - height - 12, point.y - height - 10))
+    }
+    onAboutToShow: positionAtAnchor()
+    Connections {
+        target: root.parent
+        function onWidthChanged() { if (root.opened) root.positionAtAnchor() }
+        function onHeightChanged() { if (root.opened) root.positionAtAnchor() }
+    }
+
     onOpened: {
+        positionAtAnchor()
+        Qt.callLater(positionAtAnchor)
         searchField.clear()
-        Qt.callLater(() => searchField.forceActiveFocus())
+        targetProfile = client ? client.profile : ""
+        targetChat = client ? String(client.selectedChat.jid || "") : ""
+        targetTitle = client ? String(client.selectedChat.title || targetChat) : ""
+        capturedReply = replyTo
+        if (selectedTab === 0) Qt.callLater(() => searchField.forceActiveFocus())
+        if (createStickerOnOpen) {
+            createStickerOnOpen = false
+            Qt.callLater(() => { if (root.opened && root.selectedTab === 2) expressionPanel.chooseStickerImage() })
+        }
+    }
+    onClosed: { createStickerOnOpen = false; expressionPanel.clear() }
+    Connections {
+        target: root.client
+        function onProfileChanged() { root.close() }
+        function onSelectedChatChanged() {
+            if (root.opened && String(root.client.selectedChat.jid || "") !== root.targetChat) root.close()
+        }
     }
 
     background: Rectangle {
@@ -175,14 +228,30 @@ Popup {
 
     contentItem: ColumnLayout {
         spacing: 0
+        Keys.onEscapePressed: event => {
+            if (root.selectedTab !== 0 && expressionPanel.back()) event.accepted = true
+            else { root.close(); event.accepted = true }
+        }
 
         RowLayout {
+            visible: root.selectedTab === 0
             Layout.fillWidth: true
             Layout.leftMargin: 10
             Layout.rightMargin: 10
             Layout.topMargin: 8
             Layout.bottomMargin: 6
             spacing: 2
+
+            ThemedToolButton {
+                Layout.preferredWidth: 34
+                Layout.preferredHeight: 38
+                iconSource: Qt.resolvedUrl("icons/rotate-left.svg")
+                iconTint: root.selectedCategory === -1 ? Theme.primary : Theme.icon
+                Accessible.name: qsTr("Recent emoji")
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+                onClicked: { root.selectedCategory = -1; searchField.clear(); emojiGrid.positionViewAtBeginning() }
+            }
 
             Repeater {
                 model: root.categories
@@ -228,6 +297,7 @@ Popup {
 
         TextField {
             id: searchField
+            visible: root.selectedTab === 0
             objectName: "emojiSearchField"
             Layout.fillWidth: true
             Layout.leftMargin: 12
@@ -250,6 +320,7 @@ Popup {
 
         GridView {
             id: emojiGrid
+            visible: root.selectedTab === 0
             objectName: "emojiGrid"
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -275,6 +346,7 @@ Popup {
                 ToolTip.visible: hovered
                 ToolTip.text: Accessible.name
                 onClicked: {
+                    emojiPreferences.recent = [String(modelData)].concat(emojiPreferences.recent.filter(entry => entry !== String(modelData))).slice(0, 48)
                     root.emojiChosen(root.glyph(modelData))
                     root.close()
                 }
@@ -296,8 +368,43 @@ Popup {
             Label {
                 anchors.centerIn: parent
                 visible: emojiGrid.count === 0
-                text: qsTr("No emoji found")
+                text: root.selectedCategory < 0 && searchField.text === "" ? qsTr("Your recent emoji appear here") : qsTr("No emoji found")
                 color: Theme.textMuted
+            }
+        }
+        ExpressionPanel {
+            id: expressionPanel
+            visible: root.opened && root.allowMedia && root.selectedTab !== 0
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.margins: visible ? 12 : 0
+            client: root.client
+            kind: root.selectedTab === 2 ? "sticker" : "gif"
+            targetProfile: root.targetProfile
+            targetChat: root.targetChat
+            targetTitle: root.targetTitle
+            replyTo: root.capturedReply
+            onSent: root.close()
+            onSettingsRequested: { root.close(); root.settingsRequested() }
+        }
+        Rectangle { visible: root.allowMedia; Layout.fillWidth: true; height: 1; color: Theme.border }
+        RowLayout {
+            visible: root.allowMedia
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 4
+            Layout.bottomMargin: 4
+            spacing: 4
+            Repeater {
+                model: [qsTr("Emoji"), qsTr("GIFs"), qsTr("Stickers")]
+                ExpressionButton {
+                    required property int index
+                    required property string modelData
+                    text: modelData
+                    checkable: true
+                    checked: root.selectedTab === index
+                    enabled: !expressionPanel.sending
+                    onClicked: root.selectedTab = index
+                }
             }
         }
     }

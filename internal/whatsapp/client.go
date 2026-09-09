@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/skip2/go-qrcode"
+	"golang.org/x/image/webp"
 	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 
@@ -55,6 +56,7 @@ type Client struct {
 	pairing         bool
 	closed          bool
 	historyRequests map[string]time.Time
+	callAlerts      map[string]time.Time
 	// Set while the post-connection sweep is running, so a reconnect does not
 	// start a second one beside it.
 	connectSweepRunning bool
@@ -100,6 +102,10 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media 
 	// whatsmeow intentionally suppresses generic app-state events on snapshots.
 	wa.EmitAppStateEventsOnFullSync = true
 	c := &Client{wa: wa, container: container, store: st, media: media, notifier: notifier, mediaDir: mediaDir, baseCtx: ctx, subs: make(map[uint64]func(gateway.Event)), historyRequests: make(map[string]time.Time), mediaRetries: make(map[types.MessageID]*mediaRetryWaiter), resolveLinkPreview: linkpreview.Resolve}
+	if err := c.redactStoredViewOnce(ctx); err != nil {
+		container.Close()
+		return nil, fmt.Errorf("repair view-once metadata: %w", err)
+	}
 	c.status = model.ConnectionStatus{State: "disconnected", LoggedIn: wa.Store.ID != nil, LastChange: model.NowMillis()}
 	if wa.Store.ID != nil {
 		c.status.UserJID = wa.Store.ID.String()
@@ -389,6 +395,9 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 	if err != nil {
 		return model.Message{}, err
 	}
+	if msg.Kind == "view_once" {
+		return model.Message{}, errors.New("view-once messages can only be opened on your phone")
+	}
 	if msg.MediaPath != "" {
 		if _, statErr := os.Stat(msg.MediaPath); statErr == nil {
 			converted := c.withDisplayableSticker(msg)
@@ -539,6 +548,9 @@ func (c *Client) ListCommunities(ctx context.Context) ([]model.Community, error)
 }
 
 func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model.Message, error) {
+	if c.wa == nil || !c.wa.IsConnected() {
+		return model.Message{}, errors.New("WhatsApp is disconnected")
+	}
 	chat, err := types.ParseJID(req.ChatJID)
 	if err != nil {
 		return model.Message{}, err
@@ -560,6 +572,33 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 		return model.Message{}, err
 	}
 	kind, mediaType := classifyMedia(mimeType, req.Document)
+	var stickerWidth, stickerHeight uint32
+	var animatedSticker bool
+	if req.GIF {
+		if kind != "video" || req.Sticker || mimeType != "video/mp4" || stat.Size() > 16<<20 {
+			return model.Message{}, errors.New("GIFs must be MP4 animations up to 16 MiB")
+		}
+	}
+	if req.Sticker {
+		if mimeType != "image/webp" || stat.Size() > maxStickerBytes {
+			return model.Message{}, errors.New("stickers must be WebP files up to 1 MiB")
+		}
+		cfg, err := webp.DecodeConfig(f)
+		if err != nil || cfg.Width < 1 || cfg.Height < 1 || cfg.Width > 512 || cfg.Height > 512 {
+			return model.Message{}, errors.New("sticker dimensions must fit within 512 by 512 pixels")
+		}
+		stickerWidth, stickerHeight = uint32(cfg.Width), uint32(cfg.Height)
+		_, _ = f.Seek(0, io.SeekStart)
+		header := make([]byte, 21)
+		if _, err := io.ReadFull(f, header); err == nil {
+			animatedSticker = string(header[12:16]) == "VP8X" && header[20]&2 != 0
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return model.Message{}, err
+		}
+		kind, mediaType = "sticker", whatsmeow.MediaImage
+		req.Caption = ""
+	}
 	tmp, err := os.CreateTemp(c.mediaDir, "upload-*")
 	if err != nil {
 		return model.Message{}, err
@@ -579,6 +618,14 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 		contextInfo.ForwardingScore = proto.Uint32(uint32(req.ForwardingScore))
 	}
 	payload := buildMediaPayload(kind, mimeType, filepath.Base(req.Path), req.Caption, upload, contextInfo, req.Voice)
+	if req.GIF {
+		payload.VideoMessage.GifPlayback = proto.Bool(true)
+	}
+	if req.Sticker {
+		payload.StickerMessage.Width = &stickerWidth
+		payload.StickerMessage.Height = &stickerHeight
+		payload.StickerMessage.IsAnimated = &animatedSticker
+	}
 	resp, err := c.wa.SendMessage(ctx, chat, payload)
 	if err != nil {
 		return model.Message{}, err
@@ -593,7 +640,7 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store sent attachment: " + err.Error()}})
 		}
 	}
-	return c.withReplyPreview(ctx, model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), ForwardingScore: req.ForwardingScore}), nil
+	return c.withReplyPreview(ctx, model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), ForwardingScore: req.ForwardingScore, GIFPlayback: req.GIF}), nil
 }
 
 func (c *Client) cacheOutgoing(sourcePath, chatJID, messageID, kind string) (string, error) {
@@ -1061,6 +1108,12 @@ func (c *Client) replyContext(ctx context.Context, chatJID, replyTo string) *waE
 		if quoted.SenderJID != "" {
 			info.Participant = proto.String(quoted.SenderJID)
 		}
+		if quoted.Kind == "view_once" {
+			// Quote only the protection marker, not the placeholder prose or
+			// any payload an older version may have retained.
+			info.QuotedMessage = &waE2E.Message{ViewOnceMessageV2: &waE2E.FutureProofMessage{Message: &waE2E.Message{}}}
+			return info
+		}
 		if payload, ok, _ := c.store.MediaPayload(ctx, chatJID, replyTo); ok {
 			var raw waE2E.Message
 			if proto.Unmarshal(payload, &raw) == nil {
@@ -1111,6 +1164,8 @@ func buildMediaPayload(kind, mimeType, name, caption string, u whatsmeow.UploadR
 	case "audio":
 		ptt := voice
 		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{URL: &u.URL, DirectPath: &u.DirectPath, MediaKey: u.MediaKey, FileEncSHA256: u.FileEncSHA256, FileSHA256: u.FileSHA256, FileLength: &u.FileLength, Mimetype: &mimeType, PTT: &ptt, ContextInfo: ctx}}
+	case "sticker":
+		return &waE2E.Message{StickerMessage: &waE2E.StickerMessage{URL: &u.URL, DirectPath: &u.DirectPath, MediaKey: u.MediaKey, FileEncSHA256: u.FileEncSHA256, FileSHA256: u.FileSHA256, FileLength: &u.FileLength, Mimetype: &mimeType, ContextInfo: ctx}}
 	default:
 		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{URL: &u.URL, DirectPath: &u.DirectPath, MediaKey: u.MediaKey, FileEncSHA256: u.FileEncSHA256, FileSHA256: u.FileSHA256, FileLength: &u.FileLength, Mimetype: &mimeType, FileName: &name, Caption: &caption, ContextInfo: ctx}}
 	}

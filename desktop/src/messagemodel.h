@@ -107,9 +107,9 @@ private:
     void rebuildIndex();
     // Marks the message that opens each calendar day, so the conversation can
     // put a date between one day and the next the way WhatsApp Web does. A
-    // page of older history changes which message opens its day, so this runs
-    // again after every change.
-    void refreshDayStarts();
+    // Only the changed interval and its next dated neighbour need updating.
+    // Invalid timestamps do not interrupt the previous valid calendar day.
+    void refreshDayStarts(int first = 0, int end = -1);
 
     QVariantList m_messages;
     QHash<QString, int> m_rowById;

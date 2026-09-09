@@ -12,13 +12,22 @@ ItemDelegate {
     property string trailingText: ""
     property string actionText: ""
     property bool destructive: false
+    property string description: ""
+    property bool showChevron: false
     signal actionClicked()
 
-    implicitHeight: 56
+    implicitHeight: Math.max(description ? 68 : 56, contentItem.implicitHeight + 16)
     enabled: true
+    opacity: enabled ? 1 : 0.5
+    focusPolicy: Qt.StrongFocus
+    Accessible.name: text
+    Accessible.description: description
 
     background: Rectangle {
+        radius: 10
         color: root.down ? Theme.pressedRow : root.hovered ? Theme.hoverRow : "transparent"
+        border.width: root.visualFocus ? 2 : 0
+        border.color: Theme.primary
     }
 
     contentItem: RowLayout {
@@ -30,12 +39,27 @@ ItemDelegate {
             source: root.iconSource
             tint: root.destructive ? Theme.danger : Theme.icon
         }
-        Label {
+        ColumnLayout {
             Layout.fillWidth: true
-            text: root.text
-            color: root.destructive ? Theme.danger : Theme.text
-            font.pixelSize: 15
-            elide: Text.ElideRight
+            Layout.minimumWidth: 0
+            spacing: 3
+            Label {
+                Layout.fillWidth: true
+                text: root.text
+                textFormat: Text.PlainText
+                color: root.destructive ? Theme.danger : Theme.text
+                font.pixelSize: 15
+                wrapMode: Text.Wrap
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: root.description !== ""
+                text: root.description
+                textFormat: Text.PlainText
+                color: Theme.textMuted
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+            }
         }
         Label {
             visible: root.trailingText !== ""
@@ -68,9 +92,17 @@ ItemDelegate {
             }
         }
         Item {
-            visible: root.actionText === ""
+            visible: root.actionText === "" && !root.showChevron
             Layout.rightMargin: 22
             Layout.preferredWidth: 0
+        }
+        TintedIcon {
+            visible: root.showChevron
+            Layout.rightMargin: 22
+            Layout.preferredWidth: 16
+            Layout.preferredHeight: 16
+            source: Qt.resolvedUrl("icons/chevron-right.svg")
+            tint: Theme.iconMuted
         }
     }
 }

@@ -27,6 +27,332 @@ WhatsApp Web changes frequently. The dimensions below are a reference snapshot, 
 
 ## Executive result
 
+### Contact sharing and live-reference recheck — 2026-09-09
+
+Playwright is connected to the authenticated WhatsApp Web session again. This
+pass opened Settings → Notifications → Messages and confirmed the three live
+switches (notifications, reaction notifications, sound) already have counterparts
+in WhatsAppGo. It then opened paperclip → Contact and observed the searchable
+contact-selection dialog. No reference contact was selected or sent; the dialog
+was closed without account changes. Status-audience editing was also checked
+against the pinned whatsmeow source: a reader exists, but no supported setter
+was found, so no speculative account-write control was added.
+
+**Paperclip → Contact now works.** The native picker searches up to 100 local
+contacts, including archived chats, deduplicates known phone/LID aliases, and
+excludes opaque identities without a disclosed phone number. Search is debounced,
+bounded in SQL, and does not scan/download message history or contact photos.
+A manual-entry action is available when a number is absent. Selecting a result
+opens an editable name/number review; only explicit **Send contact** transmits
+one vCard, with optional reply context, through the existing message flow.
+Only these two reviewed fields are shared, never other address-book metadata.
+
+Names and international phone numbers are validated before gateway dispatch;
+vCard text is escaped and direct/group destinations are required. Failed sends
+retain the review; pending sends disable repeat submission. Captured account,
+chat, reply and request tokens prevent stale search results, stale destinations,
+or an old acknowledgement from modifying a reopened picker. Escape returns from
+review to results, then to the focused chat composer. The composer's unsent text
+is preserved. A discovered QML binding-order issue in chat-switch dismissal was
+fixed using the source JID in the signal handler.
+
+Verification: all 44 existing desktop checks, the full Go suite and vet pass.
+Disposable overlay checks cover input/vCard validation, receive round-tripping,
+aliases, archived contacts, escaped search, row bounds, persistence, failures and
+unsupported gateways. Disposable actual-QML/RPC checks cover both themes at
+1007×686, real menu/row clicks, preview/no-send, invalid input, stale queries,
+load/send errors, retry, Escape/focus, pending/reopened dialogs, draft/reply
+handling, chat/account switches and stale-send rejection. Artifacts are under
+`/tmp/whatsappgo-contact-share.slyON5/`; no repository tests were added.
+
+This closes **single-card** sharing, not bulk contact selection, multiple-number
+cards or address-book editing. **No real contact card was transmitted; live
+WhatsApp server acceptance remains unverified.** Older entries describing all
+contact sending as unavailable are superseded by this section.
+
+### Custom static stickers — 2026-09-09
+
+The Stickers tab's **Create** button and paperclip menu's **New sticker** action
+now open the system image chooser and a preview with explicit Send. JPEG/PNG
+preparation runs locally on one worker, preserves transparency, honors EXIF
+orientation, fits without cropping and omits source metadata. Input is bounded
+to 20 MiB and 32 megapixels; animated input, including APNG, is rejected rather
+than silently flattened. Output is a transparent 512×512 WebP with a 16-pixel
+margin and at most 100,000 bytes, following the
+[official static-sticker requirements](https://github.com/WhatsApp/stickers/blob/main/Android/README.md?plain=1).
+
+The implementation uses the already-linked optional libwebp encoder; no Qt WebP
+plugin or new installation is needed. Qt displays a private PNG decoded from
+the actual encoded sticker. Both temporary copies are owner-only and are
+removed when discarded; the upload copy is retained until its pending request
+finishes. Sends use the existing sticker media path, captured account/chat/reply
+target and normal message history. Failed sends retain the preview for retry;
+old acknowledgements cannot close a newly reopened picker. Escape backs out of
+the preview, and keyboard focus returns to a visible control.
+
+This closes basic static creation, not the full WhatsApp editor: animation
+creation, cutout/background removal, drawing and sticker-pack management remain
+gaps. The older creation-gap entries below are superseded. Fresh Playwright
+attachment failed because the browser extension disconnected; this pass uses
+the supplied Create reference, prior inventory and the official media contract.
+No real contact sends are used for verification.
+
+Verification: the existing 44 desktop checks pass. Disposable isolated
+actual-QML/RPC checks cover light/dark narrow layouts, actual GTK selection,
+decoded WebP/PNG preview equivalence, dimensions/bytes/alpha/metadata, private
+copies, worker cancellation, invalid/oversized/APNG input, Escape and visible
+focus restoration, failed-send retry, reply preservation, pending-upload leases,
+reopened-picker acknowledgements, conversation changes and stale destinations.
+The no-libwebp source branch also compiles. Artifacts are retained under
+`/tmp/whatsappgo-sticker-create.ON2aNv/`; no repository tests were added. Real
+server acceptance of newly created stickers remains unverified.
+
+### Own profile photo — 2026-09-09
+
+Settings → Profile now supports changing and removing the connected account's
+photo. The native file chooser feeds a bounded, single-worker JPEG/PNG preparer:
+EXIF orientation, center-square crop, 640×640 output, white alpha flattening,
+metadata-free JPEG, owner-only temporary copy, original unchanged. Selection
+does not upload. A preview and explicit Save precede replacement; removal has
+its own destructive confirmation. Busy/error/retry feedback, Escape cancellation,
+and account-generation guards keep the pending selection with its original account.
+
+The optional `profile.set_photo` gateway validates complete, bounded square JPEGs
+and uses the pinned whatsmeow picture-update IQ with **no target JID**, updating
+only the connected account. This own-photo use of `SetGroupPhoto` is described
+in the [upstream answer](https://github.com/tulir/whatsmeow/discussions/248) and
+was checked against our pinned source. Profile reads now refresh the picture ID
+so cached old photos do not hide a successful replacement/removal.
+
+Verification: existing 44 desktop checks, full Go suite and vet; disposable
+isolated actual-QML/RPC and image-validation probes, including light/dark at
+1007×686, cancel/no-send, rejected upload/retry, remove confirmation, account
+switch during a pending request, size/type/truncation limits and private-copy
+permissions. An isolated graphical run also verified the actual GTK file
+chooser and its selection → preview handoff, with zero uploads. No repository
+tests were added. Fresh Playwright attachment timed
+out, so this pass used supplied profile reference screens and the existing
+inventory. **No real account photo was changed; live server acceptance remains
+unverified.** Username editing remains a gap; the older photo-gap entries below
+are superseded by this section.
+
+### Status viewer navigation follow-on — 2026-09-09
+
+Escape is now owned by a viewer-local window shortcut rather than a handler
+that only receives keys while the viewer or its descendants have focus. The
+reported failure was reproduced in the built Main UI by moving focus to the
+covered chat composer; the same scenario now closes the viewer without changing
+the chat. Nested emoji-picker Escape keeps precedence. Closing restores the
+original page/control, with Chats remaining the default navigation destination.
+
+The Status viewer also gains explicit Pause/Resume controls, Lucide previous/next
+buttons, accessible names, visible keyboard focus and a closed Tab/Shift+Tab
+cycle. Space on the viewer toggles playback without intercepting spaces typed
+in the reply field. A full-window input shield blocks covered chat clicks and
+scrolling, and a dark header gradient keeps controls legible over bright media.
+The decorative backdrop loads asynchronously and no longer tries to decode a
+video file as a still image when no thumbnail is present.
+
+Verification uses the existing 44 desktop checks plus disposable isolated
+built-QML diagnostics for root/reply/background focus, nested Escape,
+page/focus restoration, draft preservation, keyboard traversal, clicks, image
+contrast and actual video pause/resume. Light/dark and narrow-window captures
+are retained under `/tmp/whatsappgo-status-viewer.8RhyL2/`. No repository tests,
+live replies or status posts were added. Status likes/mentions and other
+protocol-dependent gaps remain open; this is not a full-parity claim.
+
+### Status alerts follow-on — 2026-09-08
+
+Notifications now includes a Status category with opt-in desktop alerts and a
+separate Linux sound switch. It uses the existing incoming status-message path;
+only newly stored text/photo/video/audio statuses under five minutes old qualify.
+History, duplicate delivery, edits, own updates, unsupported message kinds and
+muted senders stay quiet. Preview hiding and the incoming-sound master switch
+apply, and preview text is bounded. No additional status polling is introduced.
+
+Notification activation opens the Status page through the normal desktop/CLI
+activation entry point without selecting `status@broadcast` as a conversation or
+replacing the current chat/draft. The settings page retains normal Escape/back
+navigation and uses the existing themed, keyboard-accessible controls.
+
+Status likes and mention alerts remain unimplemented; this is not full Status
+notification parity with WhatsApp Web.
+
+Verification: the existing 44 desktop checks, Go suite and `go vet ./...` pass.
+Disposable in-memory diagnostics cover fresh/duplicate/restart/history delivery,
+muted contacts, own/edited updates, privacy/sound switches and bounded Unicode
+previews. Light/dark built-QML checks cover keyboard toggling through a local RPC
+fixture, Escape/back navigation and Status activation without replacing the chat.
+No new repository tests, real status posts or live preference changes were used.
+
+### GIF discovery follow-on — 2026-09-08
+
+KLIPY now opens with its real featured feed rather than an empty search surface.
+The existing Tenor-compatible API uses `/v2/featured` for an empty query and
+`/v2/search` for keywords, with the same bounded pagination, content filter,
+request cancellation and provider-separated results. The endpoint contract is
+listed in KLIPY's [API reference index](https://docs.klipy.com/llms.txt).
+
+The picker labels the discovery feed and has a keyboard-accessible clear-search
+button that cancels a pending search, returns to the first discovery page and
+restores focus to the search field. Settings and user-guide wording now distinguish
+GIPHY trending from KLIPY featured content.
+
+Verification: all 44 existing desktop checks pass. Disposable isolated checks
+exercise the actual catalog's request construction and result parsing with local
+responses: first/next page, special-character queries, clearing, stale-response
+cancellation, rejected-key recovery and the unchanged GIPHY feed. The built QML
+passes narrow-layout and keyboard-clear/focus checks in light and dark themes.
+No new repository tests, real provider requests or contact sends were used; live
+authenticated provider behavior remains unverified without a configured key.
+
+### Expressions and composer follow-on — 2026-09-08
+
+- The main composer now has Emoji, GIFs and Stickers tabs. Recent emoji are
+  stored locally; the categorized/searchable Unicode picker remains available
+  for captions, statuses and reactions.
+- GIPHY trending/search and KLIPY keyword search use the configured desktop API
+  keys directly. Results remain provider-separated and in response order.
+  A selected MP4 is previewed before explicit Send, with WhatsApp's GIF playback
+  flag. API key validation happens on the first search, not Save.
+- Recent and starred sticker messages can be reused from the current account.
+  The original WebP is restored or downloaded, never relabelled from the PNG
+  display thumbnail. Forwarding a sticker preserves its sticker type too.
+- Search is debounced and paged, with at most three thumbnail requests in flight,
+  capped response/decode sizes, deadlines, cancellation and Retry-After handling.
+  Temporary selected GIF files stay alive through upload acknowledgement.
+- Popup placement is measured after layout, clamped to the window and refreshed
+  on resize. Themed buttons have keyboard focus and accessible labels.
+- The playback surface and player are created only for selected GIF previews.
+  A shutdown probe also found a tray callback outliving its menu action; its
+  receiver lifetime now prevents that use-after-free during window destruction.
+- Caption input honors Enter-to-send, emoji replacement and spelling settings.
+  Captions and edited messages have spelling suggestions and native edit actions;
+  long edited text gets a bounded scrollable field. Edit submission is bound to
+  its original account/chat.
+
+The follow-on animation pass persists the GIF flag through history and
+forwarding, and adds click-to-play inline GIFs and animated WebP stickers.
+Selected sticker previews animate in the picker; both preview kinds have
+pause controls. Chat animation is limited to one selection and stops offscreen
+or when the window loses focus. Static PNG sticker fallbacks remain available.
+The native WebP decoder is optional at build time and enabled in the local build.
+
+Verification: all 44 existing desktop checks, Go tests/vet, targeted Go race
+checks and Linux/Windows/macOS backend compile checks passed. Disposable local
+fixtures exercised actual light/dark chat playback, different WebP frames,
+pause, offscreen/hidden decoder cleanup, invalid-input fallback, picker
+pause/resume and nested Escape. A synthetic database checked migration, alias
+merge and GIF-flag persistence. No real messages were sent and no new repository
+tests were added. The UI and both local profile daemons were rebuilt and
+restarted. A teardown-only QML warning was fixed by checking the attached view's
+Qt-object validity before reading geometry.
+
+Remaining expression limits: provider sticker catalogs and
+sticker creation/pack installation are not implemented. Older GIF records
+without a stored flag still use video controls unless history supplies it again.
+Browser comparison on this pass reached the Playwright extension approval
+screen and was not approved automatically.
+
+Verification: all 44 existing desktop checks, the full Go suite, Go vet,
+service/store/WhatsApp race checks, and Linux/Windows/macOS Go cross-checks pass.
+Disposable isolated probes verify popup bounds, preview → results → closed
+Escape navigation, actual MP4 frame decoding, owner-only temporary files,
+hold-through-acknowledgement cleanup, and shutdown. No repository tests were
+added. No provider key is configured locally, so authenticated provider search
+and real contact sends were not exercised. A public MP4 from the provider's
+documentation was used for the download/playback check; no message was sent.
+
+### Follow-on settings pass — 2026-09-08
+
+This section supersedes the remaining-gap claims in the earlier sound/settings
+pass where noted. A fresh read-only Playwright comparison confirmed the **Groups**
+and **Status** notification subpages: notifications, reaction notifications and
+sound. Privacy separately shows About visibility and a status-broadcast
+exception audience. Only our temporary browser tab was closed; no Web settings
+or messages were changed.
+
+| Area | Added | Still not implemented |
+| --- | --- | --- |
+| Account security | Quiet opt-in security-code-change alerts with fresh-event and duplicate guards | In-app security-code verification, account reports/deletion |
+| Default timer | Confirmed Off/24-hour/7-day/90-day account default for new chats | Current-default readback; automatic expiration of retained local history is deliberately not implemented |
+| Profile | Read About and available avatar; preserve an unsaved About edit across failures | Photo/username editing |
+| Privacy | Correct About label/API alias; read default broadcast audience and exception count | Audience/exception editing, app lock, call-IP transport |
+| Upload quality | Standard/HD/Original still-photo preparation off the UI thread | Video quality, WhatsApp-specific HD protocol badge/encoding |
+| Spelling | Optional offline Aspell, installed-language picker, suggestions/ignore, native Undo and composer edit menu | Caption/edit-dialog spelling; dictionaries not installed automatically |
+
+The default timer uses the pinned library's
+[setter](https://pkg.go.dev/go.mau.fi/whatsmeow#Client.SetDefaultDisappearingTimer);
+audience readback uses
+[GetStatusPrivacy](https://pkg.go.dev/go.mau.fi/whatsmeow#Client.GetStatusPrivacy).
+There is no current-default getter in the pinned source, so the UI does not
+invent or cache a current timer. Status like/mention alerts remain unimplemented;
+new-update alerts were added in the follow-on above. Voice/video calls still
+require the phone. Earlier gap lists in
+this document are historical, not a claim that every item remains missing.
+
+Verification uses the existing suites plus disposable manual probes, not new
+test infrastructure. Synthetic photo checks cover sizes, orientation,
+transparency, source preservation and temporary-file cleanup; the composer
+probe covers dictionaries, underlines, color emoji, suggestions, replacement,
+Undo and disabling. A disposable daemon verifies timer validation, disconnected
+guards and security-preference persistence without account mutations. Live
+account-setting writes and new real security-code events were not exercised.
+The new Paste binding exposed an empty-clipboard null dereference; guarding
+the nullable MIME data fixes the headless startup regression.
+
+### Targeted live recheck — 2026-09-08
+
+The authenticated WhatsApp Web browser tab was attached through Playwright's
+Chrome extension using a temporary MCP 0.0.80 client. The previously installed
+0.0.69 client was rejected by extension 0.4.0 for using an older protocol.
+No browser profile/configuration was replaced, messages sent, or account
+settings changed. Only settings navigation and an already-read document chat
+were inspected. This targeted check does not refresh every finding below.
+
+- The home menu contains Profile, Account, Privacy, Chats, Notifications,
+  Keyboard shortcuts, Help and feedback, and Log out.
+- Escape from message notification options returns to Notifications; Escape
+  from Notifications returns to settings home. WhatsAppGo's explicit fallback
+  is Chats. Native keyboard checks also cover dismissing a popup before
+  leaving its underlying settings page.
+- WhatsApp Web additionally offers per-category reaction alerts and sound
+  switches. The subsequent sound/settings implementation below replaces the
+  initial shared-sound-only implementation; notification parity is still partial.
+- A one-line PDF card measured `330 × 66` CSS pixels, with a roughly `26 × 31`
+  type badge and no separate Open control. WhatsAppGo uses `328 × 66` logical
+  pixels minimum, expanding for a wrapped filename, with whole-card download.
+
+### Sound/settings pass — 2026-09-08
+
+Re-attached the authenticated Web app using Playwright MCP 0.0.80. Confirmed the
+Notifications home (Messages, Groups, Status, Calls, previews, outgoing sound,
+background sync), and the Messages subpage's three controls: notifications,
+reaction notifications, sound. Navigation attempts into Groups/Status did not
+complete reliably; those subpages were **not** verified in this pass. Closed only
+the temporary reference tab. No messages or Web settings were changed.
+
+| Area | Implemented in this pass | Remaining limitation |
+| --- | --- | --- |
+| Sounds | Linux message/group/call sound switches, incoming master, optional successful-send tone, two sound previews | OS controls elsewhere; desktop theme sounds, not copied WhatsApp audio |
+| Reactions | Opt-in message/group alerts for recent reactions to your own messages; replay/removal suppression | Status likes/mentions not wired |
+| Calls | One-time incoming offer/notice alert with deduplication | No answering, outgoing calls, or media transport |
+| Media | Per-type automatic photo/video/audio/document/sticker downloads | No global upload-quality selector; in-flight transfers may finish |
+| Links | Local backend-enforced disable-preview requests; cached previews remain | Already-running requests and explicit URL opens unaffected |
+| Profile | WhatsApp name editing, with protocol validation | Photo editing/username remain official-app features |
+| Privacy | Supported call/message audiences and high-volume unknown-account protection; incoming privacy changes refresh UI | Status audience exception-list editing, app lock, default timer and call-IP controls remain incomplete |
+
+Protocol support was checked against the pinned whatsmeow source and its
+[call event documentation](https://pkg.go.dev/go.mau.fi/whatsmeow/types/events#CallOffer)
+and [privacy types](https://pkg.go.dev/go.mau.fi/whatsmeow/types#PrivacySettings).
+The implementation exposes capabilities the backend actually has; it does not
+claim full Web parity. Other outstanding areas include security-code alert
+preferences, account reports/deletion, spell checking, status reaction alerts,
+and browser-specific background-sync behavior. Older findings below are
+historical and must be checked against the current implementation before work.
+
+### Earlier audit summary
+
 WhatsAppGo already has a substantial messaging core, but it is not yet behaviorally or structurally equivalent to the PWA.
 
 The most important problems are:

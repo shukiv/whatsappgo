@@ -12,6 +12,22 @@ The current preview protects those files with Unix user permissions, not with a
 second application-level encryption layer. Anyone who can read the user's
 account or an unlocked disk can read the local cache.
 
+View-once content is an exception: new protected envelopes and intentionally
+unavailable view-once events are reduced to metadata-only timeline placeholders.
+Protected captions, thumbnails and download payloads are not retained; download
+and forwarding are refused. A one-time local repair checks protection flags in
+payloads retained by older builds, replaces recognized rows with placeholders,
+and removes their stored payloads and media references. It does not fetch media
+or securely erase old cache files, attachment-database bytes or backups. Messages
+whose events were discarded and left no metadata cannot be reconstructed locally.
+
+Clicking a document card explicitly saves a separate copy to the system
+Downloads folder, without opening it. Remote filenames are sanitized and
+created exclusively with owner-only Unix permissions; existing files and
+symlinks are not overwritten. Downloads are outside the profile's media cache
+and remain until the user removes them, including after chat deletion or a
+message revocation. Treat downloaded attachments as untrusted files.
+
 Local conversation history is intentionally retained to preserve as much
 available history as possible. A WhatsApp disappearing-message timer is **not**
 a deletion guarantee for this app: stored messages and attachments can remain
@@ -35,6 +51,12 @@ to the site:
 3. Once per profile, the URLs of YouTube messages whose stored cards have no
    image are sent to YouTube's public oEmbed endpoint to repair old cards.
 
+**Privacy → Disable link previews** blocks new requests through all three
+backend paths and strips supplied previews from new message sends. Already
+running requests may finish; cached/sender-supplied previews are not erased.
+This local setting does not block links explicitly opened by the user or
+third-party tools that independently resolve URLs before calling the RPC.
+
 Requests are restricted to HTTP and HTTPS on ports 80 and 443, are refused if
 the host resolves to a loopback, private, link-local, or otherwise non-public
 address, connect to the resolved address directly so a name cannot be rebound
@@ -52,6 +74,51 @@ not run untrusted programs under the logged-in account. See the
 Before reporting a vulnerability, avoid attaching device databases, QR payloads,
 pairing codes, message contents, or logs containing JIDs. Rotate the linked
 device from the official WhatsApp application if credentials may be exposed.
+
+## Local spelling and photo preparation
+
+Optional composer spell checking sends words only to the installed local
+`aspell` process over standard input. It uses no spelling network service or
+temporary draft files, and dictionary output is not logged. URLs, addresses,
+paths and inline backtick code are excluded. This is not protection against
+other software running as the same user.
+
+Standard/HD photo preparation makes an owner-only temporary JPEG and removes
+that copy after the upload request completes. It honors orientation and uses a
+fresh pixel image without source EXIF/text metadata. The source file is never
+overwritten. **Original** quality and document sends retain original bytes and
+metadata; converting a photo does not redact information visible in its pixels.
+
+Security-code notifications are advisory, local and disabled by default. A
+quiet alert is not proof of compromise or identity verification. Verify contact
+security codes in the official app. Default message timers do not change the
+local-history retention policy described above.
+
+## GIF provider credentials
+
+Inline animated stickers accept only local WebP originals, at most 1 MiB,
+512×512 pixels, 600 frames and 120 seconds per loop. Decoding runs incrementally
+off the UI thread with a bounded worker count and at most 50 frame advances per
+second. Hidden/paused playback releases the decoder; invalid inputs report an
+error and retain the existing PNG fallback. Builds without libwebp retain
+static sticker display. This does not change attachment retention or send the
+PNG fallback instead of the original sticker.
+
+WhatsAppGo settings save user-supplied GIF provider keys separately from WhatsApp
+profiles, in `AppConfigLocation/private/gif-providers.json`. This is **not
+encrypted storage**. On Unix, the private directory is 0700 and the file is
+0600; other processes running as the same user can still read it. Protect
+configuration backups and never attach this file to bug reports. Clear a key
+and Save to remove it from the current settings file; backups are unaffected.
+Saving is local only, with no provider validation, RPC transmission, or
+diagnostic collection. Searching sends the chosen provider its key, search
+terms and the desktop's IP address; no chat content or recipients are sent.
+API redirects are rejected, and media redirects are restricted to known
+provider CDN hosts over HTTPS. Responses, image dimensions and concurrent
+thumbnail downloads are bounded. Provider errors never log request URLs,
+keys or response bodies. Search results/thumbnails are memory-only. A selected
+MP4 is downloaded to an owner-only temporary file and held until the explicit
+send finishes; successful sends enter the normal local message/media history.
 
 ## Bug-report intake
 

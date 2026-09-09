@@ -6,11 +6,13 @@ import org.whatsappgo
 
 Item {
     id: root
+    objectName: "statusViewer"
     property var groups: []
     property bool opened: false
     property int groupIndex: 0
     property int itemIndex: 0
     property real progress: 0
+    property bool manuallyPaused: false
     property string replyText: ""
     property bool replyPending: false
     property string replyFeedback: ""
@@ -22,7 +24,7 @@ Item {
     readonly property var currentItems: currentGroup.items || []
     readonly property var currentItem: itemIndex >= 0 && itemIndex < currentItems.length ? currentItems[itemIndex] : ({})
     readonly property bool videoReady: currentItem.kind === "video" && Boolean(currentItem.media_path)
-    readonly property bool interactionPaused: replyPending || replyComposer.activeFocus || statusEmojiPicker.opened
+    readonly property bool interactionPaused: manuallyPaused || replyPending || replyComposer.activeFocus || statusEmojiPicker.opened
     signal closeRequested()
     signal mediaRequested(string messageId)
     signal replyRequested(string recipientJid, string statusMessageId, string text)
@@ -38,6 +40,7 @@ Item {
     }
 
     function openAt(index) {
+        manuallyPaused = false
         groupIndex = Math.max(0, Math.min(groups.length - 1, index))
         itemIndex = 0
         opened = groups.length > 0
@@ -46,6 +49,8 @@ Item {
     }
 
     function close() {
+        if (!opened)
+            return
         opened = false
         progressAnimation.stop()
         statusPlayer.stop()
@@ -170,9 +175,39 @@ Item {
     }
     onInteractionPausedChanged: interactionPaused ? pausePlayback() : resumePlayback()
 
-    Keys.onEscapePressed: close()
+    // Keep keyboard traversal inside this overlay, including when it was
+    // opened from a chat avatar rather than from the Status page.
+    function focusControl(backwards) {
+        const controls = [pauseButton, closeButton, previousButton, nextButton,
+                          replyEmojiButton, replyComposer, replySendButton]
+        const focused = root.Window.window ? root.Window.window.activeFocusItem : null
+        let index = controls.indexOf(focused)
+        if (index < 0)
+            index = backwards ? 0 : -1
+        for (let step = 0; step < controls.length; ++step) {
+            index = (index + (backwards ? -1 : 1) + controls.length) % controls.length
+            if (controls[index].visible && controls[index].enabled) {
+                controls[index].forceActiveFocus(backwards ? Qt.BacktabFocusReason : Qt.TabFocusReason)
+                return
+            }
+        }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        autoRepeat: false
+        enabled: root.opened && !Theme.popupOwnsFocus(root.Overlay.overlay,
+            root.Window.window ? root.Window.window.activeFocusItem : null)
+        onActivated: root.close()
+    }
     Keys.onLeftPressed: previous()
     Keys.onRightPressed: advance()
+    Keys.onTabPressed: event => { focusControl(false); event.accepted = true }
+    Keys.onBacktabPressed: event => { focusControl(true); event.accepted = true }
+    Keys.onSpacePressed: event => {
+        manuallyPaused = !manuallyPaused
+        event.accepted = true
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -180,11 +215,23 @@ Item {
 
         Image {
             anchors.fill: parent
-            source: root.mediaUrl(root.currentItem.media_thumbnail || root.currentItem.media_path)
+            source: root.mediaUrl(root.currentItem.media_thumbnail
+                || (root.currentItem.kind === "image" ? root.currentItem.media_path : ""))
+            asynchronous: true
             fillMode: Image.PreserveAspectCrop
             opacity: status === Image.Ready ? 0.22 : 0
         }
         Rectangle { anchors.fill: parent; color: "#73000000" }
+    }
+
+    // Consume clicks and scrolling outside the controls so the covered chat
+    // cannot receive input or steal focus. Later siblings remain interactive.
+    MouseArea {
+        objectName: "statusInputShield"
+        anchors.fill: parent
+        acceptedButtons: Qt.AllButtons
+        onPressed: root.forceActiveFocus()
+        onWheel: wheel => { wheel.accepted = true }
     }
 
     Label {
@@ -228,6 +275,11 @@ Item {
 
             ThemedToolButton {
                 id: replyEmojiButton
+                objectName: "statusReplyEmojiButton"
+                focusPolicy: Qt.StrongFocus
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: replyComposer
+                KeyNavigation.backtab: nextButton
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 44
                 iconSource: Qt.resolvedUrl("icons/smile.svg")
@@ -237,12 +289,17 @@ Item {
                 background: Rectangle {
                     radius: 22
                     color: parent.hovered || statusEmojiPicker.opened ? "#33FFFFFF" : "transparent"
+                    border.width: parent.visualFocus ? 2 : 0
+                    border.color: "#FFFFFF"
                 }
             }
 
             TextField {
                 id: replyComposer
                 objectName: "statusReplyComposer"
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: replySendButton
+                KeyNavigation.backtab: replyEmojiButton
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 text: root.replyText
@@ -269,6 +326,12 @@ Item {
             }
 
             ThemedToolButton {
+                id: replySendButton
+                objectName: "statusReplySendButton"
+                focusPolicy: Qt.StrongFocus
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: pauseButton
+                KeyNavigation.backtab: replyComposer
                 visible: !root.replyPending
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 44
@@ -280,6 +343,8 @@ Item {
                 background: Rectangle {
                     radius: 22
                     color: parent.hovered && parent.enabled ? "#33FFFFFF" : "transparent"
+                    border.width: parent.visualFocus ? 2 : 0
+                    border.color: "#FFFFFF"
                 }
             }
         }
@@ -379,7 +444,20 @@ Item {
         onErrorOccurred: root.advance()
     }
 
+    // Keep the name and controls legible over a bright photo/video.
+    Rectangle {
+        anchors.left: storyFrame.left
+        anchors.right: storyFrame.right
+        anchors.top: parent.top
+        height: statusHeader.height + 40
+        gradient: Gradient {
+            GradientStop { position: 0; color: "#D9000000" }
+            GradientStop { position: 1; color: "#00000000" }
+        }
+    }
+
     ColumnLayout {
+        id: statusHeader
         anchors.left: storyFrame.left
         anchors.right: storyFrame.right
         anchors.top: parent.top
@@ -421,7 +499,9 @@ Item {
                 Layout.fillWidth: true
                 spacing: 0
                 Label {
+                    Layout.fillWidth: true
                     text: root.currentGroup.sender_name || qsTr("Unknown contact")
+                    elide: Text.ElideRight
                     color: "#FFFFFF"
                     font.pixelSize: 16
                     font.weight: Font.Medium
@@ -433,38 +513,103 @@ Item {
                 }
             }
             ThemedToolButton {
+                id: pauseButton
+                objectName: "statusPauseButton"
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 44
+                focusPolicy: Qt.StrongFocus
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: closeButton
+                KeyNavigation.backtab: replySendButton
+                iconSource: Qt.resolvedUrl(root.manuallyPaused ? "icons/play.svg" : "icons/pause.svg")
+                iconTint: "#FFFFFF"
+                Accessible.name: root.manuallyPaused ? qsTr("Resume status") : qsTr("Pause status")
+                ToolTip.visible: hovered
+                ToolTip.text: Accessible.name
+                background: Rectangle {
+                    radius: 22
+                    color: parent.hovered ? "#66000000" : "#33000000"
+                    border.width: parent.visualFocus ? 2 : 0
+                    border.color: "#FFFFFF"
+                }
+                onClicked: root.manuallyPaused = !root.manuallyPaused
+            }
+            ThemedToolButton {
+                id: closeButton
+                objectName: "statusCloseButton"
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                focusPolicy: Qt.StrongFocus
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: previousButton
+                KeyNavigation.backtab: pauseButton
                 iconSource: Qt.resolvedUrl("icons/close.svg")
                 iconTint: "#FFFFFF"
                 Accessible.name: qsTr("Close status viewer")
-                background: Rectangle { radius: 22; color: parent.hovered ? "#33FFFFFF" : "transparent" }
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Close status viewer (Escape)")
+                background: Rectangle {
+                    radius: 22
+                    color: parent.hovered ? "#66000000" : "#33000000"
+                    border.width: parent.visualFocus ? 2 : 0
+                    border.color: "#FFFFFF"
+                }
                 onClicked: root.close()
             }
         }
     }
 
-    Rectangle {
+    ThemedToolButton {
+        id: previousButton
+        objectName: "statusPreviousButton"
+        KeyNavigation.priority: KeyNavigation.BeforeItem
+        KeyNavigation.tab: nextButton
+        KeyNavigation.backtab: closeButton
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         anchors.leftMargin: 24
         width: 52
         height: 52
-        radius: 26
-        color: previousArea.containsMouse ? "#99000000" : "#66000000"
-        Label { anchors.centerIn: parent; text: "‹"; color: "white"; font.pixelSize: 38 }
-        MouseArea { id: previousArea; anchors.fill: parent; hoverEnabled: true; onClicked: root.previous() }
+        focusPolicy: Qt.StrongFocus
+        iconSource: Qt.resolvedUrl("icons/chevron-right.svg")
+        // The same Lucide chevron, facing toward the preceding status.
+        contentItem.rotation: 180
+        iconTint: "#FFFFFF"
+        Accessible.name: qsTr("Previous status")
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+        onClicked: root.previous()
+        background: Rectangle {
+            radius: 26
+            color: parent.hovered ? "#99000000" : "#66000000"
+            border.width: parent.visualFocus ? 2 : 0
+            border.color: "#FFFFFF"
+        }
     }
-    Rectangle {
+    ThemedToolButton {
+        id: nextButton
+        objectName: "statusNextButton"
+        KeyNavigation.priority: KeyNavigation.BeforeItem
+        KeyNavigation.tab: replyEmojiButton
+        KeyNavigation.backtab: previousButton
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         anchors.rightMargin: 24
         width: 52
         height: 52
-        radius: 26
-        color: nextArea.containsMouse ? "#99000000" : "#66000000"
-        Label { anchors.centerIn: parent; text: "›"; color: "white"; font.pixelSize: 38 }
-        MouseArea { id: nextArea; anchors.fill: parent; hoverEnabled: true; onClicked: root.advance() }
+        focusPolicy: Qt.StrongFocus
+        iconSource: Qt.resolvedUrl("icons/chevron-right.svg")
+        iconTint: "#FFFFFF"
+        Accessible.name: qsTr("Next status")
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+        onClicked: root.advance()
+        background: Rectangle {
+            radius: 26
+            color: parent.hovered ? "#99000000" : "#66000000"
+            border.width: parent.visualFocus ? 2 : 0
+            border.color: "#FFFFFF"
+        }
     }
 
     Timer { id: replyFeedbackTimer; interval: 2800; onTriggered: root.replyFeedback = "" }
