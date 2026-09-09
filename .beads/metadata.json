@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "whatsappgo",
+  "project_id": "426b4332-747c-4ce8-b5e1-e67a82c20be0"
+}

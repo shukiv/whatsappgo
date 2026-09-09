@@ -10,3 +10,9 @@
 .vscode/
 compile_commands.json
 core.*
+.gitnexus
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/
