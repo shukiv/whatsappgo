@@ -32,6 +32,19 @@ RowLayout {
         default: return ""
         }
     }
+    // Only the sections this component draws have empty-state artwork. A section
+    // it never shows, such as the media library, must not ask the icon provider
+    // for a name that is not bundled while the binding passes through it.
+    readonly property string emptyIcon: {
+        switch (section) {
+        case "status": return "status"
+        case "calls": return "calls"
+        case "channels": return "channels"
+        case "communities": return "communities"
+        case "profile": return "profile"
+        default: return ""
+        }
+    }
     readonly property var sectionModel: {
         switch (section) {
         case "status": return backend.statusUpdates
@@ -365,10 +378,11 @@ RowLayout {
                 radius: 43
                 color: Theme.surfaceMuted
                 TintedIcon {
+                    objectName: "featureSectionEmptyIcon"
                     anchors.centerIn: parent
                     width: 42
                     height: 42
-                    source: root.section + ".svg"
+                    source: root.emptyIcon === "" ? "" : root.emptyIcon + ".svg"
                     tint: Theme.icon
                 }
             }

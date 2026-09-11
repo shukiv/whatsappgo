@@ -69,7 +69,7 @@ type Gateway interface {
 	DeleteChat(context.Context, string) error
 	ClearChat(context.Context, string) error
 	SetChatDisappearing(context.Context, string, int64) error
-	ExportChat(context.Context, string, string) (string, error)
+	ExportChat(context.Context, string, string, bool) (string, error)
 	PrivacySettings(context.Context) (model.PrivacySettings, error)
 	SetPrivacySetting(context.Context, string, string) (model.PrivacySettings, error)
 	SetAbout(context.Context, string) error
@@ -164,7 +164,7 @@ func (Unavailable) ClearChat(context.Context, string) error { return ErrUnavaila
 
 func (Unavailable) SetChatDisappearing(context.Context, string, int64) error { return ErrUnavailable }
 
-func (Unavailable) ExportChat(context.Context, string, string) (string, error) {
+func (Unavailable) ExportChat(context.Context, string, string, bool) (string, error) {
 	return "", ErrUnavailable
 }
 

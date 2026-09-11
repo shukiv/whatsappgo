@@ -2,10 +2,10 @@
 
 Date: 2026-09-03 (measurements refreshed 2026-09-04; second pass 2026-09-04 against the matching account)
 
-Implementation status updated: 2026-09-03 after the compact-geometry,
-responsive-filter, scroll-anchor, media, and popup-boundary changes. A finding
-marked **implemented** has code and automated coverage in this repository; it
-does not imply that unrelated PWA actions in the same surface exist.
+Latest implementation update: 2026-09-11; dated entries below retain their
+historical scope. **Implemented** means code plus recorded validation, which
+may use disposable fixtures outside the repository. It does not imply release
+availability or that unrelated PWA actions in the same surface exist.
 
 ## Objective
 
@@ -26,6 +26,93 @@ The full traversal ledger is in [WHATSAPP_WEB_PWA_CONTROL_INVENTORY.md](./WHATSA
 WhatsApp Web changes frequently. The dimensions below are a reference snapshot, not immutable constants. Preserve the relationships and density before chasing single pixels.
 
 ## Executive result
+
+### Desktop reliability regressions — 2026-09-11 (unreleased)
+
+All ten additional bugs found during `whatsappgo-uel` are fixed and their Beads
+issues closed. These are reliability repairs, not ten new parity features.
+
+| Issue | Corrected behavior |
+| --- | --- |
+| `whatsappgo-10j` | Emoticon conversion preserves intervening mention identity and one-step Undo |
+| `whatsappgo-bau` | Failed edits retain drafts; pending saves and late editor responses are guarded |
+| `whatsappgo-tvl` | Newer preference/notification events win over stale reads/writes without stranding busy state |
+| `whatsappgo-c1b` | New image/text clipboard intent supersedes pending image copies |
+| `whatsappgo-uwf` | Failed automatic chat/status downloads become retryable after a bounded cooldown |
+| `whatsappgo-n7z` | Remote unstar updates loaded results, including an in-flight snapshot race |
+| `whatsappgo-c15` | Chat-scoped confirmations dismiss on ownership change and reject stale acceptance |
+| `whatsappgo-1ea` | Same-status refresh preserves reply draft and pending state |
+| `whatsappgo-0o6` | Library reload rejects stale append pages and duplicate concurrent appends |
+| `whatsappgo-998` | Inactive/hidden conversation receipts defer until the desktop chat is visible and active |
+
+Evidence: `/tmp/whatsappgo-fix-ten.sSHVgI/` contains `probe.cpp`, `run.sh`,
+`red.log`, `light-final.log`, `dark-final.log`, `ctest-final.log`, Go test/vet
+logs and `edit-light.png` / `edit-dark.png`. The ten original reproductions
+failed before changes. The final fixture passed 33 checks per theme (66 total),
+including 23 additional controls per theme for Undo, retry, cooldown, late
+responses and navigation. All 44 CTests and Go tests/vet passed. Previous
+poll/playback and video fixtures passed 19 and 25 checks per theme respectively.
+Temporary evidence paths are local session artifacts, not portable test assets.
+
+This batch used the actual native UI with isolated synthetic RPC and clipboard
+state; **no fresh live WhatsApp Web comparison or real account mutation was
+performed**. No repository test infrastructure was added. The refreshed
+GitNexus aggregate scan reported HIGH scope in shared RPC paths; manual diff
+review and full-suite validation accompanied the impact checks. QML call edges
+remain partly unresolved. Light/dark failed-edit screenshots were inspected.
+
+`whatsappgo-qva` is also fixed: the feature panel mapped the selected section
+name straight to an icon filename, so selecting the media library requested
+`image://lucide/media/<tint>`, which is not bundled (the rail itself uses
+`gallery`). The panel now resolves only the sections it draws and asks for
+nothing otherwise. Evidence: `/tmp/whatsappgo-nav-icons.KfXqnN/` holds
+`probe.cpp`, `run.sh`, `red-light.log` (six provider failures before the
+change), `final-light.log` / `final-dark.log` (10 checks each, zero failures),
+`mutation-m1.log`, `ctest-final.log`, and Go test/vet logs. GitNexus could not resolve this QML component, so the blast
+radius was reviewed by hand: `FeatureSection.qml` has one instantiation, in
+`Main.qml`.
+
+### Application audit — 2026-09-11 (unreleased)
+
+A review of the application for defects, separate from parity work, found six
+and all are fixed. Three came from reading the code, one from a measured
+fixture, and two were confirmed against this machine's session.
+
+| Issue | Corrected behavior |
+| --- | --- |
+| `whatsappgo-hps` | Conversation sends refuse the status broadcast address and other non-conversation addresses |
+| `whatsappgo-1p9` | A refused desktop notification is handed back to the window instead of disappearing |
+| `whatsappgo-8ez` | Notification bodies are escaped for servers that advertise `body-markup` |
+| `whatsappgo-93y` | A full alert table evicts its oldest entry instead of silencing calls and security alerts |
+| `whatsappgo-3i9` | Bulk starring reads the list at most once a second and never blanks it |
+| `whatsappgo-qva` | The feature panel requests only artwork that is bundled |
+
+Evidence: `/tmp/whatsappgo-nav-icons.KfXqnN/` (navigation icons, 10 checks per theme), `/tmp/whatsappgo-starred.2xxPw7/` (starred bursts:
+10 events 320 ms apart produced 10 reads and 10 blanks before the change, 5
+reads and none after), `/tmp/whatsappgo-sweep.nXAJIn/` (every rail destination and 35 dialogs opened with
+no Qt warning), `/tmp/whatsappgo-hostile.gCjAma/` (10 000-character bodies, unbroken words, bidirectional
+overrides, markup, absurd media sizes: no warning, no bubble wider than the
+window). Go regressions cover the refused destinations, the export guard, the
+alert table, the escaping and the delivery fallback; each was checked with a
+mutation that restores the old behaviour and fails its test. 44 CTests, Go
+tests and vet pass.
+
+Checked and found correct while auditing, recorded so the next review does not
+repeat it: no interpolated SQL and clamped query limits; HTML escaping at every
+rich-text and styled-text binding, including mention links and search
+highlighting; the link-preview fetcher's DNS pinning, address filtering and
+redirect revalidation; the update downloader's own asset name, checksum and
+host allowlist; single-connection WAL SQLite.
+
+The status-broadcast refusal is a behaviour change for API clients that relied
+on `message.send` reaching that address; `status.post` is the supported way.
+`chat.export` now refuses to replace an existing file unless the caller passes
+`replace`, which the desktop does after its save dialog has asked.
+
+The fixes are in the uncommitted local build, not the existing v0.1.8 draft
+artifacts. No tag, release or running user process was changed. See
+[Unreleased changes](releases/UNRELEASED.md) for behavior and limitations;
+release-artifact review remains separately tracked by `whatsappgo-o2g`.
 
 ### Live-Web 50-acceptance-item batch — 2026-09-11
 

@@ -69,6 +69,30 @@ They use the existing owner-only local transport and active profile.
 cannot overwrite a newer vote. Revoked/view-once messages never expose these
 details. API clients must not automatically retry sends after an uncertain reply.
 
+## Where a message may be sent
+
+`message.send`, `message.send_media`, `message.send_contact`, `message.forward`
+and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
+(`@g.us`). Every other address is refused.
+
+This matters for a bot that answers what it receives. A status update arrives
+as an ordinary `message.upsert` whose `chat_jid` is `status@broadcast`, so
+replying to the chat an event came from would publish a status update to your
+contacts rather than write to a person. Publish a status deliberately with
+`status.post`, which carries the audience.
+
+Channel addresses (`@newsletter`) are refused for the same reason. This client
+follows, mutes and creates channels - `channel.follow`, `channel.mute`,
+`channel.create`, `channel.follow_link` - but has no method for posting to one,
+so a send addressed to a channel was never going to reach anybody.
+
+Replying to a status is unaffected: address the reply to the person who posted
+it and name the status in `reply_chat_jid`.
+
+```bash
+whatsappctl call message.send '{"chat_jid":"15551234567@s.whatsapp.net","text":"nice photo","reply_to":"STATUS_ID","reply_chat_jid":"status@broadcast"}'
+```
+
 ## Group mentions
 
 `message.send` accepts an optional `mentions` array of `{ "jid": "456@lid",
@@ -290,6 +314,7 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `chat.read` | `chat_jid`, `sender_jid`, `message_ids`, `timestamp` | Send receipts and clear local unread state |
 | `chat.typing` | `chat_jid`, `typing` | Set composing/paused presence |
 | `chat.avatar` | `chat_jid` | Fetch/cache avatar and return its path |
+| `chat.export` | `chat_jid`, `path`, optional `replace` | Write the conversation to an absolute path, owner-only. An existing file is kept and the call fails unless `replace` is true; the desktop passes it after its save dialog has asked. |
 | `statuses.list` | `{}` | Active (last 24 hours) status stories grouped by sender; each group contains resolved identity fields and chronologically ordered `items` |
 | `calls.list` | `{}` | Locally synchronized call records |
 | `channels.list` | `{}` | Followed channels |
@@ -302,7 +327,7 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `history.request` / `history.refresh` | `chat_jid`, `limit` | Ask WhatsApp for older/recent linked-device history |
 | `message.get` | `chat_jid`, `message_id` | One stored message with its reactions and quoted line, for applying a small change without reloading a page |
 | `message.download` | `chat_jid`, `message_id` | Download/cache media and return its local path |
-| `message.send` | `chat_jid`, `text`, `reply_to`, `reply_chat_jid`, `link_preview` | Sent message; `reply_chat_jid` identifies a quoted message stored in a different chat |
+| `message.send` | `chat_jid`, `text`, `reply_to`, `reply_chat_jid`, `link_preview` | Sent message; `reply_chat_jid` identifies a quoted message stored in a different chat. `chat_jid` must be a person or a group |
 | `message.send_media` | `chat_jid`, `path`, `caption`, `reply_to`, `voice`, `document`, `gif`, `sticker` | Sent media message; path must be local. `document` preserves file semantics, `gif` sends a looping MP4 (up to 16 MiB), `sticker` sends WebP (up to 1 MiB, at most 512×512). These flags and `voice` are mutually exclusive and default to false. Stickers have no caption. |
 | `sticker.send` | `chat_jid`, `message_id`, `to_chat_jid`, optional `reply_to` | Reuse a non-deleted sticker from this account's history. Restores/downloads the original WebP, not its PNG display thumbnail; does not add a forwarded label. |
 | `message.react` | `chat_jid`, `message_id`, `sender_jid`, `emoji` | Add reaction; empty emoji removes it |

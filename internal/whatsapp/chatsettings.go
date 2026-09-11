@@ -85,14 +85,24 @@ func (c *Client) DeleteChat(ctx context.Context, chatJID string) error {
 // so it is theirs to choose; it is still required to be absolute, and the file
 // is created with owner-only permissions because a transcript is as private as
 // the conversation it came from.
-func (c *Client) ExportChat(ctx context.Context, chatJID, path string) (string, error) {
+func (c *Client) ExportChat(ctx context.Context, chatJID, path string, replace bool) (string, error) {
 	if strings.TrimSpace(chatJID) == "" {
 		return "", errors.New("chat_jid is required")
 	}
 	if !filepath.IsAbs(path) {
 		return "", errors.New("an absolute destination path is required")
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	// Exclusive creation is the default because the caller may be a script
+	// with a mistyped path. A window that has already asked the reader about
+	// replacing the file says so, and only then is an existing file truncated.
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if replace {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	file, err := os.OpenFile(path, flags, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return "", errors.New("a file already exists at that path; choose another name or pass replace")
+	}
 	if err != nil {
 		return "", err
 	}

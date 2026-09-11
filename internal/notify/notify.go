@@ -59,7 +59,10 @@ type Desktop struct {
 	uiSocket          string
 	closeOnce         sync.Once
 	serverPlaysSound  bool
-	playSound         func()
+	// bodyMarkup is what the session's notification server said about the
+	// body it is handed: a server that advertises it parses markup there.
+	bodyMarkup bool
+	playSound  func()
 
 	// liveNotifications are the ids this daemon has posted and not yet seen
 	// closed, oldest first. chatNotifications maps a chat to its live id so a
@@ -111,9 +114,11 @@ func NewDesktop(profile string) (*Desktop, error) {
 			CallWithContext(context.Background(), notificationInterface+".GetCapabilities", 0).
 			Store(&capabilities); err == nil {
 			for _, capability := range capabilities {
-				if capability == "sound" {
+				switch capability {
+				case "sound":
 					d.serverPlaysSound = true
-					break
+				case "body-markup":
+					d.bodyMarkup = true
 				}
 			}
 		}
@@ -212,6 +217,7 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	if d.canOpenChat() {
 		actions = []string{"default", "Open"}
 	}
+	message.Body = d.presentedBody(message.Body)
 	appIcon, hints := freedesktopMessage(message)
 	// A chat's previous notification is replaced rather than stacked on, which
 	// is what WhatsApp itself does and what keeps one busy group from filling
@@ -245,6 +251,22 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 		go d.playSound()
 	}
 	return nil
+}
+
+// presentedBody prepares message text for the session's notification server.
+//
+// A server that advertises body-markup parses a small HTML subset in the body.
+// Message text and push names are written by other people, so for those
+// servers the text is escaped rather than interpreted: a body holding "5 < 6"
+// must not be read as an unclosed tag, and a tag somebody typed must not
+// become formatting, a link, or an image this computer fetches. A server
+// without the capability shows the text as it arrived, so it is left alone.
+// The summary is not markup on either kind of server.
+func (d *Desktop) presentedBody(body string) string {
+	if !d.bodyMarkup {
+		return body
+	}
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(body)
 }
 
 func (d *Desktop) postNotification(ctx context.Context, replaces uint32, appIcon string, message Message, actions []string, hints map[string]dbus.Variant) (uint32, error) {

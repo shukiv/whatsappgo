@@ -681,6 +681,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 				}
 				if err := c.notifier.Notify(context.Background(), notification); err != nil {
 					log.Printf("deliver desktop notification: %v", err)
+					c.notificationFailed(notification)
 				}
 			}(notify.Message{ChatJID: msg.ChatJID, Title: notifyTitle, Body: body, IconPath: chatInfo.AvatarPath, Silent: !preferences["sounds"] || !preferences[category+"_sound"]})
 		}

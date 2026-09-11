@@ -75,6 +75,23 @@ Before reporting a vulnerability, avoid attaching device databases, QR payloads,
 pairing codes, message contents, or logs containing JIDs. Rotate the linked
 device from the official WhatsApp application if credentials may be exposed.
 
+## Desktop notifications
+
+A notification carries the sender's name and, when previews are enabled, the
+message text. Both are written by other people. The freedesktop specification
+lets a notification server parse a small markup subset in the body when it
+advertises `body-markup`, so for those servers the body is escaped before it is
+handed over: text is shown as it was written, and a tag somebody typed does not
+become formatting, a link, or an image this computer would fetch. The summary is
+not markup on either kind of server. The desktop portal is given plain text.
+
+A notification the service refuses - a full server queue answers every client
+that way - is handed back to the window, which presents it through the system
+tray instead. On Linux that tray balloon is drawn by the same notification
+service, so a server that is refusing everything may refuse the replacement too.
+Without a tray there is no second chance either, and the message is then only
+visible in the application.
+
 ## Local spelling and photo preparation
 
 Optional composer spell checking sends words only to the installed local

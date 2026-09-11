@@ -17,6 +17,9 @@ import (
 	"github.com/shukiv/whatsappgo/internal/notify"
 )
 
+// maxTrackedAlerts bounds the deduplication table.
+const maxTrackedAlerts = 256
+
 func freshAlert(timestamp time.Time) bool {
 	age := time.Since(timestamp)
 	return !timestamp.IsZero() && age >= -30*time.Second && age < 5*time.Minute
@@ -82,6 +85,7 @@ func (c *Client) notifyStatusUpdate(evt *waEvents.Message, msg model.Message) {
 			defer cancel()
 			if err := c.notifier.Notify(ctx, notification); err != nil {
 				log.Printf("deliver status alert: %v", err)
+				c.notificationFailed(notification)
 			}
 		}()
 	}
@@ -124,11 +128,35 @@ func (c *Client) claimAlert(key string) bool {
 			delete(c.callAlerts, k)
 		}
 	}
-	if _, seen := c.callAlerts[key]; seen || len(c.callAlerts) >= 256 {
+	if _, seen := c.callAlerts[key]; seen {
 		return false
+	}
+	// The table bounds memory, not alerts. A quiet status update must never be
+	// the reason an incoming call goes unannounced, so a full table gives up
+	// its oldest entry instead of refusing the new alert.
+	for len(c.callAlerts) >= maxTrackedAlerts {
+		oldestKey, oldest := "", time.Time{}
+		for candidate, seen := range c.callAlerts {
+			if oldest.IsZero() || seen.Before(oldest) {
+				oldestKey, oldest = candidate, seen
+			}
+		}
+		delete(c.callAlerts, oldestKey)
 	}
 	c.callAlerts[key] = time.Now()
 	return true
+}
+
+// notificationFailed tells the window that a notification the daemon claimed
+// to have presented never reached the screen, so the window presents its own.
+// A notification server whose queue is full refuses every client this way, and
+// the alternative is a reader who is told nothing at all.
+func (c *Client) notificationFailed(notification notify.Message) {
+	c.emit(gateway.Event{Name: "notification.received", Data: map[string]string{
+		"chat_jid": notification.ChatJID, "title": notification.Title,
+		"body": notification.Body, "avatar_path": notification.IconPath,
+		"handled": "0",
+	}})
 }
 
 func (c *Client) notifyReaction(evt *waEvents.Message, reaction model.Reaction) {
@@ -210,11 +238,13 @@ func (c *Client) deliverAlert(chatJID, fallbackTitle, body string, silent bool) 
 	if c.notifier == nil {
 		return
 	}
+	notification := notify.Message{ChatJID: chatJID, Title: title, Body: body, IconPath: chat.AvatarPath, Silent: silent}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := c.notifier.Notify(ctx, notify.Message{ChatJID: chatJID, Title: title, Body: body, IconPath: chat.AvatarPath, Silent: silent}); err != nil {
+		if err := c.notifier.Notify(ctx, notification); err != nil {
 			log.Printf("deliver desktop alert: %v", err)
+			c.notificationFailed(notification)
 		}
 	}()
 }
