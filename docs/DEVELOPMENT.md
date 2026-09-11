@@ -234,9 +234,35 @@ real messages. Intake tests use `httptest` and must never file test tickets in
 the production tracker. See [bug reporting](BUG_REPORTING.md) for runtime key
 configuration and the corrected findings.
 
-When fixing a bug, add a focused regression that fails before the production
-change. Storage tests use in-memory SQLite. WhatsApp adapter tests exercise
-event-to-model transformations without contacting WhatsApp.
+When fixing a bug, establish a focused regression that fails before the
+production change. Follow the active repository/user policy on adding tests:
+the recent parity and reliability batches used disposable fixtures outside the
+repository rather than adding test infrastructure. Storage tests use in-memory
+SQLite. WhatsApp adapter tests exercise event-to-model transformations without
+contacting WhatsApp.
+
+### Isolated desktop race checks
+
+Exercise asynchronous failures through the actual QML UI with a synthetic local
+RPC server, not a live account. Give each run separate `XDG_RUNTIME_DIR`,
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME` directories; keep runtime
+permissions at 0700. Use `WHATSAPPGO_DISABLE_PROFILE_MONITORS=1` for these probes.
+Only fake-RPC probes use `WHATSAPPGO_BACKEND=/bin/false` to prevent launching a
+real account backend. **Do not apply that override to the full CTest suite**:
+lifecycle tests need to launch their test daemon. Run CTest serially (`-j1`)
+when desktop tests compete for resources.
+
+Allow at least 300 ms for popup transitions before asserting settled visibility.
+Test both visible dismissal and the absence of an unintended RPC mutation.
+Reorder server replies deliberately; cover same-chat reloads, profile changes,
+newer clipboard intent, pending edits, refresh-preserved status replies and
+hidden-window receipts followed by foreground activation. Mention tests must
+assert outgoing recipient metadata, not just the visible name, and exercise Undo.
+
+The 2026-09-11 reliability batch passed 33 focused checks per theme, 44 CTests,
+Go tests and vet. These are recorded results, not additional permanent CTest
+targets. See the [audit evidence](WHATSAPP_WEB_PWA_GAP_AUDIT.md#desktop-reliability-regressions--2026-09-11-unreleased)
+and [desktop state rules](ARCHITECTURE.md#desktop-request-ordering-and-ownership).
 
 ## Repository map
 
@@ -412,3 +438,11 @@ described in the root README.
 
 Release builds receive `WHATSAPPGO_VERSION` from the tag. Do not cut a tag from
 a dirty worktree or silently omit uncommitted fixes from its source snapshot.
+
+Keep post-tag repairs in a `docs/releases/UNRELEASED.md` file until a reviewed
+commit and new artifacts contain them, then rename it to the tag being cut. Do
+not retroactively describe an existing draft binary as including worktree-only
+fixes. The 2026-09-11 reliability repairs are tagged as
+[v0.1.9](releases/v0.1.9.md) and are not in the v0.1.8 draft artifacts;
+building and publishing artifacts for the new tag remain separate, explicitly
+authorized steps.

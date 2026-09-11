@@ -1,5 +1,26 @@
 # Troubleshooting
 
+For fixes newer than the packaged version, check the
+[v0.1.9 release notes](releases/v0.1.9.md). Build the source containing those
+fixes, then quit and reopen that build when ready. A rebuild does not update an
+already running process; preserve unsent work before restarting.
+
+## A failed edit loses my correction
+
+The unreleased editor keeps the draft and shows an inline error after a failed
+save. Save is available again once the request finishes. If you still see the
+dialog disappear on rejection, verify which executable/version is running.
+Closing the dialog or navigating elsewhere is not draft persistence. After a
+connection loss, check the message before retrying an uncertain save.
+
+## Messages become read while the window is hidden
+
+The unreleased desktop defers conversation receipts until the chat is active
+and visible again. It then acknowledges loaded incoming messages; it does not
+track whether each bubble has individually been seen. Check whether the phone
+or another linked device has the chat open before attributing a read receipt
+to this desktop. Notification delivery and read receipts are separate behaviors.
+
 ## `make: cmake: No such file or directory`
 
 CMake and the native development packages are missing. On Debian 13, install
@@ -273,6 +294,12 @@ Press **Download** and wait for the message to update to a cached path. Old
 media may no longer be downloadable from WhatsApp. Confirm the cache directory
 is writable and has free space. Clipboard image sending requires an image MIME
 type, not only copied filename text.
+
+The unreleased build releases failed automatic-download requests so a later
+request can retry. Wait at least two seconds before retrying; the cooldown
+prevents rapid repeated requests. This applies to chat and status media but
+cannot recover bytes WhatsApp no longer supplies. Do not delete profile
+databases to retry a download.
 
 ## Safe diagnostic information
 

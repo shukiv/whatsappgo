@@ -6,6 +6,7 @@
 #include <QQuickTextDocument>
 #include <QRegularExpression>
 #include <QTextCharFormat>
+#include <QTextCursor>
 #include <QStandardPaths>
 #include <QSet>
 #include <QTextBlock>
@@ -378,11 +379,6 @@ void ComposerText::convertEmoticons(bool all)
     const auto replacements = emoticons(text, completedEnd);
     if (replacements.isEmpty())
         return;
-    const int start = replacements.first().start;
-    const int end = replacements.last().start + replacements.last().length;
-    QString replacement = text.mid(start, end - start);
-    for (auto it = replacements.crbegin(); it != replacements.crend(); ++it)
-        replacement.replace(it->start - start, it->length, it->text);
     const auto mappedPosition = [&replacements](int position) {
         int delta = 0;
         for (const auto &edit : replacements) {
@@ -394,13 +390,19 @@ void ComposerText::convertEmoticons(bool all)
         }
         return position + delta;
     };
-    // Go through TextEdit's native input path, not HTML or direct document
-    // mutation (unsupported by QQuickTextDocument on Qt 6.5). One undo step.
+    // Replace only the tokens, leaving mention formats between them intact.
+    // TextEdit still owns input; the document cursor only groups undo commands.
+    auto *quickDocument = m_editor->property("textDocument").value<QQuickTextDocument *>();
+    QTextCursor undoGroup(quickDocument ? quickDocument->textDocument() : nullptr);
+    undoGroup.beginEditBlock();
     QMetaObject::invokeMethod(m_editor, "deselect");
-    m_editor->setProperty("cursorPosition", cursor);
-    QInputMethodEvent event;
-    event.setCommitString(replacement, start - cursor, end - start);
-    QCoreApplication::sendEvent(m_editor, &event);
+    for (auto it = replacements.crbegin(); it != replacements.crend(); ++it) {
+        m_editor->setProperty("cursorPosition", it->start);
+        QInputMethodEvent event;
+        event.setCommitString(it->text, 0, it->length);
+        QCoreApplication::sendEvent(m_editor, &event);
+    }
+    undoGroup.endEditBlock();
     if (selectionStart == selectionEnd) {
         m_editor->setProperty("cursorPosition", mappedPosition(cursor));
     } else {

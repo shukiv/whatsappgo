@@ -28,6 +28,13 @@ ApplicationWindow {
     palette.link: Theme.primary
 
     property string transientError: ""
+    Binding {
+        target: backend
+        property: "conversationActive"
+        value: window.visible && window.active && window.visibility !== Window.Minimized
+               && window.activeSection === "chats" && !window.statusViewerRequested
+               && !chatMediaViewer.previewActive && !videoOverlay.active
+    }
     property string transientNotice: ""
     readonly property string bugReportUrl: "https://github.com/shukiv/whatsappgo/issues"
     property var openBugReportUrl: function(url) { return Qt.openUrlExternally(url) }
@@ -823,6 +830,9 @@ ApplicationWindow {
             window.showSection("status")
         }
         function onProfileChanged() {
+            // Cancel both active playback and downloads waiting to start it.
+            // The shared player must never carry media into another account.
+            Playback.stop()
             window.currentAnimationId = ""
             starredMessagesDialog.close()
             starredMessagesDialog.chatJid = ""
@@ -3171,6 +3181,7 @@ ApplicationWindow {
         z: 100
         active: window.activeSection === "status" || window.statusViewerRequested
         sourceComponent: StatusViewer {
+            profile: backend.profile
             groups: backend.statusUpdates
             onCloseRequested: window.closeStatusViewer()
             onMediaRequested: messageId => backend.ensureStatusMedia(messageId)
@@ -4159,6 +4170,7 @@ ApplicationWindow {
     }
     WhatsAppDialog {
         id: pinDialog
+        chatScoped: true
         objectName: "pinMessageDialog"
         property string messageId: ""
         property string senderJid: ""
@@ -4222,6 +4234,7 @@ ApplicationWindow {
     }
     WhatsAppDialog {
         id: disappearingDialog
+        chatScoped: true
         objectName: "disappearingMessagesDialog"
         title: qsTr("Disappearing messages")
         subtitle: qsTr("New messages in this chat disappear after the chosen time. Messages already sent are not affected.")
@@ -4282,22 +4295,24 @@ ApplicationWindow {
 
     WhatsAppDialog {
         id: conversationClearDialog
+        chatScoped: true
         objectName: "conversationClearDialog"
         title: qsTr("Clear this chat?")
         subtitle: qsTr("The messages are removed from this computer and from your other devices. The chat itself stays in the list.")
         acceptText: qsTr("Clear chat")
         destructive: true
-        onAccepted: backend.clearChat(backend.selectedChat.jid)
+        onAccepted: backend.clearChat(confirmationChat)
     }
 
     WhatsAppDialog {
         id: conversationDeleteDialog
+        chatScoped: true
         objectName: "conversationDeleteDialog"
         title: qsTr("Delete this chat?")
         subtitle: qsTr("The conversation is removed from this computer and from your other devices. This cannot be undone.")
         acceptText: qsTr("Delete")
         destructive: true
-        onAccepted: backend.deleteChat(backend.selectedChat.jid)
+        onAccepted: backend.deleteChat(confirmationChat)
     }
     GroupCreationDialog {
         id: newGroupDialog
@@ -4309,6 +4324,7 @@ ApplicationWindow {
     }
     WhatsAppDialog {
         id: forwardDialog
+        chatScoped: true
         objectName: "forwardMessageDialog"
         acceptName: "forwardSendAction"
         property string messageId: ""
@@ -4407,21 +4423,46 @@ ApplicationWindow {
     }
     WhatsAppDialog {
         id: editDialog
+        chatScoped: true
         objectName: "editMessageDialog"
         property string messageId: ""
         property string ownerProfile: ""
         property string ownerChat: ""
+        property bool saving: false
+        property int saveSerial: 0
+        property string saveError: ""
         title: qsTr("Edit message")
-        acceptText: qsTr("Save")
-        acceptEnabled: editField.text.trim() !== "" && ownerProfile === backend.profile && ownerChat === String(backend.selectedChat.jid || "")
+        subtitle: saveError
+        closeOnAccept: false
+        acceptText: saving ? qsTr("Saving…") : qsTr("Save")
+        acceptEnabled: !saving && editField.text.trim() !== "" && ownerProfile === backend.profile && ownerChat === String(backend.selectedChat.jid || "")
         onOpened: {
+            ++saveSerial
+            saving = false
+            saveError = ""
             ownerProfile = backend.profile
             ownerChat = String(backend.selectedChat.jid || "")
             editField.forceActiveFocus()
         }
         onAccepted: {
             if (settingsPane.replaceEmoticons) editedText.convertEmoticons(true)
-            backend.editMessage(messageId, editField.text)
+            saving = true
+            saveError = ""
+            backend.editMessage(messageId, editField.text, String(++saveSerial))
+        }
+        Connections {
+            target: backend
+            function onMessageEditFinished(token, profile, chat, messageId, success, error) {
+                if (!editDialog.visible || token !== String(editDialog.saveSerial)
+                    || profile !== editDialog.ownerProfile || chat !== editDialog.ownerChat
+                    || messageId !== editDialog.messageId) return
+                editDialog.saving = false
+                if (success) editDialog.close()
+                else {
+                    editDialog.saveError = error || qsTr("Could not save this edit. Please try again.")
+                    editField.forceActiveFocus()
+                }
+            }
         }
         Rectangle {
             Layout.fillWidth: true
@@ -4437,6 +4478,7 @@ ApplicationWindow {
                 ScrollBar.vertical: OverlayScrollBar {}
             TextArea {
                 id: editField
+                readOnly: editDialog.saving
                 padding: 8
                 background: null
                 color: Theme.text
@@ -4469,6 +4511,7 @@ ApplicationWindow {
     }
     WhatsAppDialog {
         id: deleteDialog
+        chatScoped: true
         objectName: "deleteMessageDialog"
         property string messageId: ""
         property string senderJid: ""

@@ -16,6 +16,21 @@ Popup {
     property bool showAccept: true
     property bool showCancel: true
     property bool acceptEnabled: true
+    property bool closeOnAccept: true
+    // Opt-in ownership for operations whose target is the selected chat.
+    property bool chatScoped: false
+    property string confirmationChat: ""
+    property string confirmationProfile: ""
+    readonly property bool confirmationMatches: !chatScoped ||
+        (confirmationChat !== "" && confirmationChat === String(backend.selectedChat.jid || "")
+         && confirmationProfile === backend.profile)
+    onAboutToShow: {
+        if (chatScoped) {
+            confirmationChat = String(backend.selectedChat.jid || "")
+            confirmationProfile = backend.profile
+        }
+    }
+    onConfirmationMatchesChanged: if (visible && !confirmationMatches) close()
     // Named so a caller's own tests and accessibility tooling can address the
     // confirming action by what it does, not by its place in the dialog.
     property string acceptName: "dialogAcceptButton"
@@ -42,8 +57,9 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     function accept() {
+        if (!visible || !acceptEnabled || !confirmationMatches) return
         root.accepted()
-        root.close()
+        if (closeOnAccept) root.close()
     }
 
     function reject() {

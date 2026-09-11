@@ -13,7 +13,38 @@ Rectangle {
     property int previousVisibility: Window.Windowed
     property bool ownsFullscreen: false
     readonly property var host: root.Window.window
-    readonly property var message: backend.messageById(Playback.currentId)
+    property string ownerChat: String(backend.selectedChat.jid || "")
+    property string ownerProfile: String(backend.profile)
+    property int messageRevision: 0
+    property bool sourceWasLoaded: false
+    readonly property var message: {
+        const revision = messageRevision
+        return backend.messageById(Playback.currentId)
+    }
+    onMessageChanged: Qt.callLater(validateMessage)
+    function validateMessage() {
+        if (!Playback.videoActive) return
+        if (message.id) sourceWasLoaded = true
+        if ((message.id && (message.revoked || message.kind !== "video"))
+                || (sourceWasLoaded && !message.id))
+            closeViewer()
+    }
+    Connections {
+        target: backend.messages
+        function onDataChanged() { root.messageRevision++ }
+        function onModelReset() { root.messageRevision++ }
+        function onRowsRemoved() { root.messageRevision++ }
+    }
+    Connections {
+        target: backend
+        function onSelectedChatChanged() {
+            if (root.ownerChat !== String(backend.selectedChat.jid || "")) root.closeViewer()
+        }
+        function onProfileChanged() {
+            if (root.ownerProfile !== String(backend.profile)) root.closeViewer()
+        }
+        function onSharedContentChanged() { root.messageRevision++ }
+    }
     readonly property string title: String(message.sender_name || backend.selectedChat.title || qsTr("Video"))
     readonly property string caption: String(message.body || message.media_name || "")
     function clock(value) {
@@ -51,6 +82,9 @@ Rectangle {
         else closeViewer()
     }
     Component.onCompleted: {
+        // Capture ownership, rather than following the newly selected chat.
+        ownerChat = String(backend.selectedChat.jid || "")
+        ownerProfile = String(backend.profile)
         previousFocus = host ? host.activeFocusItem : null
         Playback.videoSurface = surface
         forceActiveFocus()

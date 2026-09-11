@@ -275,7 +275,7 @@ keeps the three-download limit intact after reconnection.
 
 ### Desktop request ordering and ownership
 
-These rules describe the [unreleased reliability fixes](releases/UNRELEASED.md):
+These rules describe the [v0.1.9 reliability fixes](releases/v0.1.9.md):
 
 - Preferences and notification settings have separate request generations and
   event revisions. A response predating an update event cannot overwrite its

@@ -118,6 +118,8 @@ or video calls is not supported.
 
 ## Documentation
 
+- [v0.1.9 release notes](docs/releases/v0.1.9.md): the reliability fixes in this
+  tag and their validation, distinct from published release artifacts
 - [Installation guide](INSTALL.md): dependencies, source build, per-user and
   system-wide installation, updates, and uninstalling
 - [User guide](docs/USER_GUIDE.md): pairing, accounts, messaging, history,

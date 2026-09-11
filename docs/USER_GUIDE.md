@@ -1,5 +1,9 @@
 # User guide
 
+This guide describes the current source implementation. The
+[v0.1.9 release notes](releases/v0.1.9.md) identify fixes not included in the
+existing v0.1.8 draft artifacts; rebuilding alone does not update a running app.
+
 ## Polls, invitations and community tools
 
 Choose **Poll** in the attachment menu to review a question and 2–12 distinct
@@ -9,6 +13,8 @@ Results reflect the votes this device has received, not a server-wide tally.
 The open poll refreshes periodically. Votes waiting for a decryption key are
 labelled, and old polls without saved details may need another history sync.
 Unsupported poll variants report an error rather than accepting an invalid vote.
+If saving a vote fails, the selected choices remain available with an error so
+you can retry. Check the result before retrying an uncertain connection failure.
 
 Received **Event** cards open the name, dates, location and description, including
 a cancellation flag when present. RSVP, event creation and edits are unavailable.
@@ -185,6 +191,8 @@ In a group, type **@** to find a member by name or phone number. Choose with
 the mouse, or use **Up/Down** and **Enter/Tab**. Selecting inserts a highlighted
 name; it does not send the message. **Escape** closes the suggestions first.
 Selected tags retain their identities through undo/redo and per-chat drafts.
+Converting emoticons before or after a tag also preserves its recipient;
+Undo reverses that conversion as one operation.
 Editing a tagged name or pasting its plain text does not silently tag someone.
 Received tags show locally known names in bubbles and chat previews, including
 older numeric tags when a cached identity can resolve them. Unknown identities
@@ -266,6 +274,15 @@ actions instead of displaying controls that would fail silently.
 - Select text inside a bubble and copy it normally. HTTP and HTTPS links open
   in the system browser.
 
+When **Save** fails in the message editor, the correction remains in the open
+dialog with an error. Retry after addressing the error; saving disables further
+submissions until it finishes. A successful save closes the editor. Cancelling
+or switching chats/accounts closes it without submitting another request.
+
+Chat-scoped confirmations are bound to the conversation and account that opened
+them. Switching either dismisses a pending confirmation instead of applying it
+to the newly selected chat. Closing a dialog cannot undo a request already sent.
+
 ## Keyboard
 
 Long drafts expand the message textbox up to its height limit, then scroll
@@ -330,6 +347,9 @@ before closing search.
 **Starred messages** searches the latest 100 loaded stars by text, sender,
 filename, or chat name. Activating a result locates that message in its source
 conversation. Older-star pagination is not available yet.
+Removing a star on another device also removes it from the loaded results;
+an older pending refresh cannot reintroduce that item. Reloading the global
+media library similarly ignores pages requested before the reload.
 
 In either a contact's shared-content drawer or **Media from all chats**, select
 items to star/unstar them or save their originals to Downloads. The toolbar
@@ -344,6 +364,9 @@ seek five seconds, M toggles mute, and F toggles fullscreen. Home/End on the
 volume slider select minimum/maximum volume. Escape leaves viewer-owned
 fullscreen first, then closes the video. These settings do not change voice-note
 volume or speed.
+Switching accounts stops active playback and prevents a pending download from
+starting playback in the next account. A video viewer closes if its source
+chat/account changes or the source message is revoked or removed.
 
 Click a **GIF** or an animated sticker to play it directly in the conversation;
 click again to stop it. GIFs loop silently. Only one chat animation runs at a
@@ -481,9 +504,12 @@ supports a caption and basic rotation before sending. The caption field grows
 as you type, then scrolls for longer text while keeping the cursor visible.
 Use **Shift+Enter** for another line and **Enter** to send the image. The preview
 image shrinks as needed so the caption and send controls remain accessible.
-Downloaded documents and media are cached on disk. **Download** fetches an attachment that has not yet
-been cached; **Open** launches the cached file with its default Linux
-application.
+Downloaded documents and media are cached on disk. Click a document card to
+save the original file to Downloads; there is no separate **Open** button on
+the card. Photos and supported audio/video open inside WhatsAppGo. Explicit
+download actions remain available for uncached attachments. Failed automatic
+chat/status downloads can be requested again after a two-second cooldown;
+expired or unavailable media may still fail.
 
 Text, quoted-reply context, and pasted-image previews remain available if a send
 fails. This includes the selected reply for file attachments and voice notes;
@@ -495,6 +521,8 @@ persistent outbox; check delivery before retrying after a connection loss.
 
 Copying an image from a message places decoded image data on the desktop
 clipboard, not merely its local filename.
+A newer image or text copy takes precedence over an older image download that
+finishes afterward.
 
 ## Creating a group
 
@@ -622,6 +650,9 @@ choosing emoji or waiting for a reply to send also pauses automatic advancement.
 The explicit pause choice remains in effect when you move to another status,
 and resets when you reopen the viewer. Controls remain legible over bright
 photos and videos, and the overlay blocks input to the chat underneath.
+Refreshing the same status or loading its media does not erase a reply draft
+or reset a pending reply. Moving to a different status or account resets the
+reply state; it is not saved as a persistent outbox.
 
 ### Viewing chat photos
 
@@ -745,7 +776,12 @@ WhatsAppGo safely starts the trusted system copy when its backend starts.
 Clicking a notification opens its conversation. When the desktop provides a
 system tray, WhatsAppGo also places its icon there with connection status,
 **Open/Hide**, and **Quit WhatsAppGo** actions. Minimizing hides the window
-behind that icon. Opening a chat sends read receipts for its incoming messages.
+behind that icon. In the current development build, opening a chat or receiving
+messages there sends read receipts only while the conversation is active and
+visible. Receipts wait while the window is hidden, minimized, inactive, or
+showing another section or a photo/video/status viewer. Returning to the chat
+acknowledges its loaded incoming messages, not only the individual bubbles
+currently onscreen. Another linked device can still mark messages read.
 Typing and presence updates depend on what the other account and WhatsApp expose.
 Typing and audio-recording indicators clear immediately when a stop/offline event
 arrives, or after 10 seconds without a fresh activity update if the stop event is

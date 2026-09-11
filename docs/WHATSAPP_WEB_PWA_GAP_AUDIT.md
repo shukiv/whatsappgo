@@ -109,10 +109,10 @@ on `message.send` reaching that address; `status.post` is the supported way.
 `chat.export` now refuses to replace an existing file unless the caller passes
 `replace`, which the desktop does after its save dialog has asked.
 
-The fixes are in the uncommitted local build, not the existing v0.1.8 draft
-artifacts. No tag, release or running user process was changed. See
-[Unreleased changes](releases/UNRELEASED.md) for behavior and limitations;
-release-artifact review remains separately tracked by `whatsappgo-o2g`.
+The fixes are committed and cut as `v0.1.9`; the v0.1.8 draft artifacts do not
+contain them. No release was published and no running user process was changed.
+See [v0.1.9](releases/v0.1.9.md) for behavior and limitations; release-artifact
+review remains separately tracked by `whatsappgo-o2g`.
 
 ### Live-Web 50-acceptance-item batch — 2026-09-11
 

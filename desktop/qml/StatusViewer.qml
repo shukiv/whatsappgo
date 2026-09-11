@@ -8,6 +8,7 @@ Item {
     id: root
     objectName: "statusViewer"
     property var groups: []
+    property string profile: ""
     property bool opened: false
     property int groupIndex: 0
     property int itemIndex: 0
@@ -23,6 +24,8 @@ Item {
     readonly property var currentGroup: groups && groupIndex >= 0 && groupIndex < groups.length ? groups[groupIndex] : ({})
     readonly property var currentItems: currentGroup.items || []
     readonly property var currentItem: itemIndex >= 0 && itemIndex < currentItems.length ? currentItems[itemIndex] : ({})
+    readonly property string currentIdentity: currentItem.id
+        ? profile + "/" + String(currentGroup.sender_jid || "") + "/" + String(currentItem.id) : ""
     readonly property bool videoReady: currentItem.kind === "video" && Boolean(currentItem.media_path)
     readonly property bool interactionPaused: manuallyPaused || replyPending || replyComposer.activeFocus || statusEmojiPicker.opened
     signal closeRequested()
@@ -162,14 +165,17 @@ Item {
             statusPlayer.stop()
         }
     }
-    onCurrentItemChanged: {
+    onCurrentIdentityChanged: {
         replyText = ""
         replyPending = false
         replyFeedback = ""
+        replyFailed = false
         lastReplyRecipient = ""
         lastReplyStatusId = ""
         lastReplyText = ""
         statusEmojiPicker.close()
+    }
+    onCurrentItemChanged: {
         if (opened)
             restartPlayback()
     }

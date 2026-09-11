@@ -35,7 +35,16 @@ WhatsAppDialog {
             if(!error && !root.dirty) root.selected=(result.options || []).filter(o=>o.selected).map(o=>o.name)
         }
     }
-    FeatureRequest { id: write; client: root.client; onFinished: (result,error) => { if(!error) {root.dirty=false;root.submitted=false;root.refresh()} } }
+    FeatureRequest {
+        id: write; client: root.client
+        onFinished: (result,error) => {
+            root.submitted = false
+            if (!error) {
+                root.dirty = false
+                root.refresh()
+            }
+        }
+    }
     Label { Layout.fillWidth: true; text: root.kind==="poll" ? (read.result.question || "") : (read.result.name || ""); textFormat: Text.PlainText; color: Theme.text; font.bold: true; wrapMode: Text.Wrap }
     BusyIndicator { running: read.busy || write.busy; visible: running; Layout.alignment: Qt.AlignHCenter }
     ScrollView {

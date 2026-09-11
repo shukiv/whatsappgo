@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.8
+Version:        0.1.9
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -44,6 +44,11 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Fri Sep 11 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.9-1
+- Refuse sends to addresses that are not conversations; guard chat export
+- Hand refused notifications back to the window and escape markup bodies
+- Bound the alert table and fix stale dialogs, drafts, media pages and receipts
+
 * Fri Sep 11 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.8-1
 - Expand groups, mentions, media controls, search and keyboard navigation
 - Fix pinned-chat synchronization, sticker recovery and menu placement
