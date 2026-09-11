@@ -10,6 +10,8 @@ Rectangle {
     signal closeRequested()
     signal chatSelected(string jid, string title)
     signal phoneRequested(string phone)
+    signal groupRequested()
+    signal communityRequested()
     signal unavailableRequested(string feature)
 
     readonly property var filteredChats: {
@@ -151,6 +153,7 @@ Rectangle {
 
                     ItemDelegate {
                         required property var modelData
+                        objectName: "newChatAction_" + modelData.action
                         width: contactsList.width
                         height: 72
                         leftPadding: 16
@@ -188,6 +191,11 @@ Rectangle {
                             if (modelData.action === "contact") {
                                 phoneEditor.visible = true
                                 phoneField.forceActiveFocus()
+                            } else if (modelData.action === "group") {
+                                root.groupRequested()
+                            } else if (modelData.action === "community") {
+                                forceActiveFocus(Qt.MouseFocusReason)
+                                root.communityRequested()
                             } else {
                                 root.unavailableRequested(modelData.title)
                             }

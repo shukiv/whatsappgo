@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(WhatsAppGo VERSION 0.1.7 LANGUAGES CXX)
+project(WhatsAppGo VERSION 0.1.8 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,6 +84,7 @@ qt_add_resources(whatsappgo "bundled-fonts"
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/Playback.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/SearchHighlight.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/MessageSummary.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/RowTime.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(whatsappgo
@@ -99,6 +100,8 @@ qt_add_qml_module(whatsappgo
         src/stickermaker.h
         src/composertext.cpp
         src/composertext.h
+        src/composermentions.cpp
+        src/composermentions.h
         src/videosurface.cpp
         src/videosurface.h
         src/stickeranimation.cpp
@@ -107,15 +110,19 @@ qt_add_qml_module(whatsappgo
         qml/Main.qml
         qml/Theme.qml
         qml/Playback.qml
+        qml/VideoViewer.qml
         qml/SearchHighlight.qml
+        qml/MessageSummary.qml
         qml/RowTime.qml
         qml/SearchResultsPane.qml
         qml/ChatSearchPanel.qml
+        qml/MessageDateDialog.qml
         qml/PairingPage.qml
         qml/ChatListDelegate.qml
         qml/ChatFilterBar.qml
         qml/ChatFilterChip.qml
         qml/MediaLibraryPane.qml
+        qml/BulkMediaActions.qml
         qml/AccountSwitcherButton.qml
         qml/StatusAvatar.qml
         qml/StatusPage.qml
@@ -159,6 +166,20 @@ qt_add_qml_module(whatsappgo
         qml/GroupInfoRow.qml
         qml/GroupMemberRow.qml
         qml/GroupActions.qml
+        qml/GroupMetadataDialog.qml
+        qml/GroupPhotoDialog.qml
+        qml/FeatureRequest.qml
+        qml/PollCreationDialog.qml
+        qml/InteractiveMessageDialog.qml
+        qml/GroupInvitationDialog.qml
+        qml/CommunityDetailsDialog.qml
+        qml/GroupInviteQRDialog.qml
+        qml/StatusAudienceDialog.qml
+        qml/GroupPermissionsDialog.qml
+        qml/GroupJoinRequestsDialog.qml
+        qml/GroupCreationDialog.qml
+        qml/MentionPicker.qml
+        qml/CommunityCreationDialog.qml
 		qml/MessageInfoDrawer.qml
     RESOURCES
         qml/icons/PoweredBy_200px-Black_HorizLogo.png
@@ -210,6 +231,9 @@ qt_add_qml_module(whatsappgo
         qml/icons/archive.svg
         qml/icons/back.svg
         qml/icons/mute.svg
+        qml/icons/volume.svg
+        qml/icons/volume-off.svg
+        qml/icons/fullscreen.svg
         qml/icons/chats.svg
         qml/icons/sun.svg
         qml/icons/moon.svg

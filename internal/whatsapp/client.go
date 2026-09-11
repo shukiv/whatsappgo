@@ -274,31 +274,21 @@ func (c *Client) SendText(ctx context.Context, req gateway.TextRequest) (model.M
 	if err != nil {
 		return model.Message{}, err
 	}
-	payload := &waE2E.Message{}
-	if req.ReplyTo == "" && req.Preview.URL == "" {
-		payload.Conversation = proto.String(req.Text)
-	} else {
-		quoteChatJID := req.ReplyChatJID
-		if quoteChatJID == "" {
-			quoteChatJID = req.ChatJID
-		}
-		extended := &waE2E.ExtendedTextMessage{Text: proto.String(req.Text), ContextInfo: c.replyContext(ctx, quoteChatJID, req.ReplyTo)}
-		if req.Preview.URL != "" {
-			extended.MatchedText = proto.String(req.Preview.URL)
-			extended.Title = proto.String(req.Preview.Title)
-			extended.Description = proto.String(req.Preview.Description)
-			extended.JPEGThumbnail = req.Preview.Thumbnail
-			if len(req.Preview.Thumbnail) > 0 {
-				extended.PreviewType = waE2E.ExtendedTextMessage_IMAGE.Enum()
-			}
-		}
-		payload.ExtendedTextMessage = extended
+	req.Mentions, err = model.NormalizeMentions(req.ChatJID, req.Text, req.Mentions)
+	if err != nil {
+		return model.Message{}, err
 	}
+	quoteChatJID := req.ReplyChatJID
+	if quoteChatJID == "" {
+		quoteChatJID = req.ChatJID
+	}
+	payload := textMessagePayload(req, c.replyContext(ctx, quoteChatJID, req.ReplyTo))
 	resp, err := c.wa.SendMessage(ctx, chat, payload)
 	if err != nil {
 		return model.Message{}, err
 	}
 	result := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: req.Text, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, LinkURL: req.Preview.URL, LinkTitle: req.Preview.Title, LinkDescription: req.Preview.Description}
+	result.Mentions = req.Mentions
 	// A reply sent from here describes what it answers, the same way a
 	// received one does; without this the reader's own reply is the one bubble
 	// with nothing above it.

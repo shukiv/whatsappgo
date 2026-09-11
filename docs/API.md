@@ -45,6 +45,45 @@ protocol does not offer a supported address-book write operation. It saves a
 local WhatsAppGo label so a bot can identify the conversation without inventing
 an unsupported phone-side capability.
 
+## Interactive messages and community operations
+
+These RPC methods are exposed through API discovery and the generic RPC command.
+They use the existing owner-only local transport and active profile.
+
+| Method | Parameters | Result / safeguards |
+| --- | --- | --- |
+| `poll.info` | `chat_jid`, `message_id` | Question, options with `name/count/selected`, selection `limit`, `pending` decryption flag. Local received totals only. |
+| `poll.create` | `chat_jid`, `question`, `options`, `multiple` | Sent ID. Question ≤255 characters; 2–12 distinct answers, each ≤100. |
+| `poll.vote` | `chat_jid`, `message_id`, `options` | Replace own selected option names; empty array retracts. Uses encrypted votes. |
+| `event.info` | `chat_jid`, `message_id` | Name, description, millisecond start/end, cancellation and location. No RSVP. |
+| `group.invite_preview` | `link` | JID, name, description, participant count, approval requirement; does not join. |
+| `group.join_previewed` | `link`, `expected_jid` | Rechecks identity before joining. `joined:false` means membership was not confirmed. |
+| `group.invite_qr` | `chat_jid` | Current `link` and `image` PNG data URI; checks invitation permissions. |
+| `community.info` | `chat_jid` | Description, `can_manage`, `linked` and `available` groups. |
+| `community.description` | `chat_jid`, `description`, `previous` | Current-admin and previous-value checks; ≤2048 characters. |
+| `community.link` | `chat_jid`, `child_jid`, `action` (`link`/`unlink`) | Rechecks permissions; protects announcement groups. |
+| `status.audience_contacts` | none | Audience `type` and resolved `people`; read-only. |
+
+`poll.updated` identifies `chat_jid` and `message_id`; `community.updated` identifies
+`jid`. Old encrypted votes are retained until their key arrives, and later history
+cannot overwrite a newer vote. Revoked/view-once messages never expose these
+details. API clients must not automatically retry sends after an uncertain reply.
+
+## Group mentions
+
+`message.send` accepts an optional `mentions` array of `{ "jid": "456@lid",
+"name": "Alice" }` entries. The destination must be a group (`@g.us`), and
+`text` must contain each member's whole wire token, such as `@456`. Only numeric
+`@lid` and `@s.whatsapp.net` identities are accepted, with at most 128 unique
+members. The name is display text; the member JID is encoded in WhatsApp's
+`ContextInfo.MentionedJID`. A typed `@Alice` without explicit metadata is plain
+text, not a notification. Mentions can accompany a quote and link preview.
+
+Message results retain the original wire `body` and expose optional `mentions`
+for display. Read-side name resolution uses local contact, account and PN/LID
+caches; old rows may receive display-only labels without changing their stored
+body. Revoked and view-once messages do not expose mention metadata.
+
 ## Share one contact card
 
 `contacts.shareable` searches locally stored direct contacts, including archived
@@ -81,6 +120,15 @@ whatsappctl events --event message.upsert |
 Stop it with `Ctrl+C`. A production bot should ignore its own messages, keep a
 deduplication set keyed by chat JID and message ID, rate-limit replies, and
 persist its last processed IDs before taking an external action.
+
+`chat.presence` carries `chat_jid`, normalized `sender_jid`, `state`
+(`composing` or `paused`), and `media` (`audio` for recording). Group composing
+events also carry `sender_name` when a local saved name, cached contact name, or
+known phone number is available. Names are optional plain text, not markup.
+PN/LID aliases are normalized using local mappings; an opaque LID is never
+advertised as a phone number. Track group activity by both chat and sender:
+one member pausing must not clear another member. Expire activity after ten
+seconds without a new composing event, and clear it on disconnection.
 
 ## Raw calls
 
@@ -223,11 +271,17 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `pairing.start` | `{}` | Start QR pairing and emit pairing events |
 | `pairing.phone` | `phone` | Return a phone-pairing code |
 | `account.logout` | `{}` | Unlink the profile; destructive |
-| `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array |
+| `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array; optional `last_message_sender_jid` and `last_message_sender_name` identify the preview's sender. Group sender names prefer locally saved contact names (including PN/LID aliases), then the message's push name. |
 | `chats.archived_count` | `{}` | Archived count |
 | `chats.unread_count` | `{}` | Exact unread-message total for the profile's visible chats |
 | `chat.info` | `chat_jid` | Contact/chat metadata, phone alias, exact shared-content counts, and a six-item preview |
 | `group.info` | `chat_jid` | Live group description, creation metadata, participants, roles and permissions; requires a connected WhatsApp session |
+| `group.create` | `name`, `participants` | Create and return a group chat; name 1–100 Unicode characters, 1–1023 user JIDs; validates and deduplicates members before sending |
+| `group.set_info` | `chat_jid`, `field`, `value`, `previous` | Save `name` or `description`; checks fresh permissions and expected previous text; empty description removes it |
+| `group.set_photo` | `chat_jid`, `path` or `remove: true` | Set a prepared group photo or explicitly remove it; fresh membership/edit-info permission required |
+| `group.set_permission` | `chat_jid`, `field`, `value`, `previous` | Save one group permission; explicit boolean value/previous and current admin rights required |
+| `group.requests.list` | `chat_jid` | Current admins can read pending join requests, including applicant identity and request timestamp |
+| `group.requests.review` | `chat_jid`, `participant`, `requested_at`, `action` | Confirm one still-pending request with `approve` or `reject`; fresh admin and timestamp checks required |
 | `group.invite_link` | `chat_jid`, optional `reset` (default false) | `{ "link": "..." }`; permitted members can fetch, only admins can reset/revoke the old link |
 | `group.members` | `chat_jid`, `action`, `participants` | Add/remove/promote/demote 1–100 user JIDs; checks current membership and permissions; partial failures return an error |
 | `group.leave` | `chat_jid` | Leave the group; preserves local messages and media |
@@ -240,8 +294,10 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `calls.list` | `{}` | Locally synchronized call records |
 | `channels.list` | `{}` | Followed channels |
 | `communities.list` | `{}` | Joined communities |
+| `community.create` | `name` | Create a community and return its metadata; trimmed name 1–100 Unicode characters, no controls, requires a connected WhatsApp session |
 | `messages.list` | `chat_jid`, `before`, `before_id`, `limit` | Message page with pagination cursor; newest page also supplies `unread_count` and `first_unread_id` when available, for a stable unread divider |
 | `messages.search` | `query`, `limit` | Local text-search results |
+| `messages.on_date` | `chat_jid`, `start`, `end` | First locally stored message in the half-open millisecond range `[start,end)`. Returns `chat_jid` and `message_id` (empty if none). Supply local midnight and the next local midnight to preserve DST days. Read-only; rejects invalid ranges or intervals longer than 26 hours. |
 | `link.preview` | `text` | Open Graph metadata and thumbnail bytes |
 | `history.request` / `history.refresh` | `chat_jid`, `limit` | Ask WhatsApp for older/recent linked-device history |
 | `message.get` | `chat_jid`, `message_id` | One stored message with its reactions and quoted line, for applying a small change without reloading a page |
@@ -265,10 +321,91 @@ for the installed version.
 
 `group.info` returns `jid`, `name`, `description`, `created_at` (Unix milliseconds,
 zero if unknown), `creator`, `participant_count`, `participants`, `is_member`,
-`can_add`, `can_invite`, and `can_manage`. Each member has `jid`, `aliases`, `name`,
+`can_add`, `can_invite`, `can_manage`, `can_edit_info`, `can_edit_permissions`, and
+`permissions`. Each member has `jid`, `aliases`, `name`,
 `phone` (without `+`) and `avatar_path` when available, `is_self`, `is_admin`,
 and `is_owner`. LID and phone aliases refer to the same person. An uncached avatar
 can be requested using `chat.avatar`; group info does not download every photo.
+
+`group.set_info` requires the optional `gateway.GroupInfoEditor` capability.
+Names must contain 1–100 Unicode code points (not blank); descriptions can contain
+0–2048, including newlines. Unsupported control characters are rejected. Supply
+the original field text as `previous`, including an empty string when adding a
+description. A fresh group-info read checks membership, the admin-only edit rule,
+and whether that field changed since the editor opened. This is an optimistic
+preflight, not an atomic compare-and-swap for group names. Description writes also
+carry WhatsApp's current topic ID. Community/announcement and suspended groups
+are not editable through this route. An already-matching value succeeds without
+another write, making a retry after a lost acknowledgment harmless. Saving affects
+the real group for all members, not just the local title. Success emits
+`group.updated`; a rename also updates the cached title and emits `chat.updated`.
+
+`group.set_permission` requires the optional `gateway.GroupPermissionEditor`
+capability. `field` is one of `send_messages`, `edit_info`, `add_members`, or
+`approve_new_members`. Both `value` and `previous` must be explicit JSON booleans;
+omitted, null, and non-boolean values are rejected. The corresponding
+`group.info.permissions` map uses `true` for all members being allowed to
+send/edit/add, and for join approval being on. A missing key means unknown,
+not false; unknown settings cannot be edited.
+
+Each request reads fresh group metadata, checks current admin identity (including
+PN/LID aliases), and changes exactly one permission. Community containers,
+default announcement groups, suspended groups, and departed members are excluded.
+An already-matching value succeeds without another write; otherwise the original
+value must match. This is a preflight check, not an atomic server comparison.
+Success returns `{ "ok": true }`. The adapter emits `group.updated` after the
+attempt, including errors that might conceal a server-applied change. The desktop
+retains the choice/error and refreshes metadata; closing a pending dialog does
+not cancel a submitted write. Approval controls the joining policy only; it does
+not approve/reject individual pending requests.
+
+`group.set_photo` requires the optional `gateway.GroupPhotoEditor` capability.
+Supply a regular, complete 640×640 JPEG at `path` (at most 2 MiB), or an empty/
+omitted path with `remove: true`. Other combinations are rejected. The desktop
+prepares a private JPEG from a still JPEG/PNG, strips metadata, and leaves the
+original unchanged. It retains that private copy until a submitted RPC settles.
+
+The adapter reads fresh group metadata and verifies current membership and
+edit-info permission, including PN/LID self aliases and admins. Community
+containers, default announcement groups and suspended groups are excluded.
+The upstream picture update always uses the group's JID, never the empty
+own-profile target. This is a permission preflight, not a comparison against
+an expected previous photo ID. Upload requires a returned picture ID; removal
+accepts a successful empty response. Success returns
+`{ "ok": true, "avatar_path": "…" }` with the refreshed local avatar path,
+or an empty path for removal. Only this group's photo cache is removed.
+If the server change succeeds but local caching fails, the error explicitly says
+so. Uncertain responses require reopening Group info; no automatic retry occurs.
+`group.updated` is emitted after attempted writes, and `chat.updated` follows
+a fully successful cache update. Closing the dialog does not cancel submission.
+
+`group.requests.list` and `group.requests.review` require the optional
+`gateway.GroupRequestManager` capability. Both read fresh group metadata and
+require a current admin of an ordinary, non-suspended group (including PN/LID
+self aliases and super-admins). Departed members, community containers and
+default announcement groups cannot use these methods.
+
+The list response is `{ "requests": [] }`, with each row shaped as
+`{ "member": { "jid": "…", "name": "…", "phone": "…", "aliases": [] }, "requested_at": 1700000000000 }`.
+Member fields use the same identity model as `group.info.participants`; phone
+numbers are only supplied when known. Request times are Unix milliseconds.
+A zero timestamp means unavailable, not a request that can be reviewed.
+Rows are ordered oldest first. Requests are fetched live, not persisted locally.
+
+Review takes one user JID and the exact positive `requested_at` returned by the
+list, plus `action: "approve"` or `"reject"`. Before writing, the adapter reads
+the pending list again and requires that same identity and timestamp. Withdrawn
+or replaced requests fail without a write. This is a preflight check, **not an
+atomic server comparison**: the upstream update accepts the identity and action,
+not an expected timestamp. Success requires an acknowledgement for that specific
+applicant, without a participant error, and returns `{ "ok": true }`.
+
+An error or missing acknowledgement may conceal an applied change. The adapter
+emits `group.updated` after review attempts; the desktop refreshes group metadata
+and requires a fresh request list before another decision. It never retries a
+review automatically. Closing a pending confirmation does not cancel submission.
+Approving affects real group membership; rejecting dismisses that request without
+blocking the applicant. Account/chat changes invalidate desktop callbacks.
 
 `group.members.action` is one of `add`, `remove`, `promote`, or `demote`.
 Removing/changing your own role or the group owner's role is rejected; use

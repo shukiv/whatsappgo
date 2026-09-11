@@ -1,13 +1,19 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Templates as T
 import org.whatsappgo
 
 Popup {
     id: root
     default property alias menuItems: menuColumn.data
+    // Some callers parent their popup to a small button/filter row rather
+    // than the overlay. The window, not that anchor, bounds the usable menu.
+    readonly property Item viewportItem: Overlay.overlay || parent
 
     width: 229
     implicitHeight: menuColumn.implicitHeight + topPadding + bottomPadding
+    height: viewportItem && viewportItem.height > 0
+        ? Math.min(implicitHeight, Math.max(1, viewportItem.height - 16)) : implicitHeight
     padding: 5
     modal: false
     focus: true
@@ -28,21 +34,29 @@ Popup {
     property bool anchorAlignLeft: false
     property real anchorOffsetX: 0
 
+    function viewportBounds() {
+        if (!parent || !viewportItem)
+            return Qt.rect(0, 0, 0, 0)
+        const point = viewportItem.mapToItem(parent, 0, 0)
+        return Qt.rect(point.x, point.y, viewportItem.width, viewportItem.height)
+    }
+
     function positionUnder(item) {
         if (!item || !parent)
             return
         anchorItem = item
         const anchor = item.mapToItem(parent, 0, 0)
-        const shownHeight = Math.max(height, implicitHeight)
+        const shownHeight = height
         const wantedX = (anchorAlignLeft ? anchor.x : anchor.x + item.width - width) + anchorOffsetX
         const wantedY = anchorAbove
             ? anchor.y - shownHeight - 8
             : anchor.y + item.height + 2
-        x = parent.width >= width + 16
-            ? Math.max(8, Math.min(parent.width - width - 8, wantedX))
+        const bounds = viewportBounds()
+        x = bounds.width >= width + 16
+            ? Math.max(bounds.x + 8, Math.min(bounds.x + bounds.width - width - 8, wantedX))
             : wantedX
-        y = parent.height >= shownHeight + 16
-            ? Math.max(8, Math.min(parent.height - shownHeight - 8, wantedY))
+        y = bounds.height >= shownHeight + 16
+            ? Math.max(bounds.y + 8, Math.min(bounds.y + bounds.height - shownHeight - 8, wantedY))
             : wantedY
     }
 
@@ -67,15 +81,12 @@ Popup {
         }
         if (!parent)
             return
-        const shownHeight = Math.max(height, implicitHeight)
-        if (parent.width >= width + 16)
-            x = Math.max(8, Math.min(parent.width - width - 8, x))
-        // Only pull the menu upwards when the parent can actually hold it.
-        // Clamping unconditionally would drag a menu that is taller than its
-        // parent up to the top edge, which moves anchored menus (the account
-        // switcher opens below its chip) away from the control they belong to.
-        if (parent.height >= shownHeight + 16)
-            y = Math.max(8, Math.min(parent.height - shownHeight - 8, y))
+        const shownHeight = height
+        const bounds = viewportBounds()
+        if (bounds.width >= width + 16)
+            x = Math.max(bounds.x + 8, Math.min(bounds.x + bounds.width - width - 8, x))
+        if (bounds.height >= shownHeight + 16)
+            y = Math.max(bounds.y + 8, Math.min(bounds.y + bounds.height - shownHeight - 8, y))
     }
 
     // Some Popup content is polished only during open(), so run the clamp
@@ -101,6 +112,46 @@ Popup {
     onImplicitHeightChanged: {
         if (visible)
             clampToParent()
+    }
+
+    function focusMenuAction(edge, step) {
+        const actions = []
+        for (let child of menuColumn.children) {
+            if (child instanceof T.AbstractButton && child.visible && child.enabled)
+                actions.push(child)
+        }
+        if (actions.length === 0)
+            return
+        let index = edge < 0 ? actions.length - 1 : 0
+        if (step !== 0) {
+            for (let i = 0; i < actions.length; ++i) {
+                if (actions[i].activeFocus) {
+                    index = (i + step + actions.length) % actions.length
+                    break
+                }
+            }
+        }
+        const action = actions[index]
+        action.forceActiveFocus(Qt.TabFocusReason)
+        if (action.y < menuViewport.contentY)
+            menuViewport.contentY = action.y
+        else if (action.y + action.height > menuViewport.contentY + menuViewport.height)
+            menuViewport.contentY = Math.max(0, action.y + action.height - menuViewport.height)
+    }
+
+    // Connections keep the common behavior when a caller has its own
+    // onOpened handler (for example the attachment menu).
+    Connections {
+        target: root
+        function onOpened() {
+            menuViewport.contentY = 0
+            root.focusMenuAction(0, 0)
+        }
+    }
+    Connections {
+        target: root.viewportItem
+        function onWidthChanged() { if (root.visible) Qt.callLater(root.clampToParent) }
+        function onHeightChanged() { if (root.visible) Qt.callLater(root.clampToParent) }
     }
 
     enter: Transition {
@@ -129,8 +180,31 @@ Popup {
         }
     }
 
-    contentItem: Column {
-        id: menuColumn
-        spacing: 1
+    contentItem: Flickable {
+        id: menuViewport
+        objectName: "menuViewport"
+        contentWidth: width
+        contentHeight: menuColumn.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        ScrollBar.vertical: OverlayScrollBar {}
+        Keys.onPressed: event => {
+            if (event.modifiers !== Qt.NoModifier)
+                return
+            switch (event.key) {
+            case Qt.Key_Down: root.focusMenuAction(0, 1); break
+            case Qt.Key_Up: root.focusMenuAction(-1, -1); break
+            case Qt.Key_Home: root.focusMenuAction(0, 0); break
+            case Qt.Key_End: root.focusMenuAction(-1, 0); break
+            default: return
+            }
+            event.accepted = true
+        }
+        Column {
+            id: menuColumn
+            width: menuViewport.width
+            spacing: 1
+        }
     }
 }

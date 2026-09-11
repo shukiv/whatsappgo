@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS chats (
   muted_until INTEGER NOT NULL DEFAULT 0,
   pinned INTEGER NOT NULL DEFAULT 0,
   pinned_at INTEGER NOT NULL DEFAULT 0,
+  pin_action_at INTEGER NOT NULL DEFAULT 0,
   favorite INTEGER NOT NULL DEFAULT 0,
   archived INTEGER NOT NULL DEFAULT 0,
   is_group INTEGER NOT NULL DEFAULT 0,
@@ -114,6 +115,19 @@ CREATE TABLE IF NOT EXISTS reactions (
   PRIMARY KEY (chat_jid, message_id, sender_jid),
   FOREIGN KEY (chat_jid, message_id) REFERENCES messages(chat_jid, id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS poll_votes (
+ chat_jid TEXT NOT NULL REFERENCES chats(jid) ON DELETE CASCADE,
+ poll_id TEXT NOT NULL, sender TEXT NOT NULL, timestamp INTEGER NOT NULL,
+ pending INTEGER NOT NULL, data BLOB NOT NULL,
+ PRIMARY KEY(chat_jid,poll_id,sender)
+);
+CREATE TRIGGER IF NOT EXISTS delete_poll_votes AFTER DELETE ON messages BEGIN
+ DELETE FROM poll_votes WHERE chat_jid=OLD.chat_jid AND poll_id=OLD.id;
+END;
+CREATE TRIGGER IF NOT EXISTS revoke_poll_votes AFTER UPDATE OF revoked,kind ON messages
+ WHEN NEW.revoked=1 OR NEW.kind='view_once' BEGIN
+ DELETE FROM poll_votes WHERE chat_jid=NEW.chat_jid AND poll_id=NEW.id;
+END;
 CREATE TABLE IF NOT EXISTS message_pins (
   chat_jid TEXT PRIMARY KEY,
   message_id TEXT NOT NULL,
@@ -159,6 +173,9 @@ CREATE TABLE IF NOT EXISTS metadata (
 	if err := s.ensureColumn(ctx, "chats", "pinned_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "chats", "pin_action_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "chats", "read_through_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -168,7 +185,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 	if err := s.ensureColumn(ctx, "chats", "last_seen", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail"} {
+	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail", "mentions"} {
 		if err := s.ensureColumn(ctx, "messages", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
@@ -393,9 +410,12 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO chats
-	 (jid,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group,last_seen)
-	 SELECT ?,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,favorite,archived,is_group,last_seen
+	 (jid,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,pin_action_at,favorite,archived,is_group,last_seen)
+	 SELECT ?,title,local_title,avatar_path,last_message_id,last_message_at,last_message_preview,unread_count,read_through_at,muted_until,pinned,pinned_at,pin_action_at,favorite,archived,is_group,last_seen
 	 FROM chats WHERE jid=? ON CONFLICT(jid) DO NOTHING`, canonicalJID, aliasJID); err != nil {
+		return err
+	}
+	if err := mergeChatPinState(ctx, tx, canonicalJID, aliasJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE chats SET
@@ -408,14 +428,12 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 	 unread_count=MAX(unread_count,COALESCE((SELECT unread_count FROM chats WHERE jid=?),0)),
 	 read_through_at=MAX(read_through_at,COALESCE((SELECT read_through_at FROM chats WHERE jid=?),0)),
 	 muted_until=MAX(muted_until,COALESCE((SELECT muted_until FROM chats WHERE jid=?),0)),
-	 pinned=MAX(pinned,COALESCE((SELECT pinned FROM chats WHERE jid=?),0)),
-	 pinned_at=MAX(pinned_at,COALESCE((SELECT pinned_at FROM chats WHERE jid=?),0)),
 	 favorite=MAX(favorite,COALESCE((SELECT favorite FROM chats WHERE jid=?),0)),
 	 archived=MIN(archived,COALESCE((SELECT archived FROM chats WHERE jid=?),archived)),
 	 is_group=MAX(is_group,COALESCE((SELECT is_group FROM chats WHERE jid=?),0)),
 	 last_seen=MAX(last_seen,COALESCE((SELECT last_seen FROM chats WHERE jid=?),0))
 	 WHERE jid=?`, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID,
-		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
+		aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, aliasJID, canonicalJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, mergeAliasMessagesSQL, canonicalJID, aliasJID); err != nil {
@@ -426,6 +444,13 @@ func (s *Store) LinkChatAliases(ctx context.Context, canonicalJID, aliasJID stri
 		return err
 	}
 	if err := redactViewOnceTx(ctx, tx, canonicalJID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO poll_votes(chat_jid,poll_id,sender,timestamp,pending,data)
+ SELECT ?,poll_id,sender,timestamp,pending,data FROM poll_votes AS v WHERE chat_jid=?
+ AND NOT EXISTS(SELECT 1 FROM messages WHERE chat_jid=? AND id=v.poll_id AND (revoked=1 OR kind='view_once'))
+ ON CONFLICT(chat_jid,poll_id,sender) DO UPDATE SET timestamp=excluded.timestamp,pending=excluded.pending,data=excluded.data
+ WHERE excluded.timestamp>poll_votes.timestamp OR (excluded.timestamp=poll_votes.timestamp AND poll_votes.pending=1 AND excluded.pending=0)`, canonicalJID, aliasJID, canonicalJID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO reactions(chat_jid,message_id,sender_jid,emoji,timestamp)
@@ -462,11 +487,11 @@ const mergeAliasMessagesSQL = `INSERT INTO messages
  (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,
  media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,starred,
- forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once)
+ forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once,mentions)
  SELECT id,?,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,
  media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,starred,
- forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once
+ forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once,mentions
  FROM messages WHERE chat_jid=?
  ON CONFLICT(chat_jid,id) DO UPDATE SET
  sender_jid=COALESCE(NULLIF(messages.sender_jid,''),excluded.sender_jid),
@@ -478,6 +503,10 @@ const mergeAliasMessagesSQL = `INSERT INTO messages
    WHEN messages.edited THEN messages.body WHEN excluded.edited THEN excluded.body
    ELSE COALESCE(NULLIF(messages.body,''),excluded.body) END,
  edited=MAX(messages.edited,excluded.edited),revoked=MAX(messages.revoked,excluded.revoked),
+ mentions=CASE WHEN messages.revoked OR excluded.revoked OR messages.kind='view_once' OR excluded.kind='view_once' THEN ''
+   WHEN messages.edited THEN messages.mentions WHEN excluded.edited THEN excluded.mentions
+   WHEN messages.body='' THEN excluded.mentions
+   WHEN messages.body=excluded.body THEN COALESCE(NULLIF(messages.mentions,''),excluded.mentions) ELSE messages.mentions END,
  from_me=MAX(messages.from_me,excluded.from_me),
  status=CASE WHEN messages.status='played' OR excluded.status='played' THEN 'played'
    WHEN messages.status='read' OR excluded.status='read' THEN 'read'
@@ -521,6 +550,9 @@ const mergeAliasMessagesSQL = `INSERT INTO messages
 
 func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle string, incrementUnread bool) error {
 	msg.ChatJID = s.canonicalChatJID(ctx, msg.ChatJID)
+	if msg.Revoked {
+		msg.Mentions = nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -561,8 +593,8 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messages
-	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,forwarding_score,gif_playback,reply_view_once)
-	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,forwarding_score,gif_playback,reply_view_once,mentions)
+	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(chat_jid,id) DO UPDATE SET
   sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,timestamp=excluded.timestamp,
 	  -- A deletion is a tombstone. History synchronisation redelivers the
@@ -575,6 +607,10 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 	  body=CASE WHEN messages.revoked=1 THEN messages.body
 	   WHEN messages.edited=1 AND excluded.edited=0 THEN messages.body
 	   ELSE excluded.body END,
+	  mentions=CASE WHEN messages.revoked OR excluded.revoked OR excluded.kind='view_once' THEN ''
+	   WHEN messages.edited=1 AND excluded.edited=0 THEN messages.mentions
+	   WHEN messages.body=excluded.body THEN COALESCE(NULLIF(messages.mentions,''),excluded.mentions)
+	   ELSE excluded.mentions END,
 	  from_me=excluded.from_me,
 	  status=CASE
 	   WHEN messages.status='played' THEN messages.status
@@ -623,7 +659,7 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		msg.ReplyTo, msg.Edited, msg.Revoked, msg.MediaMIME, msg.MediaName, msg.MediaPath, msg.MediaThumbnail, msg.MediaSize,
 		msg.LinkURL, msg.LinkTitle, msg.LinkDescription, msg.LinkThumbnail, msg.MediaDuration, packWaveform(msg.AudioWaveform),
 		msg.ContactName, msg.ContactPhone, msg.ContactCount, msg.Latitude, msg.Longitude,
-		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt, msg.ForwardingScore, msg.GIFPlayback, msg.ReplyViewOnce)
+		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt, msg.ForwardingScore, msg.GIFPlayback, msg.ReplyViewOnce, packMentions(msg.Mentions))
 	if err != nil {
 		return err
 	}
@@ -714,7 +750,8 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
  END,
  COALESCE(m.kind,''),COALESCE(m.from_me,0),COALESCE(m.status,''),COALESCE(m.media_duration,0),
  COALESCE((SELECT GROUP_CONCAT(cl.label_id) FROM chat_labels cl WHERE cl.chat_jid=c.jid),''),
- c.unread_count,c.muted_until,c.pinned,c.pinned_at,c.favorite,c.archived,c.is_group,c.disappearing_seconds
+ c.unread_count,c.muted_until,c.pinned,c.pinned_at,c.favorite,c.archived,c.is_group,c.disappearing_seconds,COALESCE(m.mentions,''),
+ COALESCE(m.sender_jid,''),COALESCE(m.sender_name,'')
 	FROM chats c
 	LEFT JOIN messages m ON m.chat_jid=c.jid AND m.id=(
   SELECT latest.id FROM messages latest
@@ -727,21 +764,46 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	}
 	defer rows.Close()
 	result := make([]model.Chat, 0)
+	mentionRows := make([]string, 0)
 	for rows.Next() {
 		var c model.Chat
-		var labelIDs string
+		var labelIDs, mentions string
 		if err := rows.Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview,
 			&c.LastMessageKind, &c.LastMessageFromMe, &c.LastMessageStatus, &c.LastMessageDuration, &labelIDs,
 			&c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup,
-			&c.DisappearingSeconds); err != nil {
+			&c.DisappearingSeconds, &mentions, &c.LastMessageSenderJID, &c.LastMessageSenderName); err != nil {
 			return nil, err
 		}
 		if labelIDs != "" {
 			c.LabelIDs = strings.Split(labelIDs, ",")
 		}
 		result = append(result, c)
+		mentionRows = append(mentionRows, mentions)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range result {
+		// Resolve only the participant of the selected latest message. A local
+		// contact name wins over their push name, including PN/LID aliases.
+		// Do this after closing rows: the store uses a single DB connection.
+		c := &result[i]
+		if c.IsGroup && !c.LastMessageFromMe && c.LastMessageSenderJID != "" {
+			if sender, err := s.GetChat(ctx, c.LastMessageSenderJID); err == nil {
+				name := strings.TrimSpace(sender.Title)
+				if name != "" && name != sender.JID && name != displayJID(sender.JID) && name != "+"+displayJID(sender.JID) {
+					c.LastMessageSenderName = name
+				}
+			}
+		}
+		m := s.ResolveMentionNames(ctx, model.Message{ChatJID: result[i].JID, Kind: result[i].LastMessageKind,
+			Body: result[i].LastMessagePreview, Mentions: unpackMentions(mentionRows[i])})
+		result[i].LastMessagePreview = model.MentionDisplayText(m.Body, m.Mentions)
+	}
+	return result, nil
 }
 
 func (s *Store) GetChat(ctx context.Context, jid string) (model.Chat, error) {
@@ -1049,7 +1111,7 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
  m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
  m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
  m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,m.starred,m.forwarding_score,
- COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0),m.gif_playback,m.reply_view_once
+ COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0),m.gif_playback,m.reply_view_once,m.mentions
  FROM messages m LEFT JOIN messages q ON q.chat_jid=m.chat_jid AND q.id=m.reply_to
  WHERE m.chat_jid=? AND (m.timestamp,m.id)<(?,?) AND m.kind NOT IN ('unknown','')
  AND NOT (m.kind='system' AND m.body='' AND m.revoked=0) ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, beforeID, limit+1)
@@ -1060,17 +1122,18 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
 	items := make([]model.Message, 0, limit+1)
 	for rows.Next() {
 		var m model.Message
-		var quotedBody, quotedKind string
+		var quotedBody, quotedKind, mentions string
 		var waveform []byte
 		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe,
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize,
 			&m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
 			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore,
-			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe, &m.GIFPlayback, &m.ReplyViewOnce); err != nil {
+			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe, &m.GIFPlayback, &m.ReplyViewOnce, &mentions); err != nil {
 			return model.MessagePage{}, err
 		}
 		m.AudioWaveform = unpackWaveform(waveform)
+		m.Mentions = unpackMentions(mentions)
 		if m.ReplyTo != "" {
 			m.ReplyPreview = preview(model.Message{Kind: quotedKind, Body: quotedBody})
 			m.ReplyViewOnce = m.ReplyViewOnce || quotedKind == "view_once"
@@ -1104,6 +1167,9 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
 	}
 	if err := s.attachReactions(ctx, chatJID, items); err != nil {
 		return model.MessagePage{}, err
+	}
+	for i := range items {
+		items[i] = s.ResolveMentionNames(ctx, items[i])
 	}
 	page.Messages, page.HasMore, page.NextBefore, page.NextBeforeID = items, hasMore, next, nextID
 	return page, nil
@@ -1163,14 +1229,19 @@ func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (mode
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	var m model.Message
 	var waveform []byte
+	var mentions string
 	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
  reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
- contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,starred,forwarding_score,gif_playback,reply_view_once
+ contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,starred,forwarding_score,gif_playback,reply_view_once,mentions
  FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 		&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
-		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore, &m.GIFPlayback, &m.ReplyViewOnce)
+		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore, &m.GIFPlayback, &m.ReplyViewOnce, &mentions)
 	m.AudioWaveform = unpackWaveform(waveform)
+	m.Mentions = unpackMentions(mentions)
+	if err == nil {
+		m = s.ResolveMentionNames(ctx, m)
+	}
 	if m.ReplyViewOnce {
 		m.ReplyPreview = "View once message"
 	}
@@ -1477,10 +1548,15 @@ const chatIdentityUpsertSQL = `INSERT INTO chats(jid,title,avatar_path,last_mess
 // chatSnapshotUpsertSQL additionally applies WhatsApp's conversation settings.
 // A snapshot may lower the unread count when it covers at least the newest
 // activity already stored. An older snapshot must not erase newer live
-// messages; favorite is synchronised separately through app state.
+// messages; favorite is synchronised separately through app state. History's
+// pin field is a bootstrap hint, not a versioned action: once app state has
+// supplied a pin OR an unpin, delayed history must not replace it.
 const chatSnapshotUpsertSQL = chatIdentityUpsertSQL + `,
  unread_count=CASE WHEN excluded.last_message_at>=chats.last_message_at THEN excluded.unread_count ELSE chats.unread_count END,
- muted_until=excluded.muted_until,pinned=excluded.pinned,pinned_at=excluded.pinned_at,archived=excluded.archived`
+ muted_until=excluded.muted_until,
+ pinned=CASE WHEN chats.pin_action_at=0 THEN excluded.pinned ELSE chats.pinned END,
+ pinned_at=CASE WHEN chats.pin_action_at=0 THEN excluded.pinned_at ELSE chats.pinned_at END,
+ archived=excluded.archived`
 
 // UpsertChat ensures a conversation exists and merges its identity details.
 // Callers such as directory sync, group metadata events, and contact
@@ -1500,8 +1576,9 @@ func (s *Store) UpsertChat(ctx context.Context, chat model.Chat) error {
 }
 
 // ApplyChatSnapshot stores an authoritative conversation snapshot, as
-// delivered by an initial, recent, or full WhatsApp history sync. Mute, pin,
-// and archive state replace the local values.
+// delivered by an initial, recent, or full WhatsApp history sync. Mute and
+// archive state replace local values; pin state only seeds chats for which no
+// explicit app-state pin/unpin has been received.
 func (s *Store) ApplyChatSnapshot(ctx context.Context, chat model.Chat) error {
 	return s.upsertChat(ctx, chat, chatSnapshotUpsertSQL)
 }
@@ -1592,25 +1669,25 @@ func (s *Store) UpdateChatAvatar(ctx context.Context, jid, path string) error {
 }
 
 func (s *Store) UpdateChatPinned(ctx context.Context, jid string, pinned bool) error {
-	pinnedAt := int64(0)
-	if pinned {
-		pinnedAt = time.Now().UnixMilli()
-	}
-	return s.UpdateChatPinnedAt(ctx, jid, pinned, pinnedAt)
+	return s.UpdateChatPinnedAt(ctx, jid, pinned, time.Now().UnixMilli())
 }
 
 // UpdateChatPinnedAt stores both the pin state and WhatsApp's action time so
 // multiple pinned chats appear in the same order as on other linked devices.
+// Unlike pinned_at (the display order, zero for unpinned), pin_action_at also
+// remembers unpins. Older actions and delayed history cannot resurrect pins.
 func (s *Store) UpdateChatPinnedAt(ctx context.Context, jid string, pinned bool, pinnedAt int64) error {
 	if jid == "" {
 		return errors.New("chat jid is required")
 	}
 	jid = s.canonicalChatJID(ctx, jid)
+	actionAt := max(pinnedAt, 1) // Missing timestamps still mark an explicit action.
 	if !pinned {
 		pinnedAt = 0
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,pinned,pinned_at) VALUES(?,?,?,?)
-	 ON CONFLICT(jid) DO UPDATE SET pinned=excluded.pinned,pinned_at=excluded.pinned_at`, jid, displayJID(jid), pinned, pinnedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title,pinned,pinned_at,pin_action_at) VALUES(?,?,?,?,?)
+	 ON CONFLICT(jid) DO UPDATE SET pinned=excluded.pinned,pinned_at=excluded.pinned_at,pin_action_at=excluded.pin_action_at
+	 WHERE excluded.pin_action_at>=chats.pin_action_at`, jid, displayJID(jid), pinned, pinnedAt, actionAt)
 	return err
 }
 
@@ -1734,6 +1811,7 @@ func (s *Store) ClearChatMessages(ctx context.Context, chatJID string) error {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DELETE FROM poll_votes WHERE chat_jid=?`,
 		`DELETE FROM reactions WHERE chat_jid=?`,
 		`DELETE FROM message_pins WHERE chat_jid=?`,
 		// By conversation, not by message id: the same id can appear in two
@@ -1908,7 +1986,7 @@ func (s *Store) UpsertReactionChanged(ctx context.Context, r model.Reaction) (bo
 
 func (s *Store) MarkRevoked(ctx context.Context, chatJID, messageID string) error {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET revoked=1,body='',kind=CASE WHEN kind='view_once' THEN kind ELSE 'revoked' END WHERE chat_jid=? AND id=?`, chatJID, messageID)
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET revoked=1,body='',mentions='',kind=CASE WHEN kind='view_once' THEN kind ELSE 'revoked' END WHERE chat_jid=? AND id=?`, chatJID, messageID)
 	return err
 }
 
@@ -2074,7 +2152,7 @@ func preview(m model.Message) string {
 		return "View once message"
 	}
 	if strings.TrimSpace(m.Body) != "" {
-		return strings.TrimSpace(m.Body)
+		return strings.TrimSpace(model.MentionDisplayText(m.Body, m.Mentions))
 	}
 	switch m.Kind {
 	case "image":

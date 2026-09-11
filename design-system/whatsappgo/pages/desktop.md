@@ -92,6 +92,70 @@ treatment, and the full-size viewer is not limited by the chat preview cap.
 
 ## Interaction rules
 
+- Group header activity names the members typing or recording, with independent
+  expiry and stop handling. Keep the existing 12 px muted status line, render
+  names as plain text with RTL isolation, and middle-elide long status text
+  without growing the header. Expose the full status through a hover/focus
+  tooltip and the header's accessible description. Direct-chat labels stay
+  unchanged; idle groups do not show online/last-seen information.
+
+- New community in New chat and the Communities header share one creator.
+  Keep a visible name label, Unicode character counter, inline failure recovery
+  and a fixed Create/Cancel footer. Escape returns focus to the launching page;
+  closing or switching accounts must not let a late response change navigation.
+  Show only implemented fields and explain remaining setup limitations.
+
+- New chat's New group row and the menu/shortcut open the same two-step creator:
+  searchable member selection, then a named Create confirmation. Keep selected
+  people and the name when going Back, filter contacts without losing selection,
+  retain inline errors on failure, and disable duplicate submissions. Use a
+  virtualized member list, bounded search, semantic colors and keyboard focus.
+
+- Keep the moon/sun theme toggle directly below the update action and above
+  Media in the navigation rail. Use the same 40 px target and 22 px Lucide
+  glyph, a target-mode tooltip, and visible keyboard focus. Toggling preserves
+  the current page and draft, saves the appearance choice, and leaves System
+  default available in Settings.
+
+- Group name/description edit actions sit next to the copy actions: 14 px
+  Lucide pencils inside 28 px keyboard-focusable targets, shown only when live
+  permissions allow editing. Editors use the existing semantic colors and
+  confirmation buttons. Keep description scrolling inside the modal so Save
+  remains visible. Errors retain the draft; Escape restores group-info focus.
+
+- Group permissions use an overview followed by a single-field editor with
+  explicit Save/Cancel. Keep unknown values distinct from Off and let members
+  read values without enabling admin actions. Radio choices retain native
+  keyboard behavior but render with semantic colors in every desktop style.
+  Escape cancels an unsaved field back to the overview, then restores focus to
+  the entry row. Pending saves explain that closing does not cancel submission;
+  late replies must never reopen the dialog or change its account/chat target.
+
+- Pending join requests use an admin-only, bounded 560 × 600 px dialog with a
+  searchable, virtualized list and plain-text identity labels. Review one person
+  at a time: an explicit confirmation names the applicant and action, with Cancel
+  focused initially and a danger-colored Reject control. Keep loading, empty,
+  offline, unavailable timestamps and failed responses distinct. Failures require
+  a refreshed list before another decision. Escape steps back to the list and
+  then Group info; switching chats/accounts dismisses the dialog. A pending
+  submission can be closed but not cancelled, and late replies cannot reopen it.
+
+- Group photo editing uses the system file chooser followed by a bounded
+  460 × 560 px preview dialog, a fixed square preview, and explicit Save/Cancel.
+  Preserve the original image. Removing a photo is a separate confirmation
+  with plain-text group identity, Cancel focused, and semantic danger styling.
+  Escape returns from removal to the editor, then restores the entry-row focus
+  in Group info. Errors retain the preview but require reopening before another
+  submitted change; pending work cannot duplicate or hijack another chat/account.
+
+- Group mention suggestions sit above the composer in a bounded 380 px
+  surface, with 56 px member rows, 36 px avatars and 14 px plain-text names.
+  Use semantic colors in both themes, elide long names and expose full names
+  through tooltips/accessibility. Keep keyboard focus in the composer;
+  Up/Down navigates, Enter/Tab selects, Escape dismisses without leaving chat.
+  Reposition after window/composer layout changes. Selected tags and received
+  names use the primary color and medium weight, never unescaped rich text.
+
 - Let each `ListView` own wheel physics. Preserve the top visible identity and
   pixel offset when rows are inserted or reordered; model refreshes must not
   reset the user's scroll position.
@@ -119,3 +183,10 @@ treatment, and the full-size viewer is not limited by the chat preview cap.
 The complete measured reference and remaining functional gaps are documented in
 `../../../docs/WHATSAPP_WEB_PWA_CONTROL_INVENTORY.md` and
 `../../../docs/WHATSAPP_WEB_PWA_GAP_AUDIT.md`.
+
+Search and starred-message results share sender/date/media summaries, visible
+loading/error states, and keyboard traversal. Calendar selection uses the user's
+weekday order and disables future dates. Selected-media operations show byte
+totals and progress, retain selections after partial failures, and never use
+the revoke-for-everyone API for local deletion. Video controls expose keyboard
+focus and keep volume/rate settings separate from voice-note playback.

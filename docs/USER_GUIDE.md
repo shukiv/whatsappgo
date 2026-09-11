@@ -1,5 +1,38 @@
 # User guide
 
+## Polls, invitations and community tools
+
+Choose **Poll** in the attachment menu to review a question and 2–12 distinct
+answers before sending. Received poll cards have **View poll**: select answers
+and explicitly **Save vote**, or deselect your answers to remove your vote.
+Results reflect the votes this device has received, not a server-wide tally.
+The open poll refreshes periodically. Votes waiting for a decryption key are
+labelled, and old polls without saved details may need another history sync.
+Unsupported poll variants report an error rather than accepting an invalid vote.
+
+Received **Event** cards open the name, dates, location and description, including
+a cancellation flag when present. RSVP, event creation and edits are unavailable.
+
+Group info → **Invite via link → QR code** displays the current invitation as a
+scannable image. Treat it like the invite link: anyone with it can join or request
+approval. **Join a group with a link** now previews the group before confirmation;
+an approval request does not open a conversation until membership is confirmed.
+
+Privacy → **Status audience → View audience contacts** lists the contacts included
+or excluded by the current audience, with search. “My contacts” has no individually
+enumerated list. This screen is read-only; change the audience on your phone.
+
+The Calls, Channels and Communities search fields filter their loaded lists.
+Open a community to read its description and linked groups. Current admins can
+edit the description and link/unlink eligible groups after confirmation. The
+announcement group cannot be unlinked here; linking requires admin rights in
+both the community and the group. Permissions are rechecked when submitting.
+
+Dropped-file captions use the same spelling preference and language as the chat
+composer. Right-click a misspelled word, or use Menu / Shift+F10, for suggestions.
+Escape closes the current review or details dialog. Closing a submitted action
+does not cancel it: check its result before retrying after an uncertain error.
+
 ## Starting WhatsAppGo
 
 Run the desktop executable or select WhatsAppGo from the application menu:
@@ -118,6 +151,17 @@ unread total is shown on chat and navigation badges. Search above the list
 filters conversations; the search icon in the navigation rail opens and focuses
 chat search. The **Archived** row follows the filter strip.
 
+Group previews show the latest sender's name (or **You**). Unsent text appears
+as **Draft:** in normal and archived chat lists, scoped to its account; search
+results still show the matching conversation preview. Drafts are kept for the
+current session only. A muted chat has a muted-notifications icon, which clears
+when its mute expires. Hover a truncated chat name, or focus the row with the
+keyboard, to see the full name. In selection mode, clicking the avatar selects
+the chat instead of opening it or its status.
+
+The chat menu's **Add to list** submenu shows current memberships with checks.
+Choose a checked list to remove the chat, or an unchecked list to add it.
+
 Opening a conversation, including selecting the same chat again, shows the
 bottom of its newest message. Sending text with **Enter** or the send button
 also returns to the bottom, even when you were reading older messages. Scrolling
@@ -136,6 +180,21 @@ WhatsApp sometimes sends the same contact under a phone-number identity and an
 LID identity. WhatsAppGo consolidates verified pairs automatically so their
 history appears as one conversation. It never merges contacts merely because
 their names match.
+
+In a group, type **@** to find a member by name or phone number. Choose with
+the mouse, or use **Up/Down** and **Enter/Tab**. Selecting inserts a highlighted
+name; it does not send the message. **Escape** closes the suggestions first.
+Selected tags retain their identities through undo/redo and per-chat drafts.
+Editing a tagged name or pasting its plain text does not silently tag someone.
+Received tags show locally known names in bubbles and chat previews, including
+older numeric tags when a cached identity can resolve them. Unknown identities
+stay unresolved. This picker supports individual members, not **@everyone**.
+
+Click a tagged name in a message to open that person's chat. Navigation uses
+the stored member identity, so people with the same display name remain distinct.
+Your group draft is preserved. You can still drag across a tag to select and
+copy text. With keyboard focus on the message, **Tab/Shift+Tab** moves between
+its tags and **Enter** opens the focused person's chat.
 
 Consolidation preserves deletions, edits, stars, and attachment metadata. Old
 attachments remain recoverable from their original archive identity even after
@@ -160,10 +219,22 @@ info**. It shows the locally known avatar, phone number, shared-content count,
 mute state, encryption information, and archive action. Select **Media, links
 and documents** to open the three category tabs. Those views query the selected
 chat's SQLite history and page through it without loading the full conversation
-into memory. Pictures open in the native viewer, documents open in their normal
-Linux application, uncached media is downloaded first, and links open in the
-system browser. Press **Escape** or use the close/back button to leave the
-drawer.
+into memory. Photos and videos are grouped by month, with duration labels on
+videos and a GIF badge on animations. Pictures open in the native photo viewer,
+videos in the native player, and links in the system browser. Clicking a document
+saves a copy in **Downloads**, fetching an uncached file first; existing files
+are not overwritten.
+
+Use **Select shared items** or a row/thumbnail checkbox to select photos, videos,
+documents or links, then **Forward** to choose a destination and confirm sending.
+In selection mode, clicking an item toggles selection rather than opening it.
+Tab focuses controls; Enter/Space activates a focused item. **Escape** first
+closes a viewer or forwarding dialog, then cancels selection, then returns from
+shared content to Contact info and finally to the chat. Changing the category,
+chat or account clears the selection. **View … from all chats** opens the
+account-wide library at the same category without discarding your chat draft.
+Use **Load more** when older local history is available. Bulk star/delete/download
+controls in this drawer are not yet implemented.
 
 **Starred messages** in Contact info shows stars from that conversation only.
 The main menu's **Starred messages** shows stars across the current account.
@@ -207,10 +278,28 @@ wheel or drag its handle to review earlier lines without scrolling the chat.
 | **Shift+Enter** | Always opens a line. |
 | **Up arrow** | On an empty composer, opens the last message you sent for editing. Received messages, deleted ones, and anything that is not text are stepped over. A composer with something in it keeps the arrow for moving the cursor. |
 | **Escape** | Goes back one level: close the current menu/dialog or viewer first, then a nested panel/settings page, then the previous section. Chats is the starting page; Escape there never quits or discards the draft. |
+| **Menu / Shift+F10** | Opens the focused chat row's context menu, outside selection mode. |
+| **Up / Down / Home / End in menus** | Moves between available actions; tall menus scroll to keep the focused action visible. Escape from a chat submenu returns to its parent action. |
 | **Ctrl+,** | Opens Settings. |
 | **Ctrl+Alt+P** | Opens your profile details. |
 | **Ctrl+Alt+E** | Toggles the emoji picker in a conversation. |
 | **Ctrl+Alt+Shift+P** | Pins or unpins the selected chat. |
+| **Ctrl+Alt+/** | Searches all chats, including when no conversation is selected. |
+| **Ctrl+Alt+Shift+] / Ctrl+Alt+Shift+[** | Opens the next / previous chat in the displayed list, respecting the active filter and preserving drafts. Stops at either end. |
+| **Ctrl+Alt+Shift+L** | Opens the selected chat's list-membership picker. Checked lists already contain the chat. |
+| **Ctrl+Alt+S** | Opens the sticker tab in the composer picker. |
+| **Alt+I** | Opens the selected chat's contact or group information. |
+| **Alt+A** | Opens attachments. Escape closes the menu. |
+| **Alt+R** | Replies to the focused or hovered message without replacing the draft. |
+| **Ctrl+Alt+D** | Opens the forwarding chooser for the focused or hovered message. Nothing is sent until confirmed. |
+| **Alt+8** | Stars or unstars the focused or hovered message. |
+| **Ctrl+Up** | Edits the last own text message when the composer is focused and empty, like the existing unmodified Up shortcut. |
+
+Message shortcuts use keyboard focus before mouse hover and only target visible
+messages in the current conversation. Deleted/system messages are ineligible;
+view-once messages cannot be forwarded or starred. Conversation shortcuts are
+disabled behind dialogs, viewers, selection modes, and non-chat pages. The
+shortcut reference in Settings scrolls in smaller windows.
 
 ## Reading a conversation
 
@@ -230,6 +319,31 @@ messages you received sit on the left. A tick beside your own time is one mark
 for sent, two for delivered, and two blue for read.
 
 ## Images and media
+
+Chat search shows who sent each result, its date, and a useful filename or media
+label when there is no text. Use Up/Down and Enter to choose a result. Loading
+and failed requests have separate states, and failed searches can be retried.
+The calendar button finds the first locally stored message on a chosen day;
+it does not request missing history from your phone. Escape closes the calendar
+before closing search.
+
+**Starred messages** searches the latest 100 loaded stars by text, sender,
+filename, or chat name. Activating a result locates that message in its source
+conversation. Older-star pagination is not available yet.
+
+In either a contact's shared-content drawer or **Media from all chats**, select
+items to star/unstar them or save their originals to Downloads. The toolbar
+shows the selected byte total and operation progress. Work is sequential;
+failed items are reported and selection remains available for retry. Cancelling
+selection stops queued work, not a request already submitted. These controls
+do not delete messages. Local bulk deletion remains unavailable.
+
+Videos have mute and volume controls, playback speed, a draggable position
+slider, and fullscreen. With the viewer focused, Space plays/pauses, Left/Right
+seek five seconds, M toggles mute, and F toggles fullscreen. Home/End on the
+volume slider select minimum/maximum volume. Escape leaves viewer-owned
+fullscreen first, then closes the video. These settings do not change voice-note
+volume or speed.
 
 Click a **GIF** or an animated sticker to play it directly in the conversation;
 click again to stop it. GIFs loop silently. Only one chat animation runs at a
@@ -269,11 +383,28 @@ Photo/video bubbles stay compact: their outer width is capped at 336 logical
 pixels and shrinks with the conversation pane. Long captions wrap below the
 preview without widening the bubble or leaving an empty panel beside the image.
 This limit applies only to chat previews, not the full-size viewer.
+Missing or unreadable previews fall back to a descriptive attachment row (or a
+video placeholder) without repeatedly restarting image loading. Replacing a
+thumbnail with the full image keeps the same metadata-based bubble dimensions.
 
-Selecting an item in the account-wide media library opens its conversation and
-jumps to that message, loading older history as needed. To forward an attachment,
-download it first. If its file is unavailable, forwarding reports that it needs
+The account-wide media library has Media, Documents and Links tabs. Its sort
+menu filters items sent by **Everyone**, **You**, or **Others**, and orders them
+by **Newest**, **Oldest**, or **Largest** file size. Search, sorting and filters
+apply to loaded items; **Load more** retrieves another page when older results
+are available.
+
+Clicking an item normally opens its conversation at that message, loading older
+history as needed. In selection mode, clicking media, documents or links selects
+them for forwarding instead. Changing tabs cancels the selection. Each item's
+menu also offers Select, Go to message, Forward and Star/Unstar, plus Download
+for attachments. Actions always use the item's source conversation. Download
+saves the original file to Downloads without overwriting an existing filename.
+If an attachment's file is unavailable, forwarding reports that it needs
 downloading rather than sending only its caption.
+
+Media tiles support Tab focus, Enter/Space activation and Shift+F10 (or the Menu
+key) for item actions. Escape dismisses the open menu or selection first. Leaving
+the library or switching accounts dismisses pending library menus and selections.
 
 A message containing a link shows a preview card with the page title,
 description, and picture. Normally WhatsApp resolves that preview on the
@@ -292,6 +423,12 @@ few at a time: pictures up to 8 MB, videos and documents up to 25 MB. Anything
 larger keeps its **Download** action. Voice notes are fetched when you play them.
 
 Pinned conversations stay at the top of the list with a pin beside their time.
+Pin and unpin changes synchronize across linked devices. Delayed history cannot
+replace an explicit pin/unpin, and contact-ID merging preserves the newer action.
+After upgrading from an affected version, WhatsAppGo requests one fresh chat
+settings sync when connected to repair previously missing pins. If the phone
+must supply recovery data, repair waits for that response; it does not repin
+conversations on your behalf. Every computer needs the updated build.
 Right-click a conversation to archive it, mute it, pin it, or mark it read or
 unread; each change is sent to WhatsApp, so it applies to your phone too.
 Archived conversations live behind the **Archived** row below the filters.
@@ -359,6 +496,39 @@ persistent outbox; check delivery before retrying after a connection loss.
 Copying an image from a message places decoded image data on the desktop
 clipboard, not merely its local filename.
 
+## Creating a group
+
+Open **New chat → New group** (also available in the chat-list menu or with
+**Ctrl+Shift+N**). Search names or numbers and select members, then choose
+**Next**, enter a group name, and press **Create**. Nothing is sent until Create.
+Search includes recent and archived chats and locally saved contacts.
+
+Back or Escape from the name step returns to member selection without losing
+your choices. Escape again returns to New chat. A failed request keeps the name
+and selection available for retry; successful creation opens the new group.
+Closing during creation does not cancel a request already sent to WhatsApp.
+If the connection drops before confirmation, check your chats before retrying
+to avoid making a second group. Changing accounts closes the creator.
+
+Group names support up to 100 characters, including emoji. You can select up
+to 1023 other members; WhatsApp includes you automatically and applies members'
+privacy settings.
+
+## Creating a community
+
+Choose **New chat → New community**, or the **+** on the Communities page.
+Enter a name (up to 100 characters, including emoji) and choose **Create**.
+WhatsApp adds the announcement group. Successful creation opens Communities;
+a failed request keeps the name and an inline error available for retry.
+
+Escape or Cancel returns to the page you came from. Closing a pending creator
+does not cancel an operation already sent to WhatsApp, and another submission
+is blocked until it finishes. If confirmation is lost, check Communities before
+retrying to avoid creating a duplicate. Switching accounts closes the creator.
+
+Community photos, descriptions and linking groups are not configurable in this
+creator yet; manage those details from WhatsApp on your phone.
+
 ## Group information
 
 Click a group's name or avatar in the chat header to open **Group info**. The
@@ -366,6 +536,17 @@ panel fetches current membership from WhatsApp, separately from locally stored
 chat history. It shows the description, creation details, member count, available
 names/photos/phone numbers, **You**, and **Group admin** badges. An opaque WhatsApp
 identity is never displayed as a phone number. Loading failures offer **Retry**.
+
+Members allowed to edit group information see **Add group photo** or **Edit
+group photo** below the avatar. **Choose photo** opens the system file chooser
+(GTK on GNOME when its Qt integration is available). Select a still JPEG or PNG
+up to 20 MiB and 32 megapixels. Review the centered square crop, then choose
+**Save**; the original file is not changed. The crop is automatic, not adjustable.
+**Remove photo** asks for confirmation and changes the photo for the whole group.
+Canceling the file chooser keeps your preview. Escape backs out of removal
+confirmation, then returns from the editor to Group info. Errors keep the
+preview and require reopening before another upload. Closing during a submitted
+save does not cancel it. Changes recheck membership and edit permission online.
 
 The first eight members appear inline. Use the search icon or **View all members**
 to open the full searchable list. Click a person to message them; group admins
@@ -385,6 +566,24 @@ copying your own member entry uses your name, not the label **You**.
 - **Create similar group** starts with the current members selected (excluding
   yourself), lets you adjust the name and selection, and requires confirmation.
   Creation/addition is limited to 100 selected people per action.
+- **Group permissions** shows who can send messages, edit group information,
+  and add members, plus whether new members require admin approval. Current
+  admins can select a setting and explicitly **Save** one change at a time;
+  other members get a read-only overview. **Escape** cancels an unsaved choice
+  back to the overview, then returns to Group info. Failed saves keep your choice
+  and show an error. Closing while saving does not cancel a submitted change.
+  Community containers, announcement groups and suspended groups are read-only
+  here; unknown server values are marked unavailable. The approval toggle sets
+  the joining policy; individual applications are reviewed separately.
+- **Pending join requests** lets current group admins search applicants by name
+  or known phone number, then confirm **Approve** or **Reject** for one person.
+  Approve adds that person to the group; Reject dismisses their current request
+  without blocking them. **Escape** or **Cancel** returns to the list without
+  sending a decision, and Escape from the list returns to Group info.
+  Each decision rechecks admin rights and the request's identity/time. If a
+  request has changed, or a response is uncertain, use **Refresh requests**
+  before deciding again. Unknown request times cannot be reviewed. Closing an
+  already-submitted decision does not cancel it; no background retry is made.
 - **Notification settings**, starred messages, encryption information,
   disappearing-message timers, favorites, custom lists, archive, export, and
   clear-chat actions are available in the group panel.
@@ -424,9 +623,31 @@ The explicit pause choice remains in effect when you move to another status,
 and resets when you reopen the viewer. Controls remain legible over bright
 photos and videos, and the overlay blocks input to the chat underneath.
 
+### Viewing chat photos
+
+Open a chat photo to browse the photos currently loaded for that conversation
+or its shared-media panel. Use **Previous/Next**, the **Left/Right** keys, or the
+thumbnail strip; the sender, timestamp and caption follow the selected photo.
+This gallery does not yet combine videos/GIFs or fetch all historical photos.
+
+The toolbar offers **Go to message**, **Reply**, **Star/Unstar**, **Pin**,
+**React**, **Forward**, and **Download**. Narrow windows put these actions in
+the photo-actions menu. Reply preserves your existing draft. Pin asks for
+24 hours, 7 days or 30 days; opening a reaction or forwarding picker does not
+send anything. Download saves the original file to Downloads, keeping existing
+files when names collide. **Copy image** and **Save image as…** remain available.
+
+Zoom with the wheel or the zoom buttons. Drag an enlarged photo to pan it, or
+use **Shift+Arrow** keys. Moving to another photo resets zoom and pan. Escape
+closes an open picker/menu first, then returns from the viewer to the chat.
+Changing chats or profiles closes message-action dialogs. View-once and revoked
+images are excluded; avatar previews never offer message actions.
+
 ## Appearance
 
-Choose **System**, **Light**, or **Dark** mode from the application controls.
+Click the moon/sun icon directly below the update icon in the navigation rail
+to switch between light and dark mode. Your choice is remembered after restart.
+Choose **System**, **Light**, or **Dark** from **Settings → Chats → Appearance**.
 System mode follows the current Qt desktop color scheme. The chat wallpaper,
 bubbles, text, icons, selection, menus, and scrollbars use matching semantic
 colors.
@@ -531,6 +752,12 @@ arrives, or after 10 seconds without a fresh activity update if the stop event i
 lost. The header then returns to the available online/last-seen information, or
 stays blank when none is known. Changing chats or losing the connection also
 clears transient activity.
+In group chats the header identifies who is typing or recording audio, including
+multiple members at once. Each member's activity clears independently. Saved
+names are preferred; unknown contacts use a known phone number or a labelled
+member identifier, never an opaque WhatsApp ID presented as a phone number.
+Long names are shortened in the header; hover over the header to read the full
+status. One-to-one chats keep the usual typing, recording and last-seen labels.
 Status-broadcast updates stay quiet unless enabled in **Notifications → Status**.
 
 With a tray available, minimizing or closing the window hides it and keeps notifications and

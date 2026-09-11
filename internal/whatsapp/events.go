@@ -122,11 +122,9 @@ func (c *Client) handleEvent(raw any) {
 	case *waEvents.MediaRetry:
 		c.handleMediaRetry(evt)
 	case *waEvents.ChatPresence:
-		chatJID := evt.Chat.String()
-		if c.store != nil {
-			chatJID = c.store.CanonicalChatJID(context.Background(), chatJID)
+		if data := c.chatPresenceData(evt); data != nil {
+			c.emit(gateway.Event{Name: "chat.presence", Data: data})
 		}
-		c.emit(gateway.Event{Name: "chat.presence", Data: map[string]any{"chat_jid": chatJID, "sender_jid": evt.Sender.String(), "state": string(evt.State), "media": string(evt.Media)}})
 	case *waEvents.Presence:
 		jid := evt.From.String()
 		if c.store != nil {
@@ -215,7 +213,10 @@ const reactionBackfillMetadataKey = "reactions_history_backfill_v1"
 // linked device does not look like it is scraping its own history.
 const reactionBackfillChats = 25
 const reactionBackfillPause = 3 * time.Second
-const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v6"
+
+// Replay once after adding durable pin/unpin action ordering. Older installs
+// may have overwritten pins with history even though their v6 sync completed.
+const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v7"
 
 // Call history lives in the regular app-state collection and chat settings in
 // the low-priority one. A full sync is required once for installations that
@@ -570,6 +571,10 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	if evt.Message == nil && !eventIsViewOnce(evt) {
 		return
 	}
+	if evt.Message.GetPollUpdateMessage() != nil && !eventIsViewOnce(evt) {
+		c.receivePollVote(context.Background(), evt)
+		return
+	}
 	if reaction := evt.Message.GetReactionMessage(); reaction != nil {
 		r := model.Reaction{ChatJID: evt.Info.Chat.String(), MessageID: reaction.GetKey().GetID(), SenderJID: c.reactionSenderJID(evt.Info.Sender, evt.Info.IsFromMe), Emoji: reaction.GetText(), Timestamp: evt.Info.Timestamp.UnixMilli()}
 		changed, err := c.store.UpsertReactionChanged(context.Background(), r)
@@ -797,6 +802,10 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			if err != nil {
 				continue
 			}
+			if parsed.Message.GetPollUpdateMessage() != nil && !eventIsViewOnce(parsed) {
+				c.receivePollVote(context.Background(), parsed)
+				continue
+			}
 			msg := c.withSenderName(context.Background(), messageFromEvent(parsed))
 			if msg.ID == "" {
 				continue
@@ -816,6 +825,14 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			}
 			if err := c.store.UpsertMessage(context.Background(), msg, title, false); err == nil {
 				c.rememberMediaPayload(msg, parsed.Message)
+				if msg.Kind == "poll" && !msg.Revoked {
+					for _, update := range historyMessage.GetMessage().GetPollUpdates() {
+						sender := c.historyReactionSender(chatJID, update.GetPollUpdateMessageKey())
+						if sender != "" && update.GetVote() != nil {
+							_ = c.store.SavePollVote(context.Background(), model.PollVote{ChatJID: msg.ChatJID, PollID: msg.ID, Sender: sender, Timestamp: update.GetSenderTimestampMS(), Options: voteHashes(update.GetVote())})
+						}
+					}
+				}
 				// The upsert deliberately leaves the star alone so a
 				// redelivered message keeps it. Only a set star is applied
 				// here: an absent field and a cleared one look identical on
@@ -940,7 +957,7 @@ func callLogFromRecord(record *waSyncAction.CallLogRecord) (model.CallLog, bool)
 }
 
 func (c *Client) rememberMediaPayload(msg model.Message, raw *waE2E.Message) {
-	if msg.Kind == "view_once" || downloadableFromMessage(raw) == nil {
+	if msg.Kind == "view_once" || (downloadableFromMessage(raw) == nil && msg.Kind != "poll" && msg.Kind != "event") {
 		return
 	}
 	payload, err := proto.Marshal(raw)
@@ -1086,6 +1103,7 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 // sender's real name rather than a phone number, and it reflects an edit or a
 // deletion that happened after the reply was written.
 func (c *Client) withReplyPreview(ctx context.Context, m model.Message) model.Message {
+	m = c.withMentionNames(ctx, m)
 	if m.ReplyTo == "" {
 		return m
 	}
@@ -1249,6 +1267,10 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 	case firstNonNilPoll(msg) != nil:
 		m.Kind = "poll"
 		m.Body = firstNonEmpty(firstNonNilPoll(msg).GetName(), "Poll")
+	case msg.GetEventMessage() != nil:
+		m.Kind = "event"
+		m.Body = firstNonEmpty(msg.GetEventMessage().GetName(), "Event")
+		applyContext(&m, msg.GetEventMessage().GetContextInfo())
 	case msg.GetReactionMessage() != nil:
 		v := msg.GetReactionMessage()
 		m.Kind = "reaction"
@@ -1367,6 +1389,15 @@ func quotedPreview(msg *waE2E.Message) string {
 
 func applyContext(m *model.Message, ctx *waE2E.ContextInfo) {
 	if ctx != nil {
+		for _, jid := range ctx.GetMentionedJID() {
+			if len(m.Mentions) >= 128 {
+				break
+			}
+			mention, err := model.NormalizeMentions(m.ChatJID, m.Body, []model.Mention{{JID: jid}})
+			if err == nil {
+				m.Mentions = append(m.Mentions, mention...)
+			}
+		}
 		m.ReplyTo = ctx.GetStanzaID()
 		// A reply carries its own copy of what it answers, which is what the
 		// preview shows until - and unless - the quoted message itself is

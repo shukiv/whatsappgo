@@ -717,6 +717,13 @@ ColumnLayout {
                 }
                 SettingsRow {
                     Layout.fillWidth: true
+                    text: qsTr("View audience contacts")
+                    enabled: backend.status.connected === true
+                    onClicked: audienceContacts.open()
+                }
+                StatusAudienceDialog { id: audienceContacts; client: backend }
+                SettingsRow {
+                    Layout.fillWidth: true
                     text: qsTr("Refresh audience")
                     enabled: backend.status.connected === true && !backend.statusAudienceLoading
                     onClicked: backend.refreshStatusAudience()

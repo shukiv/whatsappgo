@@ -41,6 +41,8 @@ public:
     explicit EmojiHighlighter(QObject *parent) : QSyntaxHighlighter(parent) {}
     QSet<QString> misspelled;
     QSet<QString> ignored;
+    QVariantList mentions;
+    QColor mentionColor;
 
 protected:
     void highlightBlock(const QString &text) override
@@ -64,9 +66,21 @@ protected:
             if (!match.captured().contains(QChar(0xFE0E)))
                 setFormat(match.capturedStart(), match.capturedLength(), format);
         }
+        for (const auto &value : mentions) {
+            const auto span = value.toMap();
+            const int start = span.value(QStringLiteral("start")).toInt() - currentBlock().position();
+            const int length = span.value(QStringLiteral("length")).toInt();
+            for (int i = qMax(0, start); i < qMin(int(text.size()), start + length); ++i) {
+                auto mark = this->format(i);
+                mark.setForeground(mentionColor);
+                mark.setFontWeight(QFont::DemiBold);
+                setFormat(i, 1, mark);
+            }
+        }
         if (misspelled.isEmpty()) return;
         for (const auto &word : spellWords(text)) {
             if (!misspelled.contains(word.captured()) || ignored.contains(word.captured())) continue;
+            if (this->format(word.capturedStart()).fontWeight() == QFont::DemiBold) continue;
             QTextCharFormat spelling;
             spelling.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
             spelling.setUnderlineColor(QColor(QStringLiteral("#e05b65")));
@@ -187,6 +201,26 @@ void ComposerText::setEditor(QQuickItem *editor)
 }
 
 QString ComposerText::editorText() const { return m_editor ? m_editor->property("text").toString() : QString(); }
+
+void ComposerText::setMentionRanges(const QVariantList &ranges)
+{
+    if (m_mentionRanges == ranges) return;
+    m_mentionRanges = ranges;
+    auto *highlighter = static_cast<EmojiHighlighter *>(m_highlighter);
+    highlighter->mentions = ranges;
+    highlighter->rehighlight();
+    emit mentionStyleChanged();
+}
+
+void ComposerText::setMentionColor(const QColor &color)
+{
+    if (m_mentionColor == color) return;
+    m_mentionColor = color;
+    auto *highlighter = static_cast<EmojiHighlighter *>(m_highlighter);
+    highlighter->mentionColor = color;
+    highlighter->rehighlight();
+    emit mentionStyleChanged();
+}
 
 void ComposerText::setSpellChecking(bool enabled)
 {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -93,8 +95,16 @@ func (c *Client) FollowChannelLink(ctx context.Context, link string) (model.Chan
 // flag set; WhatsApp creates its announcement group itself.
 func (c *Client) CreateCommunity(ctx context.Context, name string) (model.Community, error) {
 	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return model.Community{}, errors.New("a community name is required")
+	if !utf8.ValidString(trimmed) || trimmed == "" || utf8.RuneCountInString(trimmed) > 100 {
+		return model.Community{}, errors.New("a community name must contain between 1 and 100 characters")
+	}
+	for _, r := range trimmed {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return model.Community{}, errors.New("community names cannot contain control characters")
+		}
+	}
+	if c.wa == nil || !c.wa.IsConnected() || !c.wa.IsLoggedIn() {
+		return model.Community{}, errors.New("reconnect to WhatsApp before creating a community")
 	}
 	info, err := c.wa.CreateGroup(ctx, whatsmeow.ReqCreateGroup{
 		Name:        trimmed,
@@ -102,6 +112,9 @@ func (c *Client) CreateCommunity(ctx context.Context, name string) (model.Commun
 	})
 	if err != nil {
 		return model.Community{}, err
+	}
+	if info == nil || info.JID.IsEmpty() {
+		return model.Community{}, errors.New("community creation was not confirmed; check Communities before trying again")
 	}
 	community := model.Community{JID: info.JID.String(), Name: info.Name}
 	c.emit(gateway.Event{Name: "community.updated", Data: map[string]any{"jid": community.JID}})

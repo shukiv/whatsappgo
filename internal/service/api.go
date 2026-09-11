@@ -17,6 +17,18 @@ func method(name, summary string, mutating bool, params map[string]any) MethodDe
 }
 
 var apiMethods = []MethodDescription{
+	method("messages.on_date", "Find the first locally stored message within a calendar day", false, map[string]any{"chat_jid": "123@lid", "start": 1789084800000, "end": 1789171200000}),
+	method("poll.info", "Read locally received poll options and vote totals", false, map[string]any{"chat_jid": "123@g.us", "message_id": "ABC"}),
+	method("poll.create", "Create a poll with 2–12 distinct options", true, map[string]any{"chat_jid": "123@g.us", "question": "When?", "options": []string{"Today", "Tomorrow"}, "multiple": false}),
+	method("poll.vote", "Replace your poll selections; an empty list retracts your vote", true, map[string]any{"chat_jid": "123@g.us", "message_id": "ABC", "options": []string{"Today"}}),
+	method("event.info", "Read locally received event details; RSVP is unavailable", false, map[string]any{"chat_jid": "123@g.us", "message_id": "ABC"}),
+	method("group.invite_preview", "Read group identity before joining; does not join", false, map[string]any{"link": "https://chat.whatsapp.com/INVITE_CODE"}),
+	method("group.join_previewed", "Join only after rechecking the previewed identity; joined=false means membership is not confirmed", true, map[string]any{"link": "https://chat.whatsapp.com/INVITE_CODE", "expected_jid": "123@g.us"}),
+	method("group.invite_qr", "Return the current invite link and PNG data URI", false, map[string]any{"chat_jid": "123@g.us"}),
+	method("community.info", "Read description, linked groups and groups available to link", false, map[string]any{"chat_jid": "123@g.us"}),
+	method("community.description", "Change description after fresh admin and previous-value checks", true, map[string]any{"chat_jid": "123@g.us", "description": "New description", "previous": "Old description"}),
+	method("community.link", "Link or unlink a group after checking current permissions", true, map[string]any{"chat_jid": "123@g.us", "child_jid": "456@g.us", "action": "link"}),
+	method("status.audience_contacts", "Resolve included/excluded status audience contacts; read-only", false, nil),
 	method("rpc.discover", "List protocol methods and event names", false, nil),
 	method("status.get", "Get connection and login state", false, nil),
 	method("update.status", "Report the installed version and any newer release", false, nil),
@@ -48,6 +60,11 @@ var apiMethods = []MethodDescription{
 	method("contacts.blocked", "List blocked contacts", false, nil),
 	method("group.create", "Create a group with the given name and participants", true, map[string]any{"name": "Team", "participants": []string{"123@s.whatsapp.net"}}),
 	method("group.info", "Fetch live group membership, roles, permissions and creation metadata", false, map[string]any{"chat_jid": "123@g.us"}),
+	method("group.requests.list", "List pending group join requests (current admins only)", false, map[string]any{"chat_jid": "123@g.us"}),
+	method("group.set_photo", "Set or remove a group photo after fresh edit-permission validation", true, map[string]any{"chat_jid": "123@g.us", "path": "/tmp/prepared-group-photo.jpg", "remove": false}),
+	method("group.requests.review", "Approve or reject one still-pending group request after fresh admin validation", true, map[string]any{"chat_jid": "123@g.us", "participant": "456@lid", "requested_at": 1788990000000, "action": "approve"}),
+	method("group.set_info", "Update group name or description after checking permissions and the previous value", true, map[string]any{"chat_jid": "123@g.us", "field": "name", "value": "New group name", "previous": "Old group name"}),
+	method("group.set_permission", "Update one group permission after checking current admin rights; boolean value and previous are required", true, map[string]any{"chat_jid": "123@g.us", "field": "send_messages", "value": false, "previous": true}),
 	method("group.invite_link", "Get the group invite link; reset revokes the previous link (admins only)", true, map[string]any{"chat_jid": "123@g.us", "reset": false}),
 	method("group.members", "Add, remove, promote or demote group members with permission checks", true, map[string]any{"chat_jid": "123@g.us", "action": "add", "participants": []string{"123@s.whatsapp.net"}}),
 	method("group.leave", "Leave a group without deleting local history", true, map[string]any{"chat_jid": "123@g.us"}),
@@ -112,6 +129,7 @@ var apiMethods = []MethodDescription{
 }
 
 var apiEvents = []string{
+	"poll.updated", "community.updated",
 	"call.upsert", "calls.synced", "chat.presence", "chat.updated", "group.updated",
 	"connection.changed", "contact.presence", "daemon.error", "directory.synced",
 	"history.collected", "history.synced", "media.collected", "message.edited",

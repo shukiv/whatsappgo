@@ -38,6 +38,8 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool groupInfoLoading READ groupInfoLoading NOTIFY groupInfoChanged)
     Q_PROPERTY(QString groupInfoError READ groupInfoError NOTIFY groupInfoChanged)
     Q_PROPERTY(bool groupActionBusy READ groupActionBusy NOTIFY groupInfoChanged)
+    Q_PROPERTY(bool groupCreationBusy READ groupCreationBusy NOTIFY groupCreationBusyChanged)
+    Q_PROPERTY(bool communityCreationBusy READ communityCreationBusy NOTIFY communityCreationBusyChanged)
     Q_PROPERTY(QString groupInviteLink READ groupInviteLink NOTIFY groupInfoChanged)
     Q_PROPERTY(QStringList blockedContacts READ blockedContacts NOTIFY blockedContactsChanged)
     Q_PROPERTY(QVariantMap privacySettings READ privacySettings NOTIFY privacySettingsChanged)
@@ -61,6 +63,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(bool mediaLibraryHasMore READ mediaLibraryHasMore NOTIFY mediaLibraryChanged)
     Q_PROPERTY(QString mediaLibraryCategory READ mediaLibraryCategory NOTIFY mediaLibraryChanged)
     Q_PROPERTY(bool mediaLibraryLoading READ mediaLibraryLoading NOTIFY mediaLibraryChanged)
+    Q_PROPERTY(bool libraryStarBusy READ libraryStarBusy NOTIFY mediaLibraryChanged)
     Q_PROPERTY(QVariantList sharedContent READ sharedContent NOTIFY sharedContentChanged)
     Q_PROPERTY(bool sharedContentHasMore READ sharedContentHasMore NOTIFY sharedContentChanged)
     Q_PROPERTY(QString sharedContentCategory READ sharedContentCategory NOTIFY sharedContentChanged)
@@ -73,6 +76,13 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantMap profileDisplayNames READ profileDisplayNames NOTIFY profileDisplayNamesChanged)
     Q_PROPERTY(QVariantMap profileUnreadCounts READ profileUnreadCounts NOTIFY profileUnreadCountsChanged)
     Q_PROPERTY(QVariantList searchResults READ searchResults NOTIFY searchResultsChanged)
+    Q_PROPERTY(bool searchLoading READ searchLoading NOTIFY searchResultsChanged)
+    Q_PROPERTY(QString searchError READ searchError NOTIFY searchResultsChanged)
+    Q_PROPERTY(bool dateLookupBusy READ dateLookupBusy NOTIFY dateLookupChanged)
+    Q_PROPERTY(QString dateLookupError READ dateLookupError NOTIFY dateLookupChanged)
+    Q_PROPERTY(bool mediaBatchBusy READ mediaBatchBusy NOTIFY mediaBatchChanged)
+    Q_PROPERTY(QString mediaBatchScope READ mediaBatchScope NOTIFY mediaBatchChanged)
+    Q_PROPERTY(QString mediaBatchSummary READ mediaBatchSummary NOTIFY mediaBatchChanged)
     Q_PROPERTY(QString chatQuery READ chatQuery NOTIFY chatQueryChanged)
     Q_PROPERTY(QString conversationQuery READ conversationQuery NOTIFY searchResultsChanged)
     Q_PROPERTY(QVariantList chatSearchHits READ chatSearchHits NOTIFY chatSearchHitsChanged)
@@ -80,6 +90,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(QVariantList messageSearchHits READ messageSearchHits NOTIFY messageSearchHitsChanged)
     Q_PROPERTY(QVariantList starredMessages READ starredMessages NOTIFY starredMessagesChanged)
     Q_PROPERTY(bool starredMessagesLoading READ starredMessagesLoading NOTIFY starredMessagesChanged)
+    Q_PROPERTY(QString starredMessagesError READ starredMessagesError NOTIFY starredMessagesChanged)
     Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
     Q_PROPERTY(QVariantList callLogs READ callLogs NOTIFY callLogsChanged)
     Q_PROPERTY(QVariantList channels READ channels NOTIFY channelsChanged)
@@ -145,6 +156,8 @@ public:
     bool groupInfoLoading() const { return m_groupInfoLoading; }
     QString groupInfoError() const { return m_groupInfoError; }
     bool groupActionBusy() const { return m_groupActionBusy; }
+    bool groupCreationBusy() const { return m_groupCreationBusy; }
+    bool communityCreationBusy() const { return m_communityCreationBusy; }
     QString groupInviteLink() const { return m_groupInviteLink; }
     QStringList blockedContacts() const { return m_blockedContacts; }
     QVariantMap privacySettings() const { return m_privacySettings; }
@@ -168,6 +181,9 @@ public:
     bool mediaLibraryHasMore() const { return m_mediaLibraryHasMore; }
     QString mediaLibraryCategory() const { return m_mediaLibraryCategory; }
     bool mediaLibraryLoading() const { return m_mediaLibraryLoading; }
+    bool libraryStarBusy() const { return m_libraryStarProfile == m_profile; }
+    Q_INVOKABLE void starLibraryItem(const QVariantMap &message, bool starred, const QString &profile);
+    Q_INVOKABLE void downloadLibraryItem(const QVariantMap &message, const QString &profile);
     QVariantList sharedContent() const { return m_sharedContent; }
     bool sharedContentHasMore() const { return m_sharedContentHasMore; }
     QString sharedContentCategory() const { return m_sharedContentCategory; }
@@ -180,6 +196,17 @@ public:
     QVariantMap profileDisplayNames() const { return m_profileDisplayNames; }
     QVariantMap profileUnreadCounts() const { return m_profileUnreadCounts; }
     QVariantList searchResults() const { return m_searchResults; }
+    bool searchLoading() const { return m_searchLoading; }
+    QString searchError() const { return m_searchError; }
+    bool dateLookupBusy() const { return m_dateLookupBusy; }
+    QString dateLookupError() const { return m_dateLookupError; }
+    Q_INVOKABLE void findMessageOnDate(qint64 start, qint64 end);
+    Q_INVOKABLE void cancelDateLookup();
+    bool mediaBatchBusy() const { return m_mediaBatchBusy; }
+    QString mediaBatchScope() const { return m_mediaBatchScope; }
+    QString mediaBatchSummary() const { return m_mediaBatchSummary; }
+    Q_INVOKABLE void actOnMediaSelection(const QVariantList &items, const QString &scope, const QString &action, const QString &profile);
+    Q_INVOKABLE void cancelMediaBatch(const QString &scope);
     QString chatQuery() const { return m_chatQuery; }
     QString conversationQuery() const { return m_conversationQuery; }
     QVariantList chatSearchHits() const { return m_chatSearchHits; }
@@ -187,6 +214,7 @@ public:
     QVariantList messageSearchHits() const { return m_messageSearchHits; }
     QVariantList starredMessages() const { return m_starredMessages; }
     bool starredMessagesLoading() const { return m_starredMessagesLoading; }
+    QString starredMessagesError() const { return m_starredMessagesError; }
     QVariantList statusUpdates() const { return m_statusUpdates; }
     QVariantList callLogs() const { return m_callLogs; }
     QVariantList channels() const { return m_channels; }
@@ -211,14 +239,27 @@ public:
     Q_INVOKABLE void exportChat(const QString &jid, const QString &destinationUrl);
     Q_INVOKABLE void setChatFavorite(const QString &jid, bool favorite);
     Q_INVOKABLE void markAllChatsRead();
-    Q_INVOKABLE void createGroup(const QString &name, const QStringList &participants);
+    Q_INVOKABLE void createGroup(const QString &name, const QStringList &participants,
+                                const QString &token = QString(), const QString &profile = QString());
+    Q_INVOKABLE void searchGroupContacts(const QString &query, const QString &token);
     Q_INVOKABLE void setChatRead(const QString &jid, bool read);
     Q_INVOKABLE void openChat(const QString &jid, const QString &title);
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void refreshChatInfo();
     Q_INVOKABLE void refreshGroupInfo();
+    Q_INVOKABLE void loadGroupJoinRequests(const QString &jid, const QString &token, const QString &profile);
+    Q_INVOKABLE void prepareGroupPhoto(const QString &jid, const QString &localUrl, const QString &token, const QString &profile);
+    Q_INVOKABLE void discardGroupPhoto(const QString &token);
+    Q_INVOKABLE void saveGroupPhoto(const QString &jid, bool remove, const QString &token, const QString &profile);
+    Q_INVOKABLE void reviewGroupJoinRequest(const QString &jid, const QString &participant, qint64 requestedAt,
+                                           const QString &action, const QString &token, const QString &profile);
     Q_INVOKABLE void changeGroupMembers(const QString &jid, const QString &action, const QStringList &members);
+    Q_INVOKABLE void setGroupInfo(const QString &jid, const QString &field, const QString &value,
+                                 const QString &previous, const QString &token, const QString &profile);
+    Q_INVOKABLE void setGroupPermission(const QString &jid, const QString &field, bool value,
+                                       bool previous, const QString &token, const QString &profile);
     Q_INVOKABLE void requestGroupInviteLink(const QString &jid, bool reset = false);
+    Q_INVOKABLE void requestInteractiveFeature(const QString &token, const QString &method, const QVariantMap &params);
     Q_INVOKABLE void leaveGroup(const QString &jid);
     Q_INVOKABLE void refreshSharedContent(const QString &category, bool append = false);
     Q_INVOKABLE void refreshMediaLibrary(const QString &category, bool append = false);
@@ -241,7 +282,8 @@ public:
     Q_INVOKABLE void setChannelFollowed(const QString &jid, bool followed);
     Q_INVOKABLE void createChannel(const QString &name, const QString &description);
     Q_INVOKABLE void followChannelLink(const QString &link);
-    Q_INVOKABLE void createCommunity(const QString &name);
+    Q_INVOKABLE void createCommunity(const QString &name, const QString &token = QString(),
+                                    const QString &profile = QString());
     Q_INVOKABLE void joinGroupLink(const QString &link);
 
     // Bug reports. The environment is fetched separately so the dialog can
@@ -279,7 +321,7 @@ public:
     // after a reconnection, when anything that arrived meanwhile is missing.
     Q_INVOKABLE void refreshOpenMessages();
     Q_INVOKABLE bool canLoadOlderMessages() const;
-    Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {});
+    Q_INVOKABLE void sendMessage(const QString &text, const QString &replyTo = {}, const QString &mentionText = {}, const QVariantList &mentions = {});
     Q_INVOKABLE void sendStatusReply(const QString &recipientJid, const QString &statusMessageId, const QString &text);
     Q_INVOKABLE void requestLinkPreview(const QString &text);
     Q_INVOKABLE void clearComposerLinkPreview();
@@ -314,6 +356,7 @@ public:
     Q_INVOKABLE void downloadMedia(const QString &messageId);
     // Save a document to Downloads without launching an external application.
     Q_INVOKABLE void downloadDocument(const QVariantMap &message);
+    Q_INVOKABLE void downloadPhoto(const QVariantMap &message);
     QStringList documentDownloads() const;
     // Fetches a picture that has no preview, a few at a time.
     Q_INVOKABLE void ensureMedia(const QString &messageId);
@@ -351,6 +394,18 @@ signals:
     void selectedPresenceChanged();
     void chatInfoChanged();
     void groupInfoChanged();
+    void groupInfoEditFinished(const QString &token, const QString &error);
+    void groupPermissionEditFinished(const QString &token, const QString &error);
+    void groupJoinRequestsLoaded(const QString &token, const QVariantList &requests, const QString &error);
+    void groupPhotoPrepared(const QString &token, const QString &preview, const QString &error);
+    void interactiveFeatureFinished(const QString &token, const QVariantMap &result, const QString &error);
+    void groupPhotoSaved(const QString &token, const QString &error);
+    void groupJoinRequestReviewed(const QString &token, const QString &error);
+    void groupCreationBusyChanged();
+    void communityCreationBusyChanged();
+    void communityCreationFinished(const QString &token, const QVariantMap &community, const QString &error);
+    void groupCreationFinished(const QString &token, const QVariantMap &chat, const QString &error);
+    void groupContactsReady(const QString &token, const QVariantList &contacts, const QString &error);
     void groupActionFinished(const QString &jid, const QString &action, bool success);
     void sharedContentChanged();
     void mediaLibraryChanged();
@@ -377,6 +432,9 @@ signals:
     void profileDisplayNamesChanged();
     void profileUnreadCountsChanged();
     void searchResultsChanged();
+    void dateLookupChanged();
+    void mediaBatchChanged();
+    void messageDateLocated(const QString &chatJid, const QString &messageId);
     void chatQueryChanged();
     void chatSearchHitsChanged();
     void contactSearchHitsChanged();
@@ -412,6 +470,9 @@ signals:
     void localSettingsChanged();
 
 private:
+    void downloadAttachment(const QVariantMap &message, const QString &expectedKind, std::function<void(bool)> finished = {});
+    void runNextMediaSelection(quint64 generation);
+    QVariantMap resolveMediaSelectionItem(const QVariantMap &identity) const;
     void sendExpressionRequest(const QString &method, QJsonObject params, const QString &token, const QString &profile, const QString &chatJid, const QString &replyTo);
     QVariantList m_stickers;
     bool m_stickersLoading = false, m_stickersHasMore = false, m_stickersFavorites = false;
@@ -433,6 +494,8 @@ private:
     void processLine(const QByteArray &line);
     void processEvent(const QString &name, const QJsonValue &data);
     bool clearChatPresence();
+    bool updateGroupChatPresence(const QJsonObject &payload);
+    bool removeGroupChatPresence(const QString &sender);
     void setBusy(bool value);
     void upsertMessage(const QVariantMap &message);
     bool belongsToOpenChat(const QVariantMap &message) const;
@@ -450,7 +513,7 @@ private:
     void abandonPendingRequests(const QString &reason, bool announce);
     void syncChatListModel();
     void runSidebarSearch(const QString &query);
-    void applyChatAvatar(const QString &jid, const QString &path);
+    void applyChatAvatar(const QString &jid, const QString &path, bool confirmedRemoval = false);
     void runGroupAction(const QString &jid, const QString &method, const QString &action, QJsonObject params);
     bool copyImageFile(const QString &path);
     QString clipboardDirectory() const;
@@ -467,6 +530,7 @@ private:
     bool m_chatRefreshInFlight = false;
     bool m_chatRefreshAgain = false;
     QTimer m_chatPresenceExpiryTimer;
+    QHash<QString, QTimer *> m_groupPresenceTimers;
     QByteArray m_readBuffer;
     quint64 m_nextId = 0;
     QHash<QString, Callback> m_pending;
@@ -507,6 +571,8 @@ private:
     bool m_groupInfoLoading = false;
     bool m_groupRefreshAgain = false;
     bool m_groupActionBusy = false;
+    bool m_groupCreationBusy = false;
+    bool m_communityCreationBusy = false;
     quint64 m_groupGeneration = 0;
     QStringList m_blockedContacts;
     QVariantMap m_privacySettings;
@@ -522,6 +588,10 @@ private:
     bool m_ownProfileLoading = false;
     quint64 m_ownProfileGeneration = 0;
     PhotoQuality::Prepared m_profilePhoto;
+    PhotoQuality::Prepared m_groupPhoto;
+    QString m_groupPhotoToken;
+    QString m_groupPhotoJid;
+    bool m_groupPhotoPreparing = false;
     QString m_profilePhotoError;
     bool m_profilePhotoPreparing = false;
     bool m_profilePhotoSaving = false;
@@ -534,11 +604,13 @@ private:
     bool m_defaultTimerBusy = false;
     quint64 m_defaultTimerGeneration = 0;
     quint64 m_attachmentSession = 0;
+    QSet<QString> m_interactiveMutations;
     QVariantList m_chatLabels;
     QVariantList m_mediaLibrary;
     bool m_mediaLibraryHasMore = false;
     QString m_mediaLibraryCategory;
     bool m_mediaLibraryLoading = false;
+    QString m_libraryStarProfile;
     QVariantList m_sharedContent;
     bool m_sharedContentHasMore = false;
     QString m_sharedContentCategory;
@@ -547,7 +619,19 @@ private:
     // conversation, which would move it under the reader.
     void applyStarToOpenConversation(const QString &messageId, bool starred);
     QVariantList m_searchResults;
+    bool m_searchLoading = false;
+    QString m_searchError;
+    quint64 m_searchRequestGeneration = 0;
+    quint64 m_dateLookupGeneration = 0;
+    bool m_dateLookupBusy = false;
+    QString m_dateLookupError;
+    quint64 m_mediaBatchGeneration = 0;
+    bool m_mediaBatchBusy = false;
+    QString m_mediaBatchScope, m_mediaBatchProfile, m_mediaBatchChat, m_mediaBatchAction, m_mediaBatchSummary;
+    QVariantList m_mediaBatchItems;
+    int m_mediaBatchIndex = 0, m_mediaBatchFailed = 0;
     QVariantList m_starredMessages;
+    QString m_starredMessagesError;
     bool m_starredMessagesLoading = false;
     quint64 m_starredRequestGeneration = 0;
     QVariantList m_statusUpdates;

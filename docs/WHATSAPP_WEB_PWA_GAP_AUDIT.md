@@ -27,6 +27,547 @@ WhatsApp Web changes frequently. The dimensions below are a reference snapshot, 
 
 ## Executive result
 
+### Live-Web 50-acceptance-item batch — 2026-09-11
+
+Beads epic `whatsappgo-09f` tracks this batch as five ten-item work packages.
+These are 50 acceptance behaviors, not 50 separate major product features, and
+do not include the earlier completed batches below.
+
+| Package | New behavior covered | Native fixture |
+| --- | --- | --- |
+| `09f.1` Starred messages | Search, clear/reset, exact message jump, sender, date, media summaries, receipts, loading, error/retry, keyboard traversal | Combined search/calendar: 44 checks per theme |
+| `09f.2` Search | Loading, error/retry, obsolete-hit clearing, repeated-query ordering, profile guards, count, keyboard activation, group sender, global filenames, non-text media labels | Same combined fixture |
+| `09f.3` Calendar | Entry control, locale grid, previous/next month, future-date guard, today marker, keyboard days, exact local lookup, missing/error feedback, nested Escape | Same fixture, plus Go lookup overlay |
+| `09f.4` Video | Mute, volume, speed, fullscreen, dragging, keyboard seeking, Space, replay, visible focus, source labels | 25 checks per theme |
+| `09f.5` Bulk media | Shared and global star/unstar/download, selected bytes, busy/duplicate protection, partial failure/retry, source/profile validation | 20 checks per theme |
+
+The authenticated WhatsApp Web session was inspected with Playwright over CDP.
+Evidence in `/tmp/whatsappgo-live-batch.qCGyg3/fifty-*` includes the searchable
+starred panel and menu, conversation search results, date picker, and selected
+global-media toolbar. The account had no starred messages, so populated stars
+and failure cases were exercised with synthetic native data. Video controls were
+inspected using a synthetic three-second clip in Web's attachment preview, not
+by sending a message; the preview was cancelled. This is a reference for the
+playback controls, not a claim that the received-video viewer was inspected.
+
+Isolated actual-QML fake-daemon fixtures live in
+`/tmp/whatsappgo-fifty-search.JNd31x`, `/tmp/whatsappgo-fifty-bulk.1rpMzs`, and
+`/tmp/whatsappgo-fifty-video.2OsIP0`. They cover delayed/error/reordered responses,
+source chat and account changes, Downloads byte copies, cancellation, keyboard
+input, and real native video playback in light and dark modes. They are not
+repository test infrastructure. Go overlay tests cover date-bound validation,
+half-open bounds, deterministic ordering, chat isolation, empty dates, and
+23/25-hour daylight-saving days.
+
+Final validation: 89 focused checks in each theme, all 44 desktop CTests,
+`go test ./...`, `go vet ./...`, the date-lookup Go overlay, and
+`git diff --check` passed. The desktop was rebuilt without replacing the running
+user session. GitNexus's aggregate dirty-worktree scan reports CRITICAL risk
+across 47 changed files, including previous batches; this is not a release
+approval or a claim that every accumulated change belongs to this batch.
+
+The UI/UX skill informed keyboard focus and loading/error feedback. GitNexus
+impact checks were run before edits; QML edges were unresolved and manually
+traced. No commits, pushes, releases, or live message sends were performed.
+
+Limits remain explicit: starred search covers the latest 100 loaded stars
+(`whatsappgo-pzr`); date lookup only covers locally stored history; cancelling
+a bulk operation cannot undo an already submitted request; local bulk deletion
+is still separate from the revoke-for-everyone API (`whatsappgo-pzq`);
+picture-in-picture is not implemented.
+
+### Live-Web per-chat shared-content batch — 2026-09-11
+
+Beads `whatsappgo-rk9` and its ten children track this separate drawer batch,
+not the account-wide media library below. Playwright inspected the authenticated
+Web contact's Media, Documents and Links tabs, month sections, video/GIF badges,
+hover checkboxes, selection toolbar and all-chats shortcuts. Media, document and
+link selections were exercised and cancelled; Space also selected a focused
+media checkbox. No live downloads, forwards, stars or deletes were performed.
+
+Ten implemented gaps: calendar-month media groups; video duration badges; GIF
+badges; media selection; document selection; link selection; forwarding selected
+items with an explicit destination confirmation; direct document Downloads;
+category-preserving all-chats shortcuts; and keyboard-operable thumbnails with
+visible focus and automatic scrolling. Video activation uses the existing native
+player. Escape unwinds the viewer/dialog, selection, shared view and contact view
+in that order. Selection resets across chat, category and profile changes, and
+actions re-resolve selected identities against current non-revoked, non-view-once
+rows. Semantic theme colors keep the footer readable in dark mode. Thumbnail
+decode dimensions are bounded; Load more remains available for older local rows.
+
+Fresh private Web reference captures are outside the repository in
+`/tmp/whatsappgo-live-batch.qCGyg3/`: `contact-shared-stable`,
+`contact-video-hover`, `contact-picked-settled`, `contact-document-selected`,
+`contact-link-selected`, and `contact-keyboard-selected` (PNG/YML).
+The actual Qt application was exercised with isolated synthetic RPC and Downloads
+under `/tmp/whatsappgo-shared-batch.BLcOhU/`. All 47 checks passed in each of light
+and dark offscreen modes at DPR 1.25. Checks include original-byte saves, filename
+collisions, rejected-download recovery, explicit synthetic forwarding payloads,
+native video activation, draft preservation, narrow geometry, footer contrast,
+and stale/foreign/private selection rejection. An initial fixture assertion
+incorrectly counted the underlying chat's background auto-download as a selection
+action; targeted before/after request tracing proved selection sent no request,
+and the assertions now compare action-local deltas. No repository test
+infrastructure or diagnostic production logging was added.
+
+The 44-test desktop suite, `go test ./...`, `go vet ./...`, and
+`git diff --check` passed. This is not full Web shared-content parity: bulk
+star/delete/download actions remain tracked in `whatsappgo-pzq`; mixed-gallery
+history remains `whatsappgo-7yf`. The pre-existing invalid `media` icon warning
+on navigation is tracked in `whatsappgo-qva`. No commit, push or release was made.
+
+### Live-Web media-library parity batch — 2026-09-11
+
+Beads `whatsappgo-76w` and its ten children track this separate batch. After the
+user freed the browser, Playwright inspected the authenticated Web media library:
+sender filters, chronological/largest-file sorting, image context actions,
+document/link selection, and keyboard activation of its context-menu button.
+Largest-file sorting was verified from the document sizes, not inferred from
+the Spanish label. Selection was cancelled afterwards; no messages, stars,
+forwards, deletes or real-account downloads were performed.
+
+Ten implemented gaps: sender filters; largest-file sorting; explicit newest/
+oldest choices; document/link forwarding selection; context-menu selection;
+individual forwarding; source-chat star/unstar; direct attachment download;
+context jump to source; and keyboard-accessible media tiles. The native controls
+use existing menu components, semantic theme colors, visible focus indicators,
+and a second tab row in narrow windows. Sender filtering and sorting currently
+apply to loaded results, with an explicit Load more control; this is not a claim
+of server-wide sorting or complete WhatsApp media-library parity.
+
+Fresh reference evidence is in `/tmp/whatsappgo-live-batch.qCGyg3/`:
+`library-sort-reference`, `library-largest-settled`,
+`library-item-menu-settled`, `library-document-picked`,
+`library-link-settled`, and `library-keyboard-menu` (PNG/YML).
+These private reference captures remain outside the repository.
+
+Native validation uses the actual application with synthetic RPC data and
+isolated Downloads under `/tmp/whatsappgo-library-batch.lHu6R7/`. It covers the
+ten actions, duplicate selection IDs across chats, rejected stars/downloads,
+original-byte saves, filename collisions, stale-profile request rejection,
+Escape, source-message navigation, draft preservation and compact geometry.
+All 45 checks passed in light/offscreen and dark/GTK/Xvfb at DPR 1.25, including
+actual account switches and reopening the library after Links. The 44-test
+desktop suite, `go test ./...`, `go vet ./...` and `git diff --check` passed.
+No test infrastructure was added to the repository. Follow-ups are tracked as
+`whatsappgo-8fc` (server-wide ordering/filtering) and `whatsappgo-qva` (an existing
+invalid `media` navigation-icon request seen during section changes).
+
+### Live-Web photo-viewer parity batch — 2026-09-11
+
+Beads `whatsappgo-kqb` and its ten child issues track this separate batch.
+Playwright attached to the authenticated, headed `web.whatsapp.com` session and
+opened its actual photo viewer. Navigation, zoom/pan, reply, the reaction picker,
+pin-duration dialog and forwarding chooser were inspected. Star and Download
+were observed as controls, not executed against the real account. No messages,
+reactions, pins or forwards were sent; the temporary reply quote was cancelled.
+
+Ten implemented gaps: previous/next photo navigation; selectable thumbnails;
+jump to source; reply; star/unstar; pin-duration confirmation; reaction picker;
+forwarding chooser; direct original-file Downloads; and drag/keyboard panning
+without accidentally opening the menu. The responsive toolbar uses the existing
+native actions, semantic colors and keyboard-focus treatment. The gallery is
+limited to photos already loaded in the conversation/shared-media panel, not
+Web's complete mixed video/GIF/photo history.
+
+Fresh local Web evidence is under `/tmp/whatsappgo-live-batch.qCGyg3/`:
+`photo-settled.png/.yml`, `photo-pin-settled.png/.yml`,
+`photo-forward-settled.png/.yml`, `photo-react.png/.yml`,
+`photo-zoom-settled.png/.yml`, `photo-panned.png/.yml`, and
+`photo-previous-settled.png/.yml`. Private reference screenshots are not committed.
+
+Isolated native validation in `/tmp/whatsappgo-photo-batch.sq98rl/` covers 51
+checks per theme, including real pointer dragging, keyboard navigation, compact
+menus, draft preservation, rejected actions, stale-chat cancellation, revocation,
+original-byte downloads, filename collisions, and invalid download responses.
+Downloads and RPC mutations used synthetic fixtures and temporary directories,
+not the live account. Light/offscreen and dark/GTK/Xvfb both passed at DPR 1.25.
+The 44-test desktop suite, `go test ./...`, and `go vet ./...` also passed.
+
+### Live-Web keyboard parity batch — 2026-09-10
+
+Beads `whatsappgo-239` and its ten child issues track this batch. After the user
+linked the browser, Playwright attached to authenticated `web.whatsapp.com`
+in headed Chromium. Its actual Keyboard shortcuts dialog supplied the missing
+bindings; this was a fresh live comparison, not inference from old screenshots.
+Chat-info and attachment panels were also opened through their Web shortcuts.
+The remaining bindings were observed in Web's help, not exercised against live
+messages: no messages, stars, reactions, memberships, or settings were changed.
+
+Implemented: global chat search; next/previous filtered chat; list membership
+picker; sticker picker; chat info; attachments; focused/hovered-message reply,
+forward and star/unstar; and modified-Up editing from an empty composer.
+Existing workflows remain the source of each action. Navigation preserves
+drafts, message targeting prefers keyboard focus, and popups/viewers/selection
+modes block background actions. KDE's automatic filter-chip Alt mnemonics were
+removed from this fully custom-styled component because they intercepted the
+explicit attachment and reply shortcuts. The help dialog now scrolls and wraps.
+
+Local reference evidence: `/tmp/whatsappgo-live-batch.qCGyg3/`, specifically
+`web-shortcuts-settled.png`, `web-shortcuts-settled.yml`,
+`web-shortcuts-lower.png`, and `web-shortcuts-lower.yml`. These temporary files
+can contain account UI details and are intentionally not committed. The same
+directory contains an isolated actual-QML/RPC fixture exercising all ten
+workflows plus negative, draft, filtered-navigation and stale-target checks;
+it does not substitute for the live reference observation. No repository test
+infrastructure was added. All 37 fixture checks passed in light/offscreen and
+dark/GTK-Xvfb modes at DPR 1.25; all 44 serial desktop tests, `go test ./...`,
+`go vet ./...`, and `git diff --check` passed. Wide and small-window help
+screenshots were inspected. The dark fixture reported only the unavailable
+AT-SPI service warning from its isolated display environment.
+
+### Ten-item implementation batch — 2026-09-10
+
+Tracked in Beads `whatsappgo-047` (and `whatsappgo-d2a` for received polls):
+
+1. Received poll details, totals and explicit voting/retraction.
+2. Poll creation from the attachment menu.
+3. Current group invitation QR display and copyable link.
+4. Preview-before-join, including unconfirmed approval-request handling.
+5. Resolved, searchable included/excluded status-audience contacts (read-only).
+6. Native spelling suggestions in dropped-file captions.
+7. Working Calls/Channels/Communities list search.
+8. Community description editing with stale-value and admin checks.
+9. Linked-community-group management, with explicit link/unlink confirmation.
+10. Received event details and cancellation display (no RSVP/edit/create).
+
+Message-edit spelling was already implemented, so it was not counted again.
+The pinned library cannot write the status audience; this batch exposes the
+actual returned exceptions rather than presenting a nonfunctional setter.
+
+Validation uses the real compiled QML and RPC bridge against an isolated fake
+service, plus temporary Go overlays for invitation validation, poll lifecycle,
+alias/privacy cleanup, event decoding and encrypted poll-key recovery. Both
+themes and the existing 44 desktop tests passed. No real messages, votes,
+invitations or community changes were made, and this is not a fresh Playwright
+comparison. Fixtures are outside the repository; no test infrastructure was added.
+
+Poll totals only include updates received by this device. Uncached historical
+poll/event details need history replay; unsupported variants show errors. Event
+RSVP/edit/create and phone-side audience editing remain outside this batch.
+
+### Restored contact pictures in New group — 2026-09-10
+
+The New group member picker now normalizes saved avatar paths with the same
+file-URL helper as the chat list and other contact surfaces. Passing a raw
+absolute path to its Avatar previously made Qt look under `qrc:/home/...`,
+including while the picker was instantiated during startup. An isolated
+actual-QML fixture reproduced this with a valid synthetic PNG and verified
+the file-URL control. Missing images retain the existing initials fallback;
+the shared avatar renderer and users' cache files are unchanged.
+
+### Inline sticker cache recovery — 2026-09-10
+
+A missing cached sticker reproduced the supplied `Sticker / Open` fallback:
+the nonempty saved path suppressed automatic downloading even after Qt reported
+an image error. The message delegate now requests bounded recovery through the
+existing media queue and reloads the image when the same path is materialised
+again. An unavailable sticker retains its compact, transparent footprint with
+an accessible Retry action instead of opening a nonexistent file. Valid cached
+stickers do not trigger recovery; existing animated playback remains unchanged.
+Validation uses an isolated actual-QML/fake-RPC fixture, not real message writes
+or a fresh live WhatsApp Web comparison.
+
+### Group photo editing — 2026-09-10
+
+Group info now offers Add/Edit group photo below the avatar for permitted
+members. The system file chooser selects a still JPEG/PNG; the editor previews
+an automatic centered 640×640 crop before explicit Save. The original stays
+unchanged and the private prepared JPEG contains no source metadata. Removal
+has a separate confirmation naming the group and focusing Cancel. Escape steps
+back through confirmation/editor/Group info and restores entry focus. The UI/UX
+pass uses semantic light/dark colors, plain-text identities, bounded geometry,
+and explicit pending/error states. Closing a submitted write does not cancel it.
+
+The optional `GroupPhotoEditor` capability and `group.set_photo` RPC recheck
+fresh membership/edit-info permission, validate prepared JPEG bytes, and always
+target the group JID rather than the own-profile empty target. An upload needs
+a confirmed picture ID; errors/missing acknowledgements retain the preview and
+require reopening before another write. No automatic retry or atomic expected-
+photo-ID comparison is claimed. Confirmed bytes refresh the local avatar URL;
+removal clears only the group's cached photo, ID and derived round previews.
+Cache failure after a server change is reported as such. Chat/account changes
+invalidate the editor and callbacks; the prepared file remains alive through
+an outstanding acknowledgement and is then released.
+
+The actual-QML/fake-local-RPC probe passes 70 checks in light mode and 71 in a
+GTK-backed dark run, including verification of a visible native GTK chooser
+inside isolated Xvfb, with no real account data or group writes. Both themes'
+preview/removal screenshots were visually inspected at 1007 × 686. Permission,
+input, cache and RPC Go overlays pass, including a regression that first caught
+leftover derived previews after removal. Full Go tests/vet, native build and
+the 44 existing desktop tests cover the combined changes. Artifacts are outside
+the repository in `/tmp/whatsappgo-group-photo-debug.8XJEnA`.
+This uses the existing reference inventory, not a fresh Playwright comparison.
+Tracked as Beads `whatsappgo-scl`.
+
+### Cross-computer pinned chat consistency — 2026-09-10
+
+The supplied screenshots show one pinned chat on another computer and three
+in the local debug instance. A disposable fixture reproduces that exact count
+difference using the production event handlers and SQLite store: identical pin
+events produce three pins with history-first delivery, but only one when
+bootstrap/recent/full history arrives afterward. This establishes a real local
+defect, not the exact remote cause; the other computer's build and sync state
+have not been inspected.
+
+Chat rows now retain `pin_action_at` separately from display-only `pinned_at`.
+Both pin and unpin actions are versioned; older app-state replay is ignored.
+History seeds pin state only until an explicit action is known. PN/LID merging
+keeps the newest action, including unpins, rather than OR-ing stale pin flags.
+The additive column survives restart without changing message history. A v7
+chat-settings backfill requests one verified full replay for existing profiles,
+retaining the existing failure/recovery safeguards and never sending a pin write.
+
+Regression fixtures are outside the repository at
+`/tmp/whatsappgo-pin-sync-debug.HVzgmN`. They cover opposite delivery orders,
+stale unpin/repin replay, both alias directions, old-schema upgrades, restart,
+concurrent history/actions, missing timestamps, local unpin acknowledgement,
+and failed/successful one-time repair. No live pins were changed. This was a
+backend diagnosis using supplied screenshots, not a new Playwright comparison.
+Full Go tests and vet pass; the pin fixtures also pass ten race-enabled runs.
+The native build succeeds, and all 44 existing desktop tests pass in isolated
+XDG directories. The new build has not been released or installed remotely.
+Tracked as Beads `whatsappgo-7t9`. Group-photo work was temporarily paused for
+this report, then resumed and validated as described above.
+
+### Individual group join requests — 2026-09-10
+
+Current admins now have **Group info → Pending join requests**, with name/phone
+search, request times, and explicit per-person Approve/Reject confirmation.
+Reject dismisses the request without blocking the applicant. The list is
+virtualized and uses plain-text identities, semantic light/dark colors and
+bounded layouts. Confirmations focus Cancel; Escape returns to the list, then
+the originating group-info row. Closing a submitted decision does not cancel it.
+
+The optional `GroupRequestManager` capability exposes `group.requests.list` and
+`group.requests.review`. Both require fresh admin metadata; review additionally
+rechecks the exact applicant JID and request timestamp before writing. Withdrawn,
+reissued and unknown-time requests fail safely. This is a preflight rather than
+an atomic server timestamp comparison. A success requires acknowledgement for
+the specific applicant. Missing or uncertain responses retain an error and
+require a refreshed list before another decision; there is no automatic retry.
+Chat/account changes invalidate callbacks, and admin loss clears applicant data.
+Community containers, default announcement groups and suspended groups remain
+excluded. No bulk approval or automatic request-count badge is included.
+
+Verification used isolated actual-QML/local-RPC fixtures, with 86 checks per
+theme, including confirmations, keyboard/back/focus, name/phone search, offline
+state, permission loss, missing acknowledgements, draft retention, and delayed
+responses across closed/reopened dialogs and chat/account switches. The first
+rendering pass found an undefined color token; explicit semantic-token assertions
+reproduced it and pass after correction. Light/dark screenshots were visually
+inspected at 1007 × 686. Full Go tests, Go vet, disposable Go overlays and all
+44 existing desktop tests pass; the full native build succeeds. Fixtures and
+logs are under `/tmp/whatsappgo-join-requests-debug.KOmCtA`, not new repository
+test infrastructure. No live applicant was approved or rejected. This pass uses
+the existing reference inventory, not a new Playwright comparison.
+
+Tracked as Beads `whatsappgo-zbg`; group photo editing is the next tracked gap,
+`whatsappgo-scl`. The earlier permissions section below describes the policy
+toggle separately from this new individual-review screen.
+The updated app was reloaded; read-only status reports connected/logged in, and
+the fresh startup journal has no QML binding/type/reference errors.
+
+### Group permissions — 2026-09-10
+
+Group info now opens a permissions overview: send messages, edit group
+information, add other members, and approve new members. Ordinary members can
+read the current values. Current admins can edit one setting at a time with
+explicit Save/Cancel. Unknown server values remain unavailable, not assumed off.
+The native radio controls retain keyboard behavior with semantic theme colors.
+Escape returns from a field to the overview, then to the originating info row;
+closing a pending request warns that submission is not cancelled.
+
+The new optional `GroupPermissionEditor` capability and `group.set_permission`
+RPC validate explicit boolean values, fresh admin status and the previous value.
+PN/LID aliases and super-admin identity are supported. An already-matching value
+is a no-write success; the original-value check is a preflight, not an atomic
+server comparison. Community containers, default announcement groups and
+suspended groups are excluded. This adds the join-approval policy toggle, not
+management of pending join requests. Group photo editing, polls and events remain
+separate gaps.
+
+Verification uses the supplied reference screenshots and existing control
+inventory, not a new live Playwright comparison. Disposable actual-QML/local-RPC
+fixtures pass 77 checks in each theme: real entry points, save/error/retry,
+unknown acknowledgements, radio keyboard selection, focus/back navigation,
+permission loss, unknown values, offline state, draft preservation and delayed
+responses across chat/account switches. Initial probes caught a QML signal/binding
+ordering issue and focus captured on the drawer instead of the entry row; both
+are fixed and the same checks now pass. Visual inspection caught a native-style
+dark-text mismatch; radio rendering now uses the app's theme tokens.
+
+Light/dark screenshots were inspected at 1007 × 686. The full desktop build and
+all 44 existing desktop tests pass with isolated runtime/config/data/cache.
+Disposable Go overlays cover
+wire mappings, validation, backend capability absence, permission/identity cases,
+idempotent retries and failures; full Go tests and vet also pass. Fixtures live
+under `/tmp/whatsappgo-group-permissions-debug.cQTwZK`, not in the repository.
+No real group settings were changed to test this feature.
+After launching the updated build, read-only checks report connected/logged in
+and the fresh startup journal contains no QML binding/type/reference errors.
+
+### Mention navigation and failed media previews — 2026-09-09
+
+Tagged names in conversation messages now open the tagged person's chat using
+the stored PN/LID identity, not the display label. The readable chat title and
+unsent group draft are retained. Tags are internal links, never browser URLs;
+only identities actually rendered in the message may navigate. Selection mode
+and passive message-info previews suppress navigation. Dragging still selects
+readable text. Keyboard users can focus the message, move between tags with
+Tab/Shift+Tab, activate with Enter, and leave at either end without a focus trap.
+Focus is visibly marked and the selected name is exposed to accessibility.
+
+The separate `previewReady` warning noted below is also fixed. A missing image
+collapsed its frame, which changed `Image.sourceSize`, restarted decoding and
+changed the status that controlled the frame. The isolated real-QML repro
+reproduced this on repeated runs; fixing only the decode bounds in the probe
+removed the loop. Decode bounds now use metadata-based dimensions independently
+of status/visibility. Broken photos/stickers retain attachment fallbacks, broken
+video posters retain playable placeholders, valid replacements recover, and
+full-resolution upgrades preserve bubble geometry. View-once content remains
+excluded from preview loading.
+
+Verification: 61 mention checks and 13 media checks pass in each theme using
+disposable actual-QML fixtures. These cover clicks, duplicate labels, Hebrew,
+drafts, selection/copy, keyboard focus, failed media, recovery and resizing.
+Focus screenshots were visually checked in both themes. The desktop build,
+all 44 existing desktop tests and `go test ./...` pass. Tests use fake accounts,
+not live sends; no repository test infrastructure was added. Reference behavior
+comes from the user's WhatsApp Web screenshot, not a new Playwright session.
+After relaunch, the account reports connected/logged in; the fresh startup log
+contains no `previewReady` binding-loop warning.
+
+### Individual group mentions — 2026-09-09
+
+Typing `@` now opens a filterable group-member picker above the composer.
+Selecting a member inserts a readable, highlighted name and retains the
+explicit member JID through native undo/redo and per-account chat drafts.
+Arrow keys navigate, Enter/Tab selects without sending, and Escape dismisses
+the picker before other navigation. Failed roster requests have a retry state;
+they cannot offer members from the previous group. Failed sends preserve tags,
+and late acknowledgements cannot erase a newer tag with an identical label.
+
+The send API validates explicit group mentions and encodes `MentionedJID`
+alongside the original wire tokens, preserving quotes and link previews.
+Received metadata persists across reopening and history replay. Bubbles and
+chat previews resolve names through local contacts, account identity and PN/LID
+aliases, including old numeric mentions when their identity is known. Stored
+bodies remain unchanged. Revocation and view-once redaction clear metadata.
+Unknown identities stay unresolved; this does not implement `@everyone`,
+status mentions, or a mention picker in caption/edit dialogs.
+
+Verification used the user's WhatsApp Web screenshots and isolated real-QML
+fake-RPC fixtures, not live messages. The initial `@` probe failed twice; the
+completed probe passes 45 checks in each theme, including received rendering,
+RTL names, drafts, copy/paste, errors, acknowledgement races and window bounds.
+Screenshots were visually inspected in both themes. Disposable Go overlay
+tests cover protocol round trips, service validation, legacy own-LID lookup,
+storage, alias merges, replay and redaction. Full Go tests, `go vet ./...`, the
+desktop build and all 44 existing desktop tests pass. No repository test
+infrastructure was added.
+
+After relaunch, read-only checks confirmed that the exact old numeric mention
+in the supplied “test” group resolves to a name and no longer appears as the
+opaque tag in its chat preview. The account is connected. Startup still logs
+`MessageDelegate.previewReady` media binding warnings; this change does not
+claim to fix that separate media-preview issue.
+
+### Named group typing and recording — 2026-09-09
+
+The supplied group-chat screenshot showed only "Typing…". An isolated replay
+confirmed three causes: the header ignored the sender, presence events lacked a
+display name, and the desktop stored only one sender per chat. Group activity
+now carries a locally resolved name and is tracked independently per normalized
+member JID, including simultaneous typing/recording, paused events and ten-second
+expiry. Names use cached contacts and PN/LID aliases without fetching group
+rosters or creating chat rows. Unknown identities have explicit fallbacks;
+opaque LIDs are not labelled as phone numbers.
+
+The status line stays within the header in both themes, uses plain text and RTL
+isolation, and exposes the full text via tooltip/accessibility when elided.
+Navigation, account switches and disconnects discard all member activity.
+One-to-one typing, recording, online and last-seen behavior is unchanged.
+
+Verification: the actual-QML/local-RPC probe failed before the change and now
+passes 32 checks in each theme, including independent expiry, composer draft
+preservation and cleanup. A disposable Go overlay verifies event delivery and
+16 identity-resolution cases. The full Go tests, `go vet ./...`, desktop build
+and all 44 existing desktop tests pass. These checks use isolated fixtures; no
+live group typing was solicited and no messages were sent. No repository test
+infrastructure was added.
+
+### Community creation entry points and recovery — 2026-09-09
+
+The authenticated WhatsApp Web session was inspected through Playwright:
+New chat → New community opens an introduction, then a creation form with
+community name, description, photo, and an explicit Create action. We backed
+out without submitting or changing account data.
+
+WhatsAppGo's New chat row previously reported "not supported" even though
+`community.create` existed. Both that row and the Communities header now open
+the same name-and-create form. It retains drafts/errors, validates 1–100 Unicode
+code points, disables duplicate and offline submissions, and returns to the
+originating page with Escape. Only a confirmed result in the still-open form
+opens Communities; late replies cannot hijack a new dialog or another account.
+An uncertain result warns the reader to check Communities before retrying.
+The Go adapter now validates names and connection state and guards empty results.
+
+This closes entry-point and error-recovery gaps, not full community setup parity:
+photo, description, linking groups and community membership management remain
+unimplemented here and are explicitly identified in the form. Validation uses
+disposable local-RPC/QML fixtures, not real community creation or new repository
+test infrastructure.
+
+Verification: 38 isolated actual-QML/local-RPC checks passed in each theme,
+including both entry points, name limits, failure/retry, uncertain results,
+duplicate submissions, focus restoration, pending-close/reopen and account
+switching. The existing group-creation probe also passed all 33 checks.
+`go test ./...`, `go vet ./...`, the disposable Go validation overlay and all
+44 desktop tests passed. Fixtures and screenshots are under
+`/tmp/whatsappgo-community-check.NJYKpU`; no real communities were created.
+
+### Group name and description editing — 2026-09-09
+
+Added compact inline edit pencils beside the group name and description,
+including an empty-description entry point. Both fields remain copyable as
+literal text. Dedicated editors offer explicit Save/Cancel, Unicode counters,
+multiline description scrolling, draft-preserving errors, and Escape back to
+group info with keyboard focus restored. Name editing permits 100 Unicode code
+points; the description editor uses a 2048-code-point limit and supports clearing.
+
+`group.set_info` uses the optional `GroupInfoEditor` capability. The live adapter
+checks fresh membership/admin-only metadata permissions and expected old text
+before writing. Description updates include the current topic ID; name conflict
+checking is a preflight, not an atomic server comparison. Stale account/chat
+requests, duplicate saves, and older metadata replies are guarded. Community
+containers/announcement groups and suspended groups are excluded. Group photos,
+group permission editing, polls, and events remain separate gaps.
+
+The authenticated Playwright session was checked again, but its Groups filter
+contained no group conversations. No group was created to obtain a reference.
+This pass therefore uses existing group-info screenshots/control inventory plus
+[WhatsApp's official group-edit guidance](https://faq.whatsapp.com/493270532852273/?cms_platform=web)
+(which documents the 100-character name limit); it does not claim a measured live
+editor comparison. The browser was returned to its All-chats filter. No real
+group was modified for validation.
+
+Disposable Go overlays and actual-QML/local-RPC fixtures are kept under
+`/tmp/whatsappgo-group-edit.gzEsgb`, not added as repository test infrastructure.
+They cover field validation, permissions and PN/LID self aliases, optional backend
+support, failure/retry, empty-description saves, delayed responses, account/chat
+switches, Unicode limits, compact light/dark layout, and keyboard back/focus.
+Both editor fixtures passed 41 checks. Full Go tests (including the disposable
+overlays) and `go vet ./...` passed. The desktop update-settings check failed
+when attached to the user's old live daemon, which reported an available update
+instead of the test's assumed "Check" state; it passed with an isolated runtime.
+No update-settings code or repository test infrastructure was changed for this.
+The final full desktop run passed all 44 checks with isolated runtime, config,
+data, and cache directories (and the real test daemon available for lifecycle
+checks). Light/dark editor screenshots were visually inspected at 1007 × 686.
+
 ### Contact sharing and live-reference recheck — 2026-09-09
 
 Playwright is connected to the authenticated WhatsApp Web session again. This
@@ -1143,10 +1684,21 @@ Still different, and deliberately so for now:
 Implemented 2026-09-04:
 
 - **New group** (`group.create` → `whatsmeow.CreateGroup`). The app menu's first
-  PWA entry now exists, with a name field capped at the 25 characters WhatsApp
-  accepts and a multi-select member list drawn from existing one-to-one chats,
+  PWA entry now exists, initially with a name field capped at 25 characters
+  and a multi-select member list drawn from existing one-to-one chats,
   because a free-text JID field would invite strangers on a typo. The new
   conversation opens as soon as the server confirms it.
+  **2026-09-09:** Connected the previously dead New chat → New group row to
+  the same creator as the menu and shortcut. Member selection now precedes
+  name/confirmation; search includes archived chats and saved contacts and
+  ignores stale replies. Selection survives filtering and Back. Pending writes
+  are guarded against duplicates, errors keep the draft, and closing or changing
+  accounts prevents a late result from taking over navigation. Updated the name
+  limit to 100 Unicode characters and validated/deduplicated user JIDs before
+  network requests. The member step was compared read-only with the connected
+  WhatsApp Web instance through Playwright; no real group was created.
+  [WhatsApp's documented limits](https://faq.whatsapp.com/3242937609289432/)
+  are 100 name characters and 1024 total members, including the creator.
 - **Mark all as read** (`chats.mark_all_read`). Clears every unread conversation,
   archived ones included. One failure does not abandon the rest; the count that
   was actually cleared comes back.

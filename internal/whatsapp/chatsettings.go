@@ -351,24 +351,29 @@ func (c *Client) BlockedContacts(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) CreateGroup(ctx context.Context, name string, participants []string) (model.Chat, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return model.Chat{}, errors.New("a group needs a name")
-	}
-	if len(participants) == 0 {
-		return model.Chat{}, errors.New("a group needs at least one other participant")
-	}
-	targets := make([]types.JID, 0, len(participants))
-	for _, participant := range participants {
-		jid, err := types.ParseJID(strings.TrimSpace(participant))
-		if err != nil {
-			return model.Chat{}, err
-		}
-		targets = append(targets, jid)
-	}
-	info, err := c.wa.CreateGroup(ctx, whatsmeow.ReqCreateGroup{Name: name, Participants: targets})
+	name, targets, err := validateGroupCreation(name, participants)
 	if err != nil {
 		return model.Chat{}, err
+	}
+	if c.wa == nil || !c.wa.IsConnected() || !c.wa.IsLoggedIn() {
+		return model.Chat{}, errors.New("connect to WhatsApp before creating a group")
+	}
+	// WhatsApp includes the creator automatically, under either identity.
+	others := targets[:0]
+	for _, jid := range targets {
+		if jid != c.wa.Store.GetLID().ToNonAD() && (c.wa.Store.ID == nil || jid != c.wa.Store.ID.ToNonAD()) {
+			others = append(others, jid)
+		}
+	}
+	if len(others) == 0 {
+		return model.Chat{}, errors.New("select at least one member other than yourself")
+	}
+	info, err := c.wa.CreateGroup(ctx, whatsmeow.ReqCreateGroup{Name: name, Participants: others})
+	if err != nil {
+		return model.Chat{}, err
+	}
+	if info == nil || info.JID.IsEmpty() {
+		return model.Chat{}, errors.New("group creation was not confirmed; check your chats before trying again")
 	}
 	chat := model.Chat{JID: info.JID.String(), Title: name, IsGroup: true, LastMessageAt: time.Now().UnixMilli()}
 	if err := c.store.UpsertChat(ctx, chat); err != nil {

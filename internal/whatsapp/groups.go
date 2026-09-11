@@ -96,6 +96,9 @@ func (c *Client) GroupInfo(ctx context.Context, chatJID string) (model.GroupInfo
 	}
 	result.CanAdd = result.IsMember && (result.CanManage || info.MemberAddMode == types.GroupMemberAddModeAllMember)
 	result.CanInvite = result.CanAdd
+	result.CanEditInfo = c.canEditGroupInfo(info)
+	result.Permissions = groupPermissionValues(info)
+	result.CanEditPermissions = canEditGroupPermissions(info, c.wa.Store.GetJID(), c.wa.Store.GetLID())
 	return result, nil
 }
 

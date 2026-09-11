@@ -29,7 +29,31 @@ Item {
     signal animationFailed(string message)
     signal quotedMessageRequested(string messageId)
     signal viewOnceNoticeRequested()
-	signal infoRequested(var message)
+    signal mentionRequested(string jid, string name)
+    signal interactiveRequested(var message)
+    signal infoRequested(var message)
+
+    // Only Main dispatches shortcuts. A shared preview in Message info must
+    // never compete with the conversation for a window-wide key sequence.
+    readonly property bool shortcutHovered: bubbleHover.hovered
+        || messageMenuButton.hovered || messageReactionButton.hovered
+
+    function triggerKeyboardAction(action) {
+        if (!actionsEnabled || selectionActive || modelData.revoked
+                || !modelData.id || modelData.kind === "system")
+            return false
+        if (action === "reply") {
+            replyRequested(modelData.id, viewOnceKind ? mediaLabel : modelData.body || mediaLabel)
+        } else if (action === "forward" && !viewOnceKind) {
+            forwardRequested(modelData.id)
+        } else if (action === "star" && !viewOnceKind) {
+            starRequested(modelData.id, modelData.sender_jid || "",
+                          Boolean(modelData.from_me), !modelData.starred)
+        } else {
+            return false
+        }
+        return true
+    }
 
     readonly property bool hasReply: !viewOnceKind && Boolean(modelData.reply_to)
     readonly property bool viewOnceKind: modelData.kind === "view_once"
@@ -40,6 +64,10 @@ Item {
     // fills in the transparency the sticker was drawn around, and it frames a
     // picture that is meant to be loose on the page.
     readonly property bool stickerKind: modelData.kind === "sticker"
+    // A persisted cache path is not proof that its file survived a restore or
+    // cache eviction. Reload a recovered file even when its path is unchanged.
+    property int stickerRevision: 0
+    readonly property bool stickerPreviewFailed: stickerKind && hasPreview && mediaImage.status === Image.Error
     readonly property bool gifKind: modelData.kind === "video" && Boolean(modelData.gif_playback)
     readonly property bool animatedSticker: stickerKind && Boolean(modelData.sticker_animated) && Boolean(modelData.sticker_source)
     readonly property bool animatedKind: gifKind || animatedSticker
@@ -233,6 +261,7 @@ Item {
         case "contact": return qsTr("Contact")
         case "location": return qsTr("Location")
         case "poll": return qsTr("Poll")
+        case "event": return qsTr("Event")
         case "view_once": return qsTr("View once message")
         default: return ""
         }
@@ -363,14 +392,38 @@ Item {
             contextMenu.open()
 
             quickReactionPopup.pairedWithMenu = true
-            quickReactionPopup.x = clampPopupX(
-                quickReactionPopup, contextMenu.x + contextMenu.width - quickReactionPopup.width)
-            let reactionY = contextMenu.y - quickReactionPopup.height - 6
-            if (reactionY < 8)
-                reactionY = contextMenu.y + contextMenu.implicitHeight + 6
-            quickReactionPopup.y = clampPopupY(quickReactionPopup, reactionY)
+            positionMessagePopups()
             quickReactionPopup.open()
+            Qt.callLater(root.positionMessagePopups)
         }
+    }
+
+    function positionMessagePopups() {
+        if (!contextMenu || !contextMenu.visible || !quickReactionPopup.pairedWithMenu)
+            return
+        // The menu's visibility-dependent rows are polished during open(), and
+        // WhatsAppMenuPopup clamps it again afterwards. Follow those final bounds
+        // rather than leaving the tray at the menu's original click position.
+        const gap = 6
+        const margin = 8
+        const menuHeight = Math.max(contextMenu.height, contextMenu.implicitHeight)
+        const trayHeight = quickReactionPopup.height
+        const bottom = contextMenu.parent.height - margin
+        contextMenu.x = clampPopupX(contextMenu, contextMenu.x)
+        contextMenu.y = clampPopupY(contextMenu, contextMenu.y)
+        let trayY = contextMenu.y - trayHeight - gap
+        if (trayY < margin) {
+            trayY = contextMenu.y + menuHeight + gap
+            if (trayY + trayHeight > bottom) {
+                // Neither side fits at the current anchor. Move the pair, not
+                // just the tray: an independent clamp would cover menu actions.
+                contextMenu.y = margin + trayHeight + gap
+                trayY = margin
+            }
+        }
+        quickReactionPopup.x = clampPopupX(
+            quickReactionPopup, contextMenu.x + contextMenu.width - quickReactionPopup.width)
+        quickReactionPopup.y = trayY
     }
 
     function openMessageMenuFromButton() {
@@ -522,8 +575,17 @@ Item {
     readonly property bool needsAutoDownload: autoDownloadCeiling > 0 && !hasMedia
         && Number(modelData.media_size || 0) <= autoDownloadCeiling
     function fetchMediaIfNeeded() {
-        if (needsAutoDownload && modelData.id)
+        if ((needsAutoDownload || (stickerPreviewFailed && actionsEnabled && !modelData.revoked
+                && Number(modelData.media_size || 0) <= autoDownloadCeiling)) && modelData.id)
             backend.ensureMedia(modelData.id)
+    }
+    onStickerPreviewFailedChanged: if (stickerPreviewFailed) fetchMediaIfNeeded()
+    Connections {
+        target: backend
+        function onMediaReady(messageId, path) {
+            if (root.stickerKind && messageId === root.modelData.id)
+                ++root.stickerRevision
+        }
     }
     Component.onCompleted: fetchMediaIfNeeded()
     onModelDataChanged: {
@@ -819,10 +881,34 @@ Item {
                 // A downloaded video still belongs on screen as a video rather
                 // than as a line of text.
                 readonly property bool videoPlaceholder: root.modelData.kind === "video" && !previewReady
-                visible: previewReady || videoPlaceholder
+                readonly property bool stickerPlaceholder: root.stickerKind && !previewReady
+                visible: previewReady || videoPlaceholder || stickerPlaceholder
                 x: -root.mediaOutset
                 width: root.mediaWidth
-                height: visible ? (previewReady ? root.mediaDisplayHeight : 150) : 0
+                height: visible ? (root.stickerKind || previewReady ? root.mediaDisplayHeight : 150) : 0
+
+                Column {
+                    visible: mediaFrame.stickerPlaceholder
+                    anchors.centerIn: parent
+                    width: parent.width
+                    spacing: 8
+                    Label {
+                        width: parent.width
+                        text: qsTr("Sticker unavailable")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                        color: Theme.textMuted
+                    }
+                    Button {
+                        objectName: "stickerRetry"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: qsTr("Retry")
+                        enabled: root.actionsEnabled && !root.modelData.revoked
+                        Accessible.name: qsTr("Retry loading sticker")
+                        onClicked: backend.downloadMedia(root.modelData.id)
+                    }
+                }
 
                 Rectangle {
                     anchors.fill: parent
@@ -835,15 +921,20 @@ Item {
                     objectName: "messageMedia"
                     anchors.fill: parent
                     visible: mediaFrame.previewReady && (!animationLoader.item || !animationLoader.item.hasFrame)
-                    source: root.hasPreview ? Theme.fileUrl(root.previewPath) : ""
+                    source: root.hasPreview ? Theme.fileUrl(root.previewPath)
+                        + (root.stickerKind ? "#sticker-" + root.stickerRevision : "") : ""
                     fillMode: root.modelData.kind === "sticker" ? Image.PreserveAspectFit : Image.PreserveAspectCrop
                     asynchronous: true
                     cache: true
                     smooth: true
                     // Limit decoding, not the original file. The viewer still
                     // opens the full-resolution image for zooming.
-                    sourceSize: Qt.size(Math.ceil(width * root.Screen.devicePixelRatio),
-                                        Math.ceil(height * root.Screen.devicePixelRatio))
+                    // Error collapses the frame; deriving the decode size
+                    // from that frame would reload the failed source, change
+                    // status, and reopen the frame in a binding loop. These
+                    // metadata-based bounds do not depend on image status.
+                    sourceSize: Qt.size(Math.ceil(root.mediaWidth * root.Screen.devicePixelRatio),
+                                        Math.ceil(root.mediaDisplayHeight * root.Screen.devicePixelRatio))
                     mipmap: root.previewIsThumbnail
                     Accessible.name: root.modelData.body || root.mediaLabel
                 }
@@ -917,7 +1008,7 @@ Item {
                     objectName: "messageMediaOpenArea"
                     z: 1
                     anchors.fill: parent
-                    enabled: root.modelData.kind === "video" || root.hasPreview
+                    enabled: root.modelData.kind === "video" || mediaFrame.previewReady
                     Accessible.name: root.animatedKind
                         ? (root.animationRunning ? qsTr("Pause %1").arg(root.mediaLabel) : qsTr("Play %1").arg(root.mediaLabel))
                         : qsTr("View %1").arg(root.mediaLabel)
@@ -1178,7 +1269,7 @@ Item {
                 // Files that have no picture of their own keep the descriptive
                 // row; a photo or video only falls back to it without a preview.
                 visible: (root.mediaKind && !root.audioKind && !root.documentKind && !mediaFrame.visible)
-                    || root.modelData.kind === "poll" 
+                    || root.modelData.kind === "poll" || root.modelData.kind === "event"
                 width: root.contentWidth
                 spacing: 8
                 Rectangle {
@@ -1193,6 +1284,7 @@ Item {
                         source: root.modelData.kind === "video" ? Qt.resolvedUrl("icons/play.svg")
                             : root.modelData.kind === "document" ? Qt.resolvedUrl("icons/document.svg")
                             : root.modelData.kind === "poll" ? Qt.resolvedUrl("icons/poll.svg")
+                            : root.modelData.kind === "event" ? Qt.resolvedUrl("icons/calendar.svg")
                             : Qt.resolvedUrl("icons/gallery.svg")
                         tint: Theme.icon
                     }
@@ -1205,6 +1297,13 @@ Item {
                     font.pixelSize: root.captionFontSize
                     font.weight: Font.Medium
                     elide: Text.ElideRight
+                }
+                ToolButton {
+                    objectName: "interactiveMessageAction"
+                    visible: root.modelData.kind === "poll" || root.modelData.kind === "event"
+                    text: root.modelData.kind === "poll" ? qsTr("View poll") : qsTr("View event")
+                    enabled: root.actionsEnabled && !root.selectionActive && !root.modelData.revoked
+                    onClicked: root.interactiveRequested(root.modelData)
                 }
                 ToolButton {
                     objectName: root.documentKind ? "fallbackMediaAction" : "mediaAction"
@@ -1343,6 +1442,9 @@ Item {
                 maximumWidth: root.contentMaxWidth
                 plainText: root.modelData.revoked ? qsTr("This message was deleted")
                     : root.viewOnceKind ? "" : root.modelData.body || ""
+                mentions: root.modelData.revoked || root.viewOnceKind ? [] : root.modelData.mentions || []
+                mentionNavigationEnabled: root.actionsEnabled && !root.selectionActive
+                onMentionActivated: (jid, name) => root.mentionRequested(jid, name)
                 color: root.modelData.revoked ? Theme.textMuted : Theme.text
                 font.pixelSize: root.bodyFontSize
                 font.italic: Boolean(root.modelData.revoked)
@@ -1524,6 +1626,19 @@ Item {
             property alias quickReactionPopup: quickReactionPopup
             property alias fullReactionPicker: fullReactionPicker
             property alias reactionDetailsPopup: reactionDetailsPopup
+
+            Connections {
+                target: contextMenu
+                function onXChanged() { Qt.callLater(root.positionMessagePopups) }
+                function onYChanged() { Qt.callLater(root.positionMessagePopups) }
+                function onHeightChanged() { Qt.callLater(root.positionMessagePopups) }
+                function onImplicitHeightChanged() { Qt.callLater(root.positionMessagePopups) }
+            }
+            Connections {
+                target: contextMenu.parent
+                function onWidthChanged() { Qt.callLater(root.positionMessagePopups) }
+                function onHeightChanged() { Qt.callLater(root.positionMessagePopups) }
+            }
 
             Popup {
                 id: reactionDetailsPopup

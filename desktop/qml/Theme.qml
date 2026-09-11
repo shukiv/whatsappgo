@@ -217,6 +217,52 @@ QtObject {
         return rendered.join("<br>")
     }
 
+    // Work on plain-text spans, never replace inside HTML or a link's href.
+    function mentionParts(value, mentions) {
+        const text = String(value || "")
+        const names = {}
+        for (const member of (mentions || [])) {
+            if (/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(member.jid || "") && member.name)
+                names["@" + member.jid.split("@")[0]] = member
+        }
+        const pattern = /@[0-9]+/g
+        // QML's JS engine does not support Unicode property escapes. A
+        // conservative separator set handles Hebrew/Arabic names as well.
+        const boundary = /[\s()[\]{},.!?;:'"“”‘’<>*~`+\-]/
+        const result = []
+        let cursor = 0, match
+        while ((match = pattern.exec(text)) !== null) {
+            const start = match.index, end = start + match[0].length
+            if (!names[match[0]] || (start > 0 && !boundary.test(text[start - 1]))
+                    || (end < text.length && !boundary.test(text[end])))
+                continue
+            // A numeric @ segment inside a URL is not a display-name slot.
+            const prefix = text.slice(0, start).split(/\s/).pop()
+            if (/https?:\/\//i.test(prefix))
+                continue
+            if (start > cursor) result.push({ text: text.slice(cursor, start), mention: false })
+            const member = names[match[0]]
+            result.push({ text: "@" + member.name, mention: true, jid: member.jid, name: member.name })
+            cursor = end
+        }
+        if (cursor < text.length) result.push({ text: text.slice(cursor), mention: false })
+        return result
+    }
+
+    function mentionDisplayText(value, mentions) {
+        return mentionParts(value, mentions).map(part => part.text).join("")
+    }
+
+    function mentionRichText(value, mentions, focusedMention) {
+        let index = 0
+        return mentionParts(value, mentions).map(part => {
+            if (!part.mention) return messageRichText(part.text)
+            const decoration = index++ === focusedMention ? "underline" : "none"
+            return "<a href=\"whatsappgo-mention:" + part.jid + "\" style=\"color:" + primary
+                + ";font-weight:600;text-decoration:" + decoration + "\">" + richTextSegment(part.text) + "</a>"
+        }).join("")
+    }
+
     function isEmojiOnly(value) {
         const compact = String(value || "").replace(/\s/g, "")
         if (!compact)

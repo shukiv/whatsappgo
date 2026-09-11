@@ -1,8 +1,11 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Templates as T
 import org.whatsappgo
 
-Button {
+// Fully styled here: avoid platform-generated Alt-letter mnemonics competing
+// with the application's explicit conversation shortcuts.
+T.Button {
     id: root
     property bool selected: false
 

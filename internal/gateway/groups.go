@@ -13,3 +13,13 @@ type GroupManager interface {
 	ChangeGroupMembers(context.Context, string, string, []string) error
 	LeaveGroup(context.Context, string) error
 }
+
+// GroupInfoEditor is optional, independently of membership management. The
+// previous value is checked against fresh metadata before writing to WhatsApp.
+type GroupInfoEditor interface {
+	SetGroupInfo(context.Context, string, model.GroupInfoEdit) error
+}
+
+type GroupPermissionEditor interface {
+	SetGroupPermission(context.Context, string, model.GroupPermissionEdit) error
+}

@@ -13,6 +13,10 @@ ItemDelegate {
     // Set while the row stands for a search hit, so the matched run is tinted
     // the way WhatsApp Web tints it.
     property string highlightQuery: ""
+    property string draftText: ""
+    readonly property bool hasDraft: draftText.trim().length > 0
+    property double muteClock: Date.now()
+    readonly property bool muted: Number(modelData.muted_until || 0) > muteClock
     signal chosen(string jid, string title)
     signal statusRequested(string jid)
     signal avatarRequested(string jid)
@@ -23,6 +27,9 @@ ItemDelegate {
 
     // Clamped inside the overlay so a row near an edge still gets a whole menu.
     function openChatMenuAt(item, x, y) {
+        if (root.selectionActive)
+            return
+        root.muteClock = Date.now()
         const mapped = item.mapToItem(chatMenu.parent, x, y)
         chatMenu.x = Math.max(8, Math.min(chatMenu.parent.width - chatMenu.width - 8, mapped.x))
         chatMenu.y = Math.max(8, Math.min(chatMenu.parent.height - chatMenu.implicitHeight - 8, mapped.y))
@@ -40,7 +47,7 @@ ItemDelegate {
     // WhatsApp Web labels the last message with a type icon rather than the
     // word for it, and only when there is no text to show instead.
     readonly property string previewKindIcon: {
-        if (String(root.modelData.last_message_preview || "").length === 0)
+        if (root.hasDraft || String(root.modelData.last_message_preview || "").length === 0)
             return ""
         switch (String(root.modelData.last_message_kind || "")) {
         case "image": return "gallery.svg"
@@ -58,6 +65,8 @@ ItemDelegate {
     // A voice note reads as its length in the list, the way it does in the
     // conversation; everything else keeps the stored preview text.
     readonly property string previewText: {
+        if (root.hasDraft)
+            return root.draftText.replace(/\s+/g, " ").trim()
         const preview = String(root.modelData.last_message_preview || "").replace(/\s+/g, " ").trim()
         if (preview.length === 0)
             return qsTr("No messages yet")
@@ -72,6 +81,23 @@ ItemDelegate {
 
     readonly property string rowTimestampText: RowTime.label(root.modelData.last_message_at)
 
+    readonly property string previewSender: {
+        if (root.hasDraft || !(root.modelData.is_group || String(root.modelData.jid || "").endsWith("@g.us"))
+                || !String(root.modelData.last_message_preview || "").trim())
+            return ""
+        if (root.modelData.last_message_from_me)
+            return qsTr("You")
+        const jid = String(root.modelData.last_message_sender_jid || "")
+        const local = jid.split("@")[0].split(":")[0]
+        const name = String(root.modelData.last_message_sender_name || "").replace(/\s+/g, " ").trim()
+        if (name && name !== jid && name !== local && name !== "+" + local)
+            return name
+        if (jid.endsWith("@s.whatsapp.net") && local)
+            return "+" + local
+        // A LID is an opaque identifier, not a phone number.
+        return local ? qsTr("Contact · %1").arg(local.slice(-4)) : qsTr("Group member")
+    }
+
     function requestAvatarRefresh() {
         const jid = String(root.modelData.jid || "")
         if (root.visible && jid.length > 0)
@@ -79,7 +105,10 @@ ItemDelegate {
     }
 
     Component.onCompleted: Qt.callLater(root.requestAvatarRefresh)
-    onModelDataChanged: Qt.callLater(root.requestAvatarRefresh)
+    onModelDataChanged: {
+        root.muteClock = Date.now()
+        Qt.callLater(root.requestAvatarRefresh)
+    }
     onVisibleChanged: {
         if (visible)
             Qt.callLater(root.requestAvatarRefresh)
@@ -110,11 +139,30 @@ ItemDelegate {
     clip: true
     Accessible.name: displayTitle
         + (modelData.unread_count > 0 ? qsTr(", %1 unread messages").arg(modelData.unread_count) : "")
+        + (muted ? qsTr(", notifications muted") : "")
         + (statusGroupIndex >= 0 ? qsTr(", has a status update") : "")
+    Accessible.description: (hasDraft ? qsTr("Draft: ") : previewSender ? previewSender + ": " : "") + previewText
     // In selection mode a row is a checkbox, not a way into the conversation.
     property bool selectionActive: false
     property bool selected: false
     signal selectionToggled(string jid)
+
+    Keys.onPressed: event => {
+        if (!root.selectionActive && (event.key === Qt.Key_Menu
+                || (event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier))) {
+            root.openChatMenuAt(root, root.width / 2, root.height)
+            event.accepted = true
+        }
+    }
+
+    // An expiry timer avoids frequent polling for every chat. Long/permanent
+    // mutes are rechecked daily to stay within the native timer's integer range.
+    Timer {
+        interval: Math.max(1, Math.min(86400000, Number(root.modelData.muted_until || 0) - root.muteClock + 1))
+        running: root.muted
+        onTriggered: root.muteClock = Date.now()
+        repeat: true
+    }
 
     onClicked: {
         if (selectionActive)
@@ -149,11 +197,13 @@ ItemDelegate {
             Layout.alignment: Qt.AlignVCenter
             padding: 0
             flat: true
-            Accessible.name: root.statusGroupIndex >= 0
+            Accessible.name: root.selectionActive ? qsTr("Select %1").arg(root.displayTitle) : root.statusGroupIndex >= 0
                 ? qsTr("View %1's status").arg(root.displayTitle)
                 : qsTr("Open chat with %1").arg(root.displayTitle)
             onClicked: {
-                if (root.statusGroupIndex >= 0)
+                if (root.selectionActive)
+                    root.selectionToggled(String(root.modelData.jid || ""))
+                else if (root.statusGroupIndex >= 0)
                     root.statusRequested(root.modelData.jid)
                 else
                     root.chosen(root.modelData.jid, root.displayTitle)
@@ -198,6 +248,8 @@ ItemDelegate {
                 Layout.fillWidth: true
                 spacing: 8
                 Label {
+                    id: chatTitle
+                    objectName: "chatTitle"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     text: root.highlightQuery.length > 0
@@ -208,6 +260,10 @@ ItemDelegate {
                     font.pixelSize: 16
                     elide: Text.ElideRight
                     maximumLineCount: 1
+                    ToolTip.visible: truncated && (titleHover.hovered || root.activeFocus)
+                    ToolTip.text: root.displayTitle
+                    ToolTip.delay: 500
+                    HoverHandler { id: titleHover }
                 }
                 Label {
                     objectName: "chatTimestamp"
@@ -224,10 +280,40 @@ ItemDelegate {
 
                 ReadReceipt {
                     objectName: "chatPreviewReceipt"
-                    visible: Boolean(root.modelData.last_message_from_me)
+                    visible: !root.hasDraft && Boolean(root.modelData.last_message_from_me)
                         && String(root.modelData.last_message_status || "") !== ""
                     Layout.alignment: Qt.AlignVCenter
                     status: root.modelData.last_message_status || ""
+                }
+
+                Label {
+                    objectName: "chatDraftLabel"
+                    visible: root.hasDraft
+                    text: qsTr("Draft:")
+                    textFormat: Text.PlainText
+                    color: Theme.primary
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
+                }
+
+                Label {
+                    objectName: "chatPreviewSender"
+                    visible: root.previewSender !== ""
+                    // The enclosing layout negotiates its implicit width from
+                    // this label. Basing the limit on that same width recurses
+                    // when long participant names are incubated in the list.
+                    Layout.maximumWidth: Math.max(0, (root.availableWidth - 69) * 0.4)
+                    Layout.minimumWidth: 0
+                    text: "\u2068" + root.previewSender + "\u2069:"
+                    textFormat: Text.PlainText
+                    color: Theme.textMuted
+                    font.pixelSize: 14
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                    ToolTip.visible: senderHover.hovered || (root.activeFocus && truncated)
+                    ToolTip.text: root.previewSender
+                    ToolTip.delay: 500
+                    HoverHandler { id: senderHover }
                 }
 
                 TintedIcon {
@@ -311,6 +397,15 @@ ItemDelegate {
                     }
                 }
                 TintedIcon {
+                    objectName: "chatMutedMark"
+                    visible: root.muted && !root.selectionActive && !root.showRowMenu
+                    Layout.preferredWidth: visible ? 16 : 0
+                    Layout.preferredHeight: 16
+                    source: Qt.resolvedUrl("icons/mute.svg")
+                    tint: Theme.iconMuted
+                    Accessible.name: qsTr("Notifications muted")
+                }
+                TintedIcon {
                     objectName: "pinnedMark"
                     visible: Boolean(root.modelData.pinned) && !root.selectionActive && !root.showRowMenu
                     // The glyph is traced in device pixels, so the box is
@@ -354,6 +449,10 @@ ItemDelegate {
         objectName: "chatContextMenu"
         parent: Overlay.overlay
         width: 238
+        onClosed: {
+            muteDurationMenu.close()
+            chatListsMenu.close()
+        }
 
         WhatsAppMenuItem {
             text: root.modelData.archived ? qsTr("Unarchive chat") : qsTr("Archive chat")
@@ -366,7 +465,7 @@ ItemDelegate {
         WhatsAppMenuItem {
             id: muteItem
             objectName: "chatMuteItem"
-            readonly property bool muted: Number(root.modelData.muted_until || 0) > Date.now()
+            readonly property bool muted: root.muted
             text: muted ? qsTr("Unmute notifications") : qsTr("Mute notifications")
             iconSource: Qt.resolvedUrl("icons/mute.svg")
             // Muting asks for how long, the way WhatsApp Web does; unmuting has
@@ -408,6 +507,7 @@ ItemDelegate {
         }
 
         WhatsAppMenuItem {
+            id: listsItem
             objectName: "chatListsItem"
             text: qsTr("Add to list")
             iconSource: Qt.resolvedUrl("icons/poll.svg")
@@ -489,17 +589,32 @@ ItemDelegate {
         x: Math.max(8, Math.min(Overlay.overlay.width - width - 8, chatMenu.x + chatMenu.width - 12))
         y: Math.max(8, Math.min(Overlay.overlay.height - height - 8, chatMenu.y + 4 * 36))
         onAboutToShow: backend.refreshChatLabels()
+        onClosed: {
+            if (chatMenu.visible)
+                listsItem.forceActiveFocus()
+        }
 
         Repeater {
             model: backend.chatLabels
             WhatsAppMenuItem {
                 required property var modelData
+                objectName: "chatListMembership_" + String(modelData.id)
+                checkable: true
+                checked: (root.modelData.label_ids || []).indexOf(String(modelData.id)) >= 0
                 text: modelData.name || modelData.id
                 iconSource: Qt.resolvedUrl("icons/poll.svg")
                 onClicked: {
+                    // Read the source membership: AbstractButton has already
+                    // toggled its checked state before emitting clicked.
+                    const member = (root.modelData.label_ids || []).indexOf(String(modelData.id)) >= 0
+                    // Membership is server-owned. Restore the binding so a
+                    // failed write does not leave a false checkmark on reopen.
+                    checked = Qt.binding(function() {
+                        return (root.modelData.label_ids || []).indexOf(String(modelData.id)) >= 0
+                    })
                     chatListsMenu.close()
                     chatMenu.close()
-                    backend.setChatLabeled(root.modelData.jid, String(modelData.id), true)
+                    backend.setChatLabeled(root.modelData.jid, String(modelData.id), !member)
                 }
             }
         }
@@ -519,6 +634,10 @@ ItemDelegate {
         width: 190
         x: Math.max(8, Math.min(Overlay.overlay.width - width - 8, chatMenu.x + chatMenu.width - 12))
         y: Math.max(8, Math.min(Overlay.overlay.height - height - 8, chatMenu.y + 36))
+        onClosed: {
+            if (chatMenu.visible)
+                muteItem.forceActiveFocus()
+        }
 
         WhatsAppMenuItem {
             objectName: "chatMuteEightHoursItem"

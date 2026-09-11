@@ -25,7 +25,30 @@ Column {
         onClicked: root.actionRequested("disappearing", {})
     }
     GroupInfoRow { text: qsTr("Advanced chat privacy"); subtitle: qsTr("Manage in WhatsApp; not supported here yet"); iconSource: Qt.resolvedUrl("icons/shield.svg"); onClicked: root.actionRequested("privacy", {}) }
+    GroupInfoRow {
+        objectName: "groupPermissionsRow"
+        text: qsTr("Group permissions")
+        subtitle: root.groupInfo.can_edit_permissions ? qsTr("Manage what members can do") : qsTr("Only admins can change these settings")
+        iconSource: Qt.resolvedUrl("icons/settings.svg")
+        enabled: Boolean(root.groupInfo.is_member) && Boolean(root.groupInfo.permissions) && !root.loading && !root.busy
+        onClicked: {
+            forceActiveFocus(Qt.MouseFocusReason)
+            root.actionRequested("permissions", {})
+        }
+    }
     Rectangle { width: parent.width - 40; x: 20; height: 1; color: Theme.border }
+    GroupInfoRow {
+        objectName: "groupJoinRequestsRow"
+        text: qsTr("Pending join requests")
+        subtitle: qsTr("Review people asking to join")
+        iconSource: Qt.resolvedUrl("icons/user-add.svg")
+        visible: Boolean(root.groupInfo.can_edit_permissions)
+        enabled: !root.loading && !root.busy
+        onClicked: {
+            forceActiveFocus(Qt.MouseFocusReason)
+            root.actionRequested("join_requests", {})
+        }
+    }
     GroupInfoRow {
         objectName: "groupSimilarRow"
         text: qsTr("Create similar group")

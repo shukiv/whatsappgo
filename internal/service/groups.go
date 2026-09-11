@@ -6,7 +6,27 @@ import (
 	"errors"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/model"
 )
+
+func (s *Service) handleGroupInfoEdit(ctx context.Context, raw json.RawMessage) (any, error) {
+	var p struct {
+		ChatJID string `json:"chat_jid"`
+		model.GroupInfoEdit
+	}
+	if err := decode(raw, &p); err != nil {
+		return nil, err
+	}
+	if err := p.GroupInfoEdit.Validate(); err != nil {
+		return nil, err
+	}
+	gw, ok := s.gateway.(gateway.GroupInfoEditor)
+	if !ok {
+		return nil, errors.New("editing group information is unavailable with this backend")
+	}
+	err := gw.SetGroupInfo(ctx, p.ChatJID, p.GroupInfoEdit)
+	return map[string]bool{"ok": err == nil}, err
+}
 
 func (s *Service) handleGroup(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p struct {

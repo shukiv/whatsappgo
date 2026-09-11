@@ -13,8 +13,11 @@ Item {
     property font font: Qt.font({pixelSize: 16})
     property bool centered: false
     property bool copyEnabled: text !== ""
+    property bool editEnabled: false
+    property string editLabel: qsTr("Edit")
     property string capturedSelection: ""
     signal copyRequested(string value)
+    signal editRequested()
     implicitHeight: Math.max(32, editor.implicitHeight)
 
     function copyValue(value) {
@@ -32,7 +35,7 @@ Item {
     RowLayout {
         // Center the text and its action as one compact unit. Measuring an
         // unwrapped label keeps this independent of the editor's wrap width.
-        width: Math.min(root.width, Math.ceil(naturalMeasure.implicitWidth) + (copyButton.visible ? 30 : 0))
+        width: Math.min(root.width, Math.ceil(naturalMeasure.implicitWidth) + (copyButton.visible ? 30 : 0) + (editButton.visible ? 30 : 0))
         height: parent.height
         x: root.centered ? Math.round((root.width - width) / 2) : 0
         spacing: 2
@@ -89,6 +92,26 @@ Item {
                 radius: 14
                 color: copyButton.down ? Theme.pressedRow : copyButton.hovered ? Theme.hoverRow : "transparent"
                 border.width: copyButton.activeFocus ? 1 : 0
+                border.color: Theme.primary
+            }
+        }
+        ThemedToolButton {
+            id: editButton
+            objectName: root.objectName + "EditButton"
+            Layout.preferredWidth: 28
+            Layout.preferredHeight: 28
+            visible: root.editEnabled
+            iconSize: 14
+            iconSource: Qt.resolvedUrl("icons/edit.svg")
+            focusPolicy: Qt.StrongFocus
+            Accessible.name: root.editLabel
+            ToolTip.visible: hovered
+            ToolTip.text: root.editLabel
+            onClicked: root.editRequested()
+            background: Rectangle {
+                radius: 14
+                color: editButton.down ? Theme.pressedRow : editButton.hovered ? Theme.hoverRow : "transparent"
+                border.width: editButton.activeFocus ? 1 : 0
                 border.color: Theme.primary
             }
         }

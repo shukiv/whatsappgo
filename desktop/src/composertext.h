@@ -7,6 +7,8 @@
 #include <QProcess>
 #include <QTimer>
 #include <QStringList>
+#include <QVariantList>
+#include <QColor>
 #include <QtQml/qqmlregistration.h>
 
 // Presentation-only emoji formatting plus native, undoable emoticon input.
@@ -22,6 +24,8 @@ class ComposerText : public QObject
     Q_PROPERTY(QString spellError READ spellError NOTIFY spellStateChanged)
     Q_PROPERTY(QStringList suggestions READ suggestions NOTIFY suggestionsChanged)
     Q_PROPERTY(QString misspelledWord READ misspelledWord NOTIFY suggestionsChanged)
+    Q_PROPERTY(QVariantList mentionRanges READ mentionRanges WRITE setMentionRanges NOTIFY mentionStyleChanged)
+    Q_PROPERTY(QColor mentionColor READ mentionColor WRITE setMentionColor NOTIFY mentionStyleChanged)
 
 public:
     explicit ComposerText(QObject *parent = nullptr);
@@ -40,11 +44,16 @@ public:
     Q_INVOKABLE void replaceSpelling(const QString &word);
     Q_INVOKABLE void ignoreSpelling();
     Q_INVOKABLE void convertEmoticons(bool all = false);
+    QVariantList mentionRanges() const { return m_mentionRanges; }
+    QColor mentionColor() const { return m_mentionColor; }
+    void setMentionRanges(const QVariantList &ranges);
+    void setMentionColor(const QColor &color);
 
 signals:
     void editorChanged();
     void spellStateChanged();
     void suggestionsChanged();
+    void mentionStyleChanged();
 
 private:
     QPointer<QQuickItem> m_editor;
@@ -69,4 +78,6 @@ private:
     QString m_suggestionText;
     int m_wordStart = -1;
     bool m_spellChecking = false;
+    QVariantList m_mentionRanges;
+    QColor m_mentionColor;
 };

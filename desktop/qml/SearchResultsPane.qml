@@ -173,7 +173,7 @@ Item {
             leftPadding: 12
             rightPadding: 12
             hoverEnabled: true
-            Accessible.name: qsTr("%1: %2").arg(chatLabel).arg(String(item.body || ""))
+            Accessible.name: qsTr("%1: %2").arg(chatLabel).arg(MessageSummary.body(item))
             onClicked: root.messageChosen(String(item.chat_jid || ""), chatLabel, String(item.id || ""))
             background: Rectangle {
                 radius: 8
@@ -214,7 +214,7 @@ Item {
                         Layout.minimumWidth: 0
                         // Message bodies come from other people and are drawn as
                         // rich text, so the markup helper escapes them first.
-                        text: SearchHighlight.markup(item.body, root.query, Theme.primary)
+                        text: SearchHighlight.markup(MessageSummary.body(item), root.query, Theme.primary)
                         textFormat: Text.StyledText
                         color: Theme.textMuted
                         font.pixelSize: 14

@@ -5,9 +5,22 @@ import org.whatsappgo
 
 RowLayout {
     id: root
+    objectName: "featureSection"
 
     required property string section
     spacing: 0
+    property string searchText: ""
+    readonly property var filteredModel: {
+        const query = searchText.trim().toLocaleLowerCase()
+        if (!query) return sectionModel
+        return sectionModel.filter(row => [row.name, row.description, row.peer_name, row.peer_jid,
+            row.sender_name, row.sender_jid, row.body, row.result,
+            section === "calls" ? (row.video ? qsTr("Video") : qsTr("Voice")) : ""]
+            .map(value => String(value || "")).join(" ").toLocaleLowerCase().indexOf(query) >= 0)
+    }
+    onSectionChanged: sectionSearch.clear()
+    Connections { target: backend; function onProfileChanged() { sectionSearch.clear() } }
+    CommunityDetailsDialog { id: communityDetails; client: backend }
 
     readonly property string sectionTitle: {
         switch (section) {
@@ -134,22 +147,28 @@ RowLayout {
                         tint: Theme.icon
                     }
                     TextField {
+                        id: sectionSearch
+                        objectName: "featureSectionSearch"
                         anchors.fill: parent
                         leftPadding: 42
                         rightPadding: 12
                         placeholderText: qsTr("Search")
                         color: Theme.text
                         background: Item {}
+                        selectByMouse: true
+                        Accessible.name: qsTr("Search %1").arg(root.sectionTitle)
+                        onTextChanged: root.searchText = text
                     }
                 }
             }
 
             ListView {
                 id: featureList
+                objectName: "featureSectionList"
                 visible: root.section !== "profile"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                model: root.sectionModel
+                model: root.filteredModel
                 clip: true
                 reuseItems: true
                 boundsBehavior: Flickable.StopAtBounds
@@ -260,6 +279,7 @@ RowLayout {
                     onClicked: {
                         if (root.section === "status" && modelData.media_path)
                             backend.openFile(modelData.media_path)
+                        else if (root.section === "communities") communityDetails.showFor(modelData.jid)
                     }
                 }
 
@@ -267,7 +287,7 @@ RowLayout {
                     anchors.centerIn: parent
                     visible: featureList.count === 0
                     width: parent.width - 48
-                    text: root.section === "calls" ? qsTr("No call history synced yet") : qsTr("Nothing here yet")
+                    text: root.searchText.trim() ? qsTr("No matching results") : root.section === "calls" ? qsTr("No call history synced yet") : qsTr("Nothing here yet")
                     color: Theme.textMuted
                     horizontalAlignment: Text.AlignHCenter
                 }

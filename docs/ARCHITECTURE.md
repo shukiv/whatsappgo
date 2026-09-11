@@ -66,9 +66,23 @@ on general online updates. Expiry removes only activity fields and emits the
 presence notification, preserving online/last-seen information. Paused/offline
 events clear activity immediately; navigation, account switches, and WhatsApp or
 daemon disconnects cancel the timer. This prevents a lost stop event from
-leaving the header stuck on “Typing…”.
+leaving the header stuck on “Typing…”. Group activity is keyed by normalized
+sender JID, with an independent expiry per member. One member pausing or timing
+out does not clear anyone else. The daemon adds `sender_name` using local saved
+names, contacts and PN/LID mappings, without fetching group rosters or creating
+chat rows. The header names typing/recording members, with a cached-roster or
+identity fallback, and never treats a group as online or last seen.
 
 ### Backend
+
+Pin state in `messages.db` has two clocks: `pinned_at` orders visible pins and
+is zero when unpinned; `pin_action_at` retains the latest explicit pin **or unpin**
+timestamp. History snapshots can seed pins only before an explicit action is
+known. App-state writes atomically reject older actions, and alias consolidation
+merges this versioned state inside its existing transaction. The v7 chat-settings
+backfill replays settings once for older profiles whose history import could
+overwrite synchronized pins. An unsuccessful replay is not marked complete;
+existing phone-recovery backoff remains in force. It does not send pin mutations.
 
 - owns the WhatsApp connection, encryption sessions, and reconnection
 - converts whatsmeow events into application models
@@ -344,6 +358,21 @@ metadata refreshes, and ignores responses from earlier chat/profile activations.
 `group.updated` refreshes previously opened group metadata without refetching it
 on every ordinary message update. Group actions have an in-flight guard and
 report errors independently of their confirmation dialog's lifetime.
+
+Name/description writes use a separate optional `gateway.GroupInfoEditor`
+capability and `group.set_info`, leaving existing offline/member-only gateways
+compatible. Shared model validation counts Unicode code points. The live adapter
+rechecks current membership, admin-only metadata permissions, and expected old
+field text before calling whatsmeow's name/topic setter. Community/announcement
+and suspended groups are excluded. No message history or member avatars are
+loaded for editing. A saved name updates the local chat title and change events.
+
+`GroupMetadataDialog` opens from compact inline pencils next to copyable group
+names/descriptions. The draft belongs to a captured account/chat; request tokens
+and group generations isolate late acknowledgments and pre-save refreshes.
+Explicit Save closes only after success, errors retain the draft, and Escape
+returns to group info with focus restored. Other group actions keep their own
+existing confirmation flow.
 
 `GroupInfoContent` renders a bounded eight-member preview; `GroupActions` uses a
 virtualized full list for search and member selection. Permission-aware controls

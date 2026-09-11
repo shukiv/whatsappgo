@@ -26,8 +26,8 @@ ItemDelegate {
             Layout.fillWidth: true
             Layout.rightMargin: 18
             spacing: 3
-            Label { Layout.fillWidth: true; text: root.text; color: root.destructive ? Theme.danger : Theme.text; font.pixelSize: 15; wrapMode: Text.Wrap }
-            Label { Layout.fillWidth: true; visible: root.subtitle !== ""; text: root.subtitle; color: Theme.textMuted; font.pixelSize: 13; wrapMode: Text.Wrap }
+            Label { Layout.fillWidth: true; text: root.text; textFormat: Text.PlainText; color: root.destructive ? Theme.danger : Theme.text; font.pixelSize: 15; wrapMode: Text.Wrap }
+            Label { Layout.fillWidth: true; visible: root.subtitle !== ""; text: root.subtitle; textFormat: Text.PlainText; color: Theme.textMuted; font.pixelSize: 13; wrapMode: Text.Wrap }
         }
     }
 }

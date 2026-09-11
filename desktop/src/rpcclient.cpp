@@ -339,12 +339,12 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
         m_chatRefreshTimer.stop();
         m_chatRefreshAgain = false;
-        m_chatPresenceExpiryTimer.stop();
+        const bool activityCleared = clearChatPresence();
         ++m_privacyRequestGeneration;
         m_privacySettings.clear();
         emit privacySettingsChanged();
         abandonPendingRequests(tr("The background service disconnected."), true);
-        if (!m_selectedPresence.isEmpty()) {
+        if (activityCleared || !m_selectedPresence.isEmpty()) {
             m_selectedPresence.clear();
             emit selectedPresenceChanged();
         }
@@ -380,7 +380,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
 
 RpcClient::~RpcClient()
 {
-    m_chatPresenceExpiryTimer.stop();
+    clearChatPresence();
     // QLocalSocket::abort() can synchronously emit disconnected. Disconnect
     // the member callbacks before member destruction begins so they cannot
     // access containers that C++ has already destroyed in reverse order.
@@ -688,10 +688,84 @@ void RpcClient::processLine(const QByteArray &line)
 bool RpcClient::clearChatPresence()
 {
     m_chatPresenceExpiryTimer.stop();
+    for (auto *timer : std::as_const(m_groupPresenceTimers)) {
+        timer->stop();
+        timer->deleteLater();
+    }
+    m_groupPresenceTimers.clear();
     const auto removed = m_selectedPresence.remove(QStringLiteral("chat_state"))
         + m_selectedPresence.remove(QStringLiteral("media"))
-        + m_selectedPresence.remove(QStringLiteral("sender_jid"));
+        + m_selectedPresence.remove(QStringLiteral("sender_jid"))
+        + m_selectedPresence.remove(QStringLiteral("participants"));
     return removed > 0;
+}
+
+bool RpcClient::removeGroupChatPresence(const QString &sender)
+{
+    auto *timer = m_groupPresenceTimers.take(sender);
+    if (!timer)
+        return false;
+    timer->stop();
+    timer->deleteLater();
+    auto participants = m_selectedPresence.value(QStringLiteral("participants")).toList();
+    for (qsizetype i = participants.size(); i-- > 0;) {
+        if (participants.at(i).toMap().value(QStringLiteral("sender_jid")).toString() == sender)
+            participants.removeAt(i);
+    }
+    if (participants.isEmpty())
+        m_selectedPresence.remove(QStringLiteral("participants"));
+    else
+        m_selectedPresence.insert(QStringLiteral("participants"), participants);
+    return true;
+}
+
+bool RpcClient::updateGroupChatPresence(const QJsonObject &payload)
+{
+    const auto sender = bareJid(payload.value(QStringLiteral("sender_jid")).toString());
+    static const QRegularExpression memberJid(QStringLiteral("^\\d+@(s\\.whatsapp\\.net|lid)$"));
+    if (!memberJid.match(sender).hasMatch()
+            || sender == bareJid(m_status.value(QStringLiteral("user_jid")).toString()))
+        return false;
+    const auto state = payload.value(QStringLiteral("state")).toString();
+    if (state == QStringLiteral("paused"))
+        return removeGroupChatPresence(sender);
+    if (state != QStringLiteral("composing"))
+        return false;
+
+    auto *timer = m_groupPresenceTimers.value(sender);
+    if (!timer) {
+        if (m_groupPresenceTimers.size() >= 1024)
+            return false;
+        timer = new QTimer(this);
+        timer->setObjectName(QStringLiteral("groupChatPresenceExpiryTimer"));
+        timer->setProperty("sender_jid", sender);
+        timer->setSingleShot(true);
+        connect(timer, &QTimer::timeout, this, [this, sender] {
+            if (removeGroupChatPresence(sender))
+                emit selectedPresenceChanged();
+        });
+        m_groupPresenceTimers.insert(sender, timer);
+    }
+    auto participants = m_selectedPresence.value(QStringLiteral("participants")).toList();
+    qsizetype index = 0;
+    while (index < participants.size()
+           && participants.at(index).toMap().value(QStringLiteral("sender_jid")).toString() != sender)
+        ++index;
+    auto member = index < participants.size() ? participants.at(index).toMap() : QVariantMap{};
+    member.insert(QStringLiteral("sender_jid"), sender);
+    const auto name = payload.value(QStringLiteral("sender_name")).toString().trimmed();
+    if (!name.isEmpty())
+        member.insert(QStringLiteral("sender_name"), name);
+    member.insert(QStringLiteral("media"), payload.value(QStringLiteral("media")).toString());
+    if (index < participants.size())
+        participants[index] = member;
+    else
+        participants.append(member);
+    m_selectedPresence.insert(QStringLiteral("participants"), participants);
+    // Every member expires independently; Bob typing cannot keep Alice's
+    // stale status alive when her paused update is lost.
+    timer->start(m_chatPresenceExpiryTimer.interval());
+    return true;
 }
 
 void RpcClient::processEvent(const QString &name, const QJsonValue &data)
@@ -700,8 +774,8 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         const bool wasConnected = m_status.value(QStringLiteral("connected")).toBool();
         m_status = data.toObject().toVariantMap();
         if (!m_status.value(QStringLiteral("connected")).toBool()) {
-            m_chatPresenceExpiryTimer.stop();
-            if (!m_selectedPresence.isEmpty()) {
+            const bool activityCleared = clearChatPresence();
+            if (activityCleared || !m_selectedPresence.isEmpty()) {
                 m_selectedPresence.clear();
                 emit selectedPresenceChanged();
             }
@@ -726,6 +800,8 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         if (payload.value(QStringLiteral("photo")).toBool()) refreshOwnProfile();
     } else if (name == QStringLiteral("contact.presence")) {
         const auto payload = data.toObject();
+        if (m_selectedChat.value(QStringLiteral("jid")).toString().endsWith(QStringLiteral("@g.us")))
+            return; // Groups have member activity, never group online/last-seen state.
         if (bareJid(payload.value(QStringLiteral("jid")).toString())
                 != bareJid(m_selectedChat.value(QStringLiteral("jid")).toString()))
             return;
@@ -749,6 +825,11 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
         if (bareJid(payload.value(QStringLiteral("chat_jid")).toString())
                 != bareJid(m_selectedChat.value(QStringLiteral("jid")).toString()))
             return;
+        if (m_selectedChat.value(QStringLiteral("jid")).toString().endsWith(QStringLiteral("@g.us"))) {
+            if (updateGroupChatPresence(payload))
+                emit selectedPresenceChanged();
+            return;
+        }
         const auto state = payload.value(QStringLiteral("state")).toString();
         if (state == QStringLiteral("paused")) {
             clearChatPresence();
@@ -1228,7 +1309,7 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     m_openingMessages = true;
     m_openingMessageUpdates.clear();
     m_messages.setUnreadBoundary({}, 0);
-    m_chatPresenceExpiryTimer.stop();
+    clearChatPresence();
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
 	if (!previousJid.isEmpty())
 		rememberMessages(previousJid, m_messages.items());
@@ -1329,27 +1410,78 @@ void RpcClient::openChat(const QString &jid, const QString &title)
                 OnFailure::StayQuiet);
 }
 
-void RpcClient::createGroup(const QString &name, const QStringList &participants)
+void RpcClient::searchGroupContacts(const QString &query, const QString &token)
 {
+    const auto session = m_attachmentSession;
+    sendRequest(QStringLiteral("chats.search"), {{QStringLiteral("query"), query}, {QStringLiteral("limit"), 100}},
+        [this, session, query, token](const QJsonValue &chats, const QJsonObject &chatError) {
+            if (session != m_attachmentSession) return;
+            sendRequest(QStringLiteral("contacts.list"), {{QStringLiteral("query"), query}, {QStringLiteral("limit"), 100}},
+                [this, session, token, chats, chatError](const QJsonValue &contacts, const QJsonObject &error) {
+                    if (session != m_attachmentSession) return;
+                    auto rows = chats.toArray().toVariantList();
+                    rows.append(contacts.toArray().toVariantList());
+                    emit groupContactsReady(token, rows, chatError.isEmpty() && error.isEmpty() ? QString()
+                        : tr("Some contacts could not be loaded. Check the connection and retry."));
+                }, OnFailure::StayQuiet);
+        }, OnFailure::StayQuiet);
+}
+
+void RpcClient::createGroup(const QString &name, const QStringList &participants,
+                            const QString &token, const QString &profile)
+{
+    const auto fail = [this, token](const QString &message) {
+        if (token.isEmpty()) emit errorOccurred(message);
+        emit groupCreationFinished(token, {}, message);
+    };
+    if (m_groupCreationBusy || (!profile.isEmpty() && profile != m_profile)) {
+        fail(tr("A group is already being created, or the account has changed. Reopen New group and try again."));
+        return;
+    }
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool()) {
+        fail(tr("Reconnect to WhatsApp before creating a group."));
+        return;
+    }
+    const auto subject = name.trimmed();
+    if (subject.isEmpty() || subject.toUcs4().size() > 100 || participants.isEmpty() || participants.size() > 1023) {
+        fail(tr("Enter a group name of 1–100 characters and select 1–1023 other members."));
+        return;
+    }
     QJsonArray members;
     for (const auto &participant : participants)
         members.append(participant);
+    const auto account = m_profile;
+    m_groupCreationBusy = true;
+    emit groupCreationBusyChanged();
     sendRequest(QStringLiteral("group.create"),
-                {{QStringLiteral("name"), name}, {QStringLiteral("participants"), members}},
-                [this](const QJsonValue &result, const QJsonObject &error) {
+                {{QStringLiteral("name"), subject}, {QStringLiteral("participants"), members}},
+                [this, account, token](const QJsonValue &result, const QJsonObject &error) {
+                    m_groupCreationBusy = false;
+                    emit groupCreationBusyChanged();
+                    if (account != m_profile) return;
                     if (!error.isEmpty()) {
-                        emit errorOccurred(error.value(QStringLiteral("message")).toString());
+                        const auto message = error.value(QStringLiteral("code")).toString() == QStringLiteral("disconnected")
+                            ? tr("Creation was not confirmed. Check your chats before trying again to avoid creating a second group.")
+                            : error.value(QStringLiteral("message")).toString(tr("The group could not be created."));
+                        if (token.isEmpty()) emit errorOccurred(message);
+                        emit groupCreationFinished(token, {}, message);
                         return;
                     }
                     refreshChats();
-                    // Open the group straight away: the user just named it and
-                    // chose who is in it, so the conversation is what they want
-                    // next.
                     const auto chat = result.toObject();
                     const auto jid = chat.value(QStringLiteral("jid")).toString();
-                    if (!jid.isEmpty())
+                    if (!jid.endsWith(QStringLiteral("@g.us"))) {
+                        const auto message = tr("Creation was not confirmed. Check your chats before trying again.");
+                        if (token.isEmpty()) emit errorOccurred(message);
+                        emit groupCreationFinished(token, {}, message);
+                        return;
+                    }
+                    // Token callers own navigation: closing their editor must
+                    // not let a late reply take over the current conversation.
+                    if (token.isEmpty())
                         openChat(jid, chat.value(QStringLiteral("title")).toString());
-                });
+                    emit groupCreationFinished(token, chat.toVariantMap(), {});
+                }, OnFailure::StayQuiet);
 }
 
 void RpcClient::markAllChatsRead()
@@ -1450,7 +1582,7 @@ void RpcClient::closeChat()
     ++m_chatOpenGeneration;
     m_openingMessages = false;
     m_openingMessageUpdates.clear();
-    m_chatPresenceExpiryTimer.stop();
+    clearChatPresence();
 	const auto previousJid = m_selectedChat.value(QStringLiteral("jid")).toString();
 	if (!previousJid.isEmpty())
 		rememberMessages(previousJid, m_messages.items());
@@ -1571,6 +1703,8 @@ void RpcClient::runGroupAction(const QString &jid, const QString &method, const 
             m_groupInfo.insert(QStringLiteral("can_add"), false);
             m_groupInfo.insert(QStringLiteral("can_invite"), false);
             m_groupInfo.insert(QStringLiteral("can_manage"), false);
+            m_groupInfo.insert(QStringLiteral("can_edit_info"), false);
+            m_groupInfo.insert(QStringLiteral("can_edit_permissions"), false);
         }
         emit groupInfoChanged();
         emit groupActionFinished(jid, action, error.isEmpty());
@@ -1585,9 +1719,263 @@ void RpcClient::changeGroupMembers(const QString &jid, const QString &action, co
                    {{QStringLiteral("action"), action}, {QStringLiteral("participants"), QJsonArray::fromStringList(members)}});
 }
 
+void RpcClient::setGroupInfo(const QString &jid, const QString &field, const QString &value,
+                           const QString &previous, const QString &token, const QString &profile)
+{
+    if (m_groupActionBusy || profile != m_profile || jid.isEmpty() || jid != m_groupInfoJid
+        || jid != m_selectedChat.value(QStringLiteral("jid")).toString()
+        || !m_groupInfo.value(QStringLiteral("can_edit_info")).toBool()
+        || (field != QStringLiteral("name") && field != QStringLiteral("description"))) {
+        emit groupInfoEditFinished(token, tr("Group information cannot be edited right now. Reopen group info and try again."));
+        return;
+    }
+    const auto generation = m_groupGeneration;
+    m_groupActionBusy = true;
+    m_groupInfoError.clear();
+    emit groupInfoChanged();
+    sendRequest(QStringLiteral("group.set_info"), {{QStringLiteral("chat_jid"), jid},
+                {QStringLiteral("field"), field}, {QStringLiteral("value"), value}, {QStringLiteral("previous"), previous}},
+                [this, jid, field, value, token, generation](const QJsonValue &, const QJsonObject &error) {
+        if (generation != m_groupGeneration || jid != m_groupInfoJid)
+            return;
+        m_groupActionBusy = false;
+        if (error.isEmpty()) {
+            // Invalidate metadata fetched before the save completed. An older
+            // refresh must not put the old name/description back in the editor.
+            ++m_groupGeneration;
+            m_groupInfoLoading = m_groupRefreshAgain = false;
+            m_groupInfo.insert(field, value);
+            if (field == QStringLiteral("name")) {
+                m_selectedChat.insert(QStringLiteral("title"), value);
+                emit selectedChatChanged();
+            }
+        }
+        auto message = error.value(QStringLiteral("message")).toString();
+        if (!error.isEmpty() && message.isEmpty())
+            message = tr("The group information could not be saved. Please try again.");
+        m_groupInfoError = message;
+        emit groupInfoChanged();
+        emit groupInfoEditFinished(token, message);
+        refreshGroupInfo();
+    }, OnFailure::StayQuiet);
+}
+
+void RpcClient::setGroupPermission(const QString &jid, const QString &field, bool value,
+                                   bool previous, const QString &token, const QString &profile)
+{
+    const QStringList fields{QStringLiteral("send_messages"), QStringLiteral("edit_info"),
+                             QStringLiteral("add_members"), QStringLiteral("approve_new_members")};
+    if (m_groupActionBusy || profile != m_profile || jid.isEmpty() || jid != m_groupInfoJid
+        || jid != m_selectedChat.value(QStringLiteral("jid")).toString()
+        || !m_status.value(QStringLiteral("connected")).toBool()
+        || !m_groupInfo.value(QStringLiteral("can_edit_permissions")).toBool()
+        || !fields.contains(field) || !m_groupInfo.value(QStringLiteral("permissions")).toMap().contains(field)) {
+        emit groupPermissionEditFinished(token, tr("Group permissions cannot be edited right now. Reopen group info and try again."));
+        return;
+    }
+    const auto generation = m_groupGeneration;
+    m_groupActionBusy = true;
+    m_groupInfoError.clear();
+    emit groupInfoChanged();
+    sendRequest(QStringLiteral("group.set_permission"), {{QStringLiteral("chat_jid"), jid},
+                {QStringLiteral("field"), field}, {QStringLiteral("value"), value}, {QStringLiteral("previous"), previous}},
+                [this, jid, field, value, token, generation](const QJsonValue &result, const QJsonObject &error) {
+        if (generation != m_groupGeneration || jid != m_groupInfoJid) return;
+        m_groupActionBusy = false;
+        auto message = error.value(QStringLiteral("message")).toString();
+        const bool confirmed = error.isEmpty() && result.toObject().value(QStringLiteral("ok")).toBool();
+        if (!confirmed && message.isEmpty())
+            message = tr("The change was not confirmed. Refresh group permissions before trying again.");
+        if (confirmed) {
+            // Reject any metadata response that predates this acknowledged save.
+            ++m_groupGeneration;
+            m_groupInfoLoading = m_groupRefreshAgain = false;
+            auto permissions = m_groupInfo.value(QStringLiteral("permissions")).toMap();
+            permissions.insert(field, value);
+            m_groupInfo.insert(QStringLiteral("permissions"), permissions);
+        }
+        m_groupInfoError = message;
+        emit groupInfoChanged();
+        emit groupPermissionEditFinished(token, message);
+        refreshGroupInfo();
+    }, OnFailure::StayQuiet);
+}
+
 void RpcClient::requestGroupInviteLink(const QString &jid, bool reset)
 {
     runGroupAction(jid, QStringLiteral("group.invite_link"), QStringLiteral("invite"), {{QStringLiteral("reset"), reset}});
+}
+
+void RpcClient::requestInteractiveFeature(const QString &token, const QString &method, const QVariantMap &params)
+{
+    static const QSet<QString> allowed = {
+        QStringLiteral("poll.info"), QStringLiteral("poll.create"), QStringLiteral("poll.vote"), QStringLiteral("event.info"), QStringLiteral("group.invite_preview"),
+        QStringLiteral("group.join_previewed"), QStringLiteral("group.invite_qr"), QStringLiteral("community.info"), QStringLiteral("community.description"),
+        QStringLiteral("community.link"), QStringLiteral("status.audience_contacts")
+    };
+    if (token.isEmpty() || token.size() > 128 || !allowed.contains(method)) return;
+    if (!daemonConnected()) {
+        emit interactiveFeatureFinished(token, {}, tr("Connect to the local service and try again."));
+        return;
+    }
+    const auto session = m_attachmentSession;
+    const bool mutates = method == QStringLiteral("poll.create") || method == QStringLiteral("poll.vote") || method == QStringLiteral("group.join_previewed")
+        || method == QStringLiteral("community.description") || method == QStringLiteral("community.link");
+    const QString mutationKey = mutates ? QString::number(session) + QLatin1Char('|') + method
+        + QLatin1Char('|') + params.value(QStringLiteral("chat_jid")).toString() + QLatin1Char('|') + params.value(QStringLiteral("message_id")).toString() : QString();
+    if (mutates && m_interactiveMutations.contains(mutationKey)) {
+        emit interactiveFeatureFinished(token, {}, tr("This action is still pending. Wait for it to finish before trying again."));
+        return;
+    }
+    if (mutates) m_interactiveMutations.insert(mutationKey);
+    sendRequest(method, QJsonObject::fromVariantMap(params),
+        [this, token, method, session, mutationKey](const QJsonValue &result, const QJsonObject &error) {
+            m_interactiveMutations.remove(mutationKey);
+            if (session != m_attachmentSession) return;
+            QString message;
+            if (!error.isEmpty()) {
+                message = error.value(QStringLiteral("message")).toString();
+                if (message.isEmpty()) message = tr("The request was not confirmed.");
+            }
+            if (error.isEmpty() && (method == QStringLiteral("poll.create") || method == QStringLiteral("group.join_previewed"))) refreshChats();
+            if (error.isEmpty() && (method == QStringLiteral("community.description") || method == QStringLiteral("community.link"))) refreshCommunities();
+            emit interactiveFeatureFinished(token, result.toObject().toVariantMap(), message);
+        }, OnFailure::StayQuiet);
+}
+
+void RpcClient::discardGroupPhoto(const QString &token)
+{
+    if (token != m_groupPhotoToken) return;
+    m_groupPhotoToken.clear();
+    m_groupPhotoJid.clear();
+    m_groupPhoto = {};
+    m_groupPhotoPreparing = false;
+}
+
+void RpcClient::prepareGroupPhoto(const QString &jid, const QString &localUrl, const QString &token, const QString &profile)
+{
+    if (m_groupActionBusy || m_groupPhotoPreparing || token.isEmpty() || profile != m_profile
+        || jid != m_groupInfoJid || jid != m_selectedChat.value(QStringLiteral("jid")).toString()
+        || !m_groupInfo.value(QStringLiteral("can_edit_info")).toBool()) {
+        emit groupPhotoPrepared(token, {}, tr("Reopen group info before choosing a photo."));
+        return;
+    }
+    discardGroupPhoto(m_groupPhotoToken);
+    const QUrl url(localUrl);
+    if (!url.isLocalFile()) {
+        emit groupPhotoPrepared(token, {}, tr("Choose a photo from your computer."));
+        return;
+    }
+    m_groupPhotoToken = token;
+    m_groupPhotoJid = jid;
+    m_groupPhotoPreparing = true;
+    const auto generation = m_groupGeneration;
+    auto promise = std::make_shared<QPromise<PhotoQuality::Prepared>>();
+    auto *watcher = new QFutureWatcher<PhotoQuality::Prepared>(this);
+    connect(watcher, &QFutureWatcher<PhotoQuality::Prepared>::finished, this, [this, watcher, generation, jid, token, profile] {
+        const auto prepared = watcher->result();
+        watcher->deleteLater();
+        if (token != m_groupPhotoToken) return;
+        m_groupPhotoPreparing = false;
+        if (generation != m_groupGeneration || profile != m_profile || jid != m_groupInfoJid) {
+            discardGroupPhoto(token);
+            return;
+        }
+        m_groupPhoto = prepared;
+        emit groupPhotoPrepared(token, prepared.path.isEmpty() ? QString() : QUrl::fromLocalFile(prepared.path).toString(), prepared.error);
+    });
+    promise->start();
+    watcher->setFuture(promise->future());
+    static QThreadPool groupPhotoPool;
+    groupPhotoPool.setMaxThreadCount(1);
+    groupPhotoPool.start([promise, path = url.toLocalFile()] {
+        promise->addResult(PhotoQuality::prepareProfilePhoto(path));
+        promise->finish();
+    });
+}
+
+void RpcClient::saveGroupPhoto(const QString &jid, bool remove, const QString &token, const QString &profile)
+{
+    if (m_groupActionBusy || m_groupPhotoPreparing || token.isEmpty() || profile != m_profile
+        || !jid.endsWith(QStringLiteral("@g.us")) || jid != m_groupInfoJid
+        || jid != m_selectedChat.value(QStringLiteral("jid")).toString()
+        || !m_status.value(QStringLiteral("connected")).toBool()
+        || !m_groupInfo.value(QStringLiteral("can_edit_info")).toBool()
+        || (!remove && (token != m_groupPhotoToken || jid != m_groupPhotoJid || m_groupPhoto.path.isEmpty()))) {
+        emit groupPhotoSaved(token, tr("This photo cannot be saved right now. Reopen group info and try again."));
+        return;
+    }
+    const auto generation = m_groupGeneration;
+    // Retain the private copy through the acknowledgement even after dismissal.
+    const auto prepared = m_groupPhoto;
+    m_groupActionBusy = true;
+    emit groupInfoChanged();
+    sendRequest(QStringLiteral("group.set_photo"), {{QStringLiteral("chat_jid"), jid},
+        {QStringLiteral("path"), remove ? QString() : prepared.path}, {QStringLiteral("remove"), remove}},
+        [this, generation, jid, token, prepared, remove](const QJsonValue &result, const QJsonObject &error) {
+            if (generation != m_groupGeneration || jid != m_groupInfoJid) return;
+            m_groupActionBusy = false;
+            auto message = error.value(QStringLiteral("message")).toString();
+            const auto object = result.toObject();
+            const auto avatar = object.value(QStringLiteral("avatar_path"));
+            if ((!error.isEmpty() || !object.value(QStringLiteral("ok")).toBool()
+                 || !avatar.isString() || (!remove && avatar.toString().isEmpty())) && message.isEmpty())
+                message = tr("The photo change was not confirmed. Reopen group info before trying again.");
+            if (message.isEmpty()) applyChatAvatar(jid, avatar.toString(), remove);
+            emit groupInfoChanged();
+            emit groupPhotoSaved(token, message);
+            refreshGroupInfo();
+            refreshChatInfo();
+        }, OnFailure::StayQuiet);
+}
+
+void RpcClient::loadGroupJoinRequests(const QString &jid, const QString &token, const QString &profile)
+{
+    if (profile != m_profile || jid != m_groupInfoJid || jid != m_selectedChat.value(QStringLiteral("jid")).toString()
+        || !m_status.value(QStringLiteral("connected")).toBool()
+        || !m_groupInfo.value(QStringLiteral("can_edit_permissions")).toBool()) {
+        emit groupJoinRequestsLoaded(token, {}, tr("Connect as a group admin and reopen group info to review requests."));
+        return;
+    }
+    const auto generation = m_groupGeneration;
+    sendRequest(QStringLiteral("group.requests.list"), {{QStringLiteral("chat_jid"), jid}},
+        [this, jid, generation, token](const QJsonValue &result, const QJsonObject &error) {
+            if (generation != m_groupGeneration || jid != m_groupInfoJid) return;
+            auto message = error.value(QStringLiteral("message")).toString();
+            const auto requests = result.toObject().value(QStringLiteral("requests"));
+            if ((!error.isEmpty() || !requests.isArray()) && message.isEmpty())
+                message = tr("Join requests could not be loaded. Refresh to try again.");
+            emit groupJoinRequestsLoaded(token, message.isEmpty() ? requests.toArray().toVariantList() : QVariantList{}, message);
+            if (!message.isEmpty()) refreshGroupInfo();
+        }, OnFailure::StayQuiet);
+}
+
+void RpcClient::reviewGroupJoinRequest(const QString &jid, const QString &participant, qint64 requestedAt,
+                                      const QString &action, const QString &token, const QString &profile)
+{
+    if (m_groupActionBusy || profile != m_profile || jid != m_groupInfoJid
+        || jid != m_selectedChat.value(QStringLiteral("jid")).toString() || participant.isEmpty() || requestedAt <= 0
+        || (action != QStringLiteral("approve") && action != QStringLiteral("reject"))
+        || !m_status.value(QStringLiteral("connected")).toBool()
+        || !m_groupInfo.value(QStringLiteral("can_edit_permissions")).toBool()) {
+        emit groupJoinRequestReviewed(token, tr("This request cannot be reviewed right now. Refresh group info and requests."));
+        return;
+    }
+    const auto generation = m_groupGeneration;
+    m_groupActionBusy = true;
+    emit groupInfoChanged();
+    sendRequest(QStringLiteral("group.requests.review"), {{QStringLiteral("chat_jid"), jid},
+        {QStringLiteral("participant"), participant}, {QStringLiteral("requested_at"), requestedAt}, {QStringLiteral("action"), action}},
+        [this, jid, generation, token](const QJsonValue &result, const QJsonObject &error) {
+            if (generation != m_groupGeneration || jid != m_groupInfoJid) return;
+            m_groupActionBusy = false;
+            auto message = error.value(QStringLiteral("message")).toString();
+            if ((!error.isEmpty() || !result.toObject().value(QStringLiteral("ok")).toBool()) && message.isEmpty())
+                message = tr("The decision was not confirmed. Refresh requests before deciding again.");
+            emit groupInfoChanged();
+            emit groupJoinRequestReviewed(token, message);
+            refreshGroupInfo();
+        }, OnFailure::StayQuiet);
 }
 
 void RpcClient::leaveGroup(const QString &jid)
@@ -1940,19 +2328,54 @@ void RpcClient::followChannelLink(const QString &link)
                 });
 }
 
-void RpcClient::createCommunity(const QString &name)
+void RpcClient::createCommunity(const QString &name, const QString &token, const QString &profile)
 {
-    if (name.trimmed().isEmpty())
+    const auto fail = [this, token](const QString &message) {
+        if (token.isEmpty()) emit errorOccurred(message);
+        emit communityCreationFinished(token, {}, message);
+    };
+    if (m_communityCreationBusy || (!profile.isEmpty() && profile != m_profile)) {
+        fail(tr("A community is already being created, or the account has changed. Reopen New community and try again."));
         return;
-    sendRequest(QStringLiteral("community.create"), {{QStringLiteral("name"), name.trimmed()}},
-                [this](const QJsonValue &, const QJsonObject &error) {
+    }
+    if (!daemonConnected() || !m_status.value(QStringLiteral("connected")).toBool()) {
+        fail(tr("Reconnect to WhatsApp before creating a community."));
+        return;
+    }
+    const auto subject = name.trimmed();
+    static const QRegularExpression controls(QStringLiteral("[\\x00-\\x1f\\x7f-\\x9f\\x{2028}\\x{2029}]"));
+    if (subject.isEmpty() || subject.toUcs4().size() > 100 || controls.match(subject).hasMatch()) {
+        fail(tr("Enter a community name of 1–100 characters without control characters."));
+        return;
+    }
+    const auto session = m_attachmentSession;
+    m_communityCreationBusy = true;
+    emit communityCreationBusyChanged();
+    sendRequest(QStringLiteral("community.create"), {{QStringLiteral("name"), subject}},
+                [this, session, token](const QJsonValue &result, const QJsonObject &error) {
+                    m_communityCreationBusy = false;
+                    emit communityCreationBusyChanged();
+                    if (session != m_attachmentSession) return;
                     if (!error.isEmpty()) {
-                        emit errorOccurred(error.value(QStringLiteral("message")).toString());
+                        auto message = error.value(QStringLiteral("message")).toString().trimmed();
+                        if (error.value(QStringLiteral("code")).toString() == QStringLiteral("disconnected"))
+                            message = tr("Creation was not confirmed. Check Communities before trying again to avoid creating a second community.");
+                        if (message.isEmpty()) message = tr("The community could not be created. Check your connection and try again.");
+                        if (token.isEmpty()) emit errorOccurred(message);
+                        emit communityCreationFinished(token, {}, message);
                         return;
                     }
-                    emit noticeOccurred(tr("Community created."));
                     refreshCommunities();
-                });
+                    const auto community = result.toObject();
+                    if (!community.value(QStringLiteral("jid")).toString().endsWith(QStringLiteral("@g.us"))) {
+                        const auto message = tr("Creation was not confirmed. Check Communities before trying again.");
+                        if (token.isEmpty()) emit errorOccurred(message);
+                        emit communityCreationFinished(token, {}, message);
+                        return;
+                    }
+                    if (token.isEmpty()) emit noticeOccurred(tr("Community created."));
+                    emit communityCreationFinished(token, community.toVariantMap(), {});
+                }, OnFailure::StayQuiet);
 }
 
 void RpcClient::joinGroupLink(const QString &link)
@@ -2095,6 +2518,187 @@ void RpcClient::refreshMediaLibrary(const QString &category, bool append)
                         m_mediaLibrary = items;
                     m_mediaLibraryHasMore = page.value(QStringLiteral("has_more")).toBool();
                     emit mediaLibraryChanged();
+                });
+}
+
+void RpcClient::starLibraryItem(const QVariantMap &requested, bool starred, const QString &profile)
+{
+    if (profile != m_profile || libraryStarBusy())
+        return;
+    const auto id = requested.value(QStringLiteral("id")).toString();
+    const auto chat = requested.value(QStringLiteral("chat_jid")).toString();
+    if (id.isEmpty() || chat.isEmpty()) return;
+    // A library entry belongs to its source conversation, not the open chat.
+    // Resolve its current model data rather than trusting a parked menu copy.
+    for (const auto &value : std::as_const(m_mediaLibrary)) {
+        const auto item = value.toMap();
+        if (item.value(QStringLiteral("id")).toString() != id
+            || item.value(QStringLiteral("chat_jid")).toString() != chat)
+            continue;
+        if (item.value(QStringLiteral("revoked")).toBool()
+            || item.value(QStringLiteral("kind")).toString() == QStringLiteral("view_once"))
+            return;
+        m_libraryStarProfile = profile;
+        emit mediaLibraryChanged();
+        sendRequest(QStringLiteral("message.star"),
+                    {{QStringLiteral("chat_jid"), chat}, {QStringLiteral("message_id"), id},
+                     {QStringLiteral("sender_jid"), item.value(QStringLiteral("sender_jid")).toString()},
+                     {QStringLiteral("from_me"), item.value(QStringLiteral("from_me")).toBool()},
+                     {QStringLiteral("starred"), starred}},
+                    [this, profile, chat, id, starred](const QJsonValue &, const QJsonObject &error) {
+                        if (m_libraryStarProfile == profile) m_libraryStarProfile.clear();
+                        if (m_profile != profile) return;
+                        if (!error.isEmpty()) {
+                            emit errorOccurred(error.value(QStringLiteral("message")).toString());
+                        } else {
+                            for (auto &value : m_mediaLibrary) {
+                                auto current = value.toMap();
+                                if (current.value(QStringLiteral("id")).toString() == id
+                                    && current.value(QStringLiteral("chat_jid")).toString() == chat) {
+                                    current.insert(QStringLiteral("starred"), starred);
+                                    value = current;
+                                }
+                            }
+                        }
+                        emit mediaLibraryChanged();
+                    });
+        return;
+    }
+}
+
+void RpcClient::downloadLibraryItem(const QVariantMap &requested, const QString &profile)
+{
+    if (profile != m_profile) return;
+    const auto id = requested.value(QStringLiteral("id")).toString();
+    const auto chat = requested.value(QStringLiteral("chat_jid")).toString();
+    if (id.isEmpty() || chat.isEmpty()) return;
+    for (const auto &value : std::as_const(m_mediaLibrary)) {
+        const auto item = value.toMap();
+        if (item.value(QStringLiteral("id")).toString() != id
+            || item.value(QStringLiteral("chat_jid")).toString() != chat)
+            continue;
+        const auto kind = item.value(QStringLiteral("kind")).toString();
+        if (kind != QStringLiteral("image") && kind != QStringLiteral("video")
+            && kind != QStringLiteral("audio") && kind != QStringLiteral("document")
+            && kind != QStringLiteral("sticker"))
+            return;
+        downloadAttachment(item, kind);
+        return;
+    }
+}
+
+QVariantMap RpcClient::resolveMediaSelectionItem(const QVariantMap &identity) const
+{
+    const auto id = identity.value(QStringLiteral("id")).toString();
+    const auto chat = identity.value(QStringLiteral("chat_jid")).toString();
+    if (id.isEmpty() || chat.isEmpty()) return {};
+    if (m_mediaBatchScope == QStringLiteral("shared")
+        && (chat != m_mediaBatchChat || chat != m_selectedChat.value(QStringLiteral("jid")).toString())) return {};
+    const auto &source = m_mediaBatchScope == QStringLiteral("shared") ? m_sharedContent : m_mediaLibrary;
+    for (const auto &value : source) {
+        const auto item = value.toMap();
+        if (item.value(QStringLiteral("id")).toString() == id
+            && item.value(QStringLiteral("chat_jid")).toString() == chat
+            && !item.value(QStringLiteral("revoked")).toBool()
+            && item.value(QStringLiteral("kind")).toString() != QStringLiteral("view_once")) return item;
+    }
+    return {};
+}
+
+void RpcClient::cancelMediaBatch(const QString &scope)
+{
+    if (!scope.isEmpty() && scope != m_mediaBatchScope) return;
+    ++m_mediaBatchGeneration;
+    m_mediaBatchBusy = false;
+    m_mediaBatchItems.clear();
+    m_mediaBatchSummary.clear();
+    emit mediaBatchChanged();
+}
+
+void RpcClient::actOnMediaSelection(const QVariantList &items, const QString &scope, const QString &action, const QString &profile)
+{
+    if (m_mediaBatchBusy || profile != m_profile || items.isEmpty()
+        || (scope != QStringLiteral("shared") && scope != QStringLiteral("library"))
+        || (action != QStringLiteral("star") && action != QStringLiteral("unstar") && action != QStringLiteral("download"))) return;
+    m_mediaBatchScope = scope;
+    m_mediaBatchProfile = profile;
+    m_mediaBatchChat = m_selectedChat.value(QStringLiteral("jid")).toString();
+    m_mediaBatchAction = action;
+    m_mediaBatchItems.clear();
+    QSet<QString> seen;
+    for (const auto &value : items) {
+        const auto identity = value.toMap();
+        const auto item = resolveMediaSelectionItem(identity);
+        const auto key = identity.value(QStringLiteral("chat_jid")).toString() + QLatin1Char('/') + identity.value(QStringLiteral("id")).toString();
+        if (item.isEmpty() || seen.contains(key)) continue;
+        seen.insert(key);
+        m_mediaBatchItems.append(identity);
+    }
+    if (m_mediaBatchItems.isEmpty()) return;
+    m_mediaBatchIndex = 0;
+    m_mediaBatchFailed = 0;
+    m_mediaBatchBusy = true;
+    runNextMediaSelection(++m_mediaBatchGeneration);
+}
+
+void RpcClient::runNextMediaSelection(quint64 generation)
+{
+    if (generation != m_mediaBatchGeneration) return;
+    if (m_mediaBatchProfile != m_profile
+        || (m_mediaBatchScope == QStringLiteral("shared")
+            && m_mediaBatchChat != m_selectedChat.value(QStringLiteral("jid")).toString())) {
+        cancelMediaBatch({});
+        return;
+    }
+    const auto total = m_mediaBatchItems.size();
+    if (m_mediaBatchIndex >= total) {
+        m_mediaBatchBusy = false;
+        m_mediaBatchSummary = m_mediaBatchFailed
+            ? tr("%1 completed, %2 failed. Selection kept for retry.").arg(total - m_mediaBatchFailed).arg(m_mediaBatchFailed)
+            : tr("%1 completed").arg(total);
+        emit mediaBatchChanged();
+        return;
+    }
+    m_mediaBatchSummary = tr("%1 of %2 completed").arg(m_mediaBatchIndex).arg(total);
+    emit mediaBatchChanged();
+    const auto item = resolveMediaSelectionItem(m_mediaBatchItems.at(m_mediaBatchIndex).toMap());
+    const auto finish = [this, generation](bool success) {
+        if (generation != m_mediaBatchGeneration) return;
+        if (!success) ++m_mediaBatchFailed;
+        ++m_mediaBatchIndex;
+        QTimer::singleShot(0, this, [this, generation] { runNextMediaSelection(generation); });
+    };
+    if (item.isEmpty()) { finish(false); return; }
+    const auto kind = item.value(QStringLiteral("kind")).toString();
+    if (m_mediaBatchAction == QStringLiteral("download")) {
+        if (kind != QStringLiteral("image") && kind != QStringLiteral("video") && kind != QStringLiteral("document")
+            && kind != QStringLiteral("audio") && kind != QStringLiteral("sticker")) { finish(false); return; }
+        downloadAttachment(item, kind, finish);
+        return;
+    }
+    const bool starred = m_mediaBatchAction == QStringLiteral("star");
+    if (item.value(QStringLiteral("starred")).toBool() == starred) { finish(true); return; }
+    const auto id = item.value(QStringLiteral("id")).toString();
+    const auto chat = item.value(QStringLiteral("chat_jid")).toString();
+    sendRequest(QStringLiteral("message.star"),
+                {{QStringLiteral("chat_jid"), chat}, {QStringLiteral("message_id"), id},
+                 {QStringLiteral("sender_jid"), item.value(QStringLiteral("sender_jid")).toString()},
+                 {QStringLiteral("from_me"), item.value(QStringLiteral("from_me")).toBool()}, {QStringLiteral("starred"), starred}},
+                [this, generation, id, chat, starred, finish](const QJsonValue &, const QJsonObject &error) {
+                    if (generation != m_mediaBatchGeneration || m_mediaBatchProfile != m_profile) return;
+                    if (error.isEmpty()) {
+                        for (auto *list : {&m_sharedContent, &m_mediaLibrary}) {
+                            for (auto &value : *list) {
+                                auto row = value.toMap();
+                                if (row.value(QStringLiteral("id")).toString() == id && row.value(QStringLiteral("chat_jid")).toString() == chat) {
+                                    row.insert(QStringLiteral("starred"), starred); value = row;
+                                }
+                            }
+                        }
+                        if (chat == m_selectedChat.value(QStringLiteral("jid")).toString()) applyStarToOpenConversation(id, starred);
+                        emit sharedContentChanged(); emit mediaLibraryChanged();
+                    }
+                    finish(error.isEmpty());
                 });
 }
 
@@ -2278,7 +2882,7 @@ void RpcClient::refreshOpenMessages()
 		});
 }
 
-void RpcClient::sendMessage(const QString &text, const QString &replyTo)
+void RpcClient::sendMessage(const QString &text, const QString &replyTo, const QString &mentionText, const QVariantList &mentions)
 {
     if (text.trimmed().isEmpty() || m_selectedChat.isEmpty())
         return;
@@ -2287,9 +2891,10 @@ void RpcClient::sendMessage(const QString &text, const QString &replyTo)
     const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
     QJsonObject params{
         {QStringLiteral("chat_jid"), m_selectedChat.value(QStringLiteral("jid")).toString()},
-        {QStringLiteral("text"), text},
+        {QStringLiteral("text"), mentions.isEmpty() ? text : mentionText},
         {QStringLiteral("reply_to"), replyTo},
     };
+    if (!mentions.isEmpty()) params.insert(QStringLiteral("mentions"), QJsonArray::fromVariantList(mentions));
     const auto previewURL = m_composerLinkPreview.value(QStringLiteral("url")).toString();
     if (!previewURL.isEmpty() && text.contains(previewURL)) {
         auto wirePreview = m_composerLinkPreview;
@@ -2763,7 +3368,7 @@ void RpcClient::switchProfile(const QString &profile)
     ++m_chatOpenGeneration;
     m_openingMessages = false;
     m_openingMessageUpdates.clear();
-    m_chatPresenceExpiryTimer.stop();
+    clearChatPresence();
     m_reconnectTimer.stop();
     m_chatRefreshTimer.stop();
     m_chatRefreshAgain = false;
@@ -2823,8 +3428,13 @@ void RpcClient::switchProfile(const QString &profile)
     m_messageCacheOrder.clear();
     m_selectedChat.clear();
     m_searchResults.clear();
+    ++m_searchRequestGeneration;
+    m_searchLoading = false;
+    m_searchError.clear();
+    emit searchResultsChanged();
     ++m_starredRequestGeneration;
     m_starredMessages.clear();
+    m_starredMessagesError.clear();
     m_starredMessagesLoading = false;
     emit starredMessagesChanged();
     m_statusUpdates.clear();
@@ -3193,25 +3803,70 @@ void RpcClient::renameProfile(const QString &profile, const QString &displayName
 
 void RpcClient::searchMessages(const QString &query)
 {
+    const auto generation = ++m_searchRequestGeneration;
+    const auto profile = m_profile;
     m_conversationQuery = query;
     const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    m_searchResults.clear();
+    m_searchError.clear();
+    m_searchLoading = !query.trimmed().isEmpty() && !chatJid.isEmpty();
+    emit searchResultsChanged();
     if (query.trimmed().isEmpty() || chatJid.isEmpty()) {
-        m_searchResults.clear();
-        emit searchResultsChanged();
         return;
     }
     sendRequest(QStringLiteral("messages.search"),
                 {{QStringLiteral("query"), query},
                  {QStringLiteral("limit"), 100},
                  {QStringLiteral("chat_jid"), chatJid}},
-                [this, query, chatJid](const QJsonValue &result, const QJsonObject &error) {
+                [this, query, chatJid, generation, profile](const QJsonValue &result, const QJsonObject &error) {
                     // The reader may have typed on, or opened another chat,
                     // before this answer arrived.
-                    if (!error.isEmpty() || query != m_conversationQuery
+                    if (generation != m_searchRequestGeneration || profile != m_profile
+                        || query != m_conversationQuery
                         || chatJid != m_selectedChat.value(QStringLiteral("jid")).toString())
                         return;
-                    m_searchResults = result.toArray().toVariantList();
+                    m_searchLoading = false;
+                    if (!error.isEmpty())
+                        m_searchError = tr("Could not search messages. Please try again.");
+                    else
+                        m_searchResults = result.toArray().toVariantList();
                     emit searchResultsChanged();
+                });
+}
+
+void RpcClient::cancelDateLookup()
+{
+    ++m_dateLookupGeneration;
+    m_dateLookupBusy = false;
+    m_dateLookupError.clear();
+    emit dateLookupChanged();
+}
+
+void RpcClient::findMessageOnDate(qint64 start, qint64 end)
+{
+    const auto chat = m_selectedChat.value(QStringLiteral("jid")).toString();
+    if (chat.isEmpty() || start < 0 || end <= start || end - start > 26LL * 3600000)
+        return;
+    const auto generation = ++m_dateLookupGeneration;
+    const auto profile = m_profile;
+    m_dateLookupBusy = true;
+    m_dateLookupError.clear();
+    emit dateLookupChanged();
+    sendRequest(QStringLiteral("messages.on_date"),
+                {{QStringLiteral("chat_jid"), chat}, {QStringLiteral("start"), start}, {QStringLiteral("end"), end}},
+                [this, generation, profile, chat](const QJsonValue &result, const QJsonObject &error) {
+                    if (generation != m_dateLookupGeneration || profile != m_profile)
+                        return;
+                    m_dateLookupBusy = false;
+                    if (chat != m_selectedChat.value(QStringLiteral("jid")).toString()) {
+                        emit dateLookupChanged();
+                        return;
+                    }
+                    const auto id = result.toObject().value(QStringLiteral("message_id")).toString();
+                    if (!error.isEmpty()) m_dateLookupError = tr("Could not find this date. Please try again.");
+                    else if (id.isEmpty()) m_dateLookupError = tr("No messages stored on this computer for that date.");
+                    emit dateLookupChanged();
+                    if (error.isEmpty() && !id.isEmpty()) emit messageDateLocated(chat, id);
                 });
 }
 
@@ -3220,6 +3875,7 @@ void RpcClient::loadStarredMessages(const QString &chatJid)
     const auto generation = ++m_starredRequestGeneration;
     m_starredMessages.clear();
     m_starredMessagesLoading = true;
+    m_starredMessagesError.clear();
     emit starredMessagesChanged();
     sendRequest(QStringLiteral("messages.starred"),
                 {{QStringLiteral("limit"), 100}, {QStringLiteral("chat_jid"), chatJid}},
@@ -3229,6 +3885,8 @@ void RpcClient::loadStarredMessages(const QString &chatJid)
                     m_starredMessagesLoading = false;
                     if (error.isEmpty())
                         m_starredMessages = result.toObject().value(QStringLiteral("items")).toArray().toVariantList();
+                    else
+                        m_starredMessagesError = tr("Could not load starred messages. Please try again.");
                     emit starredMessagesChanged();
                 });
 }
@@ -3327,18 +3985,33 @@ QStringList RpcClient::documentDownloads() const
 
 void RpcClient::downloadDocument(const QVariantMap &requested)
 {
+    downloadAttachment(requested, QStringLiteral("document"));
+}
+
+void RpcClient::downloadPhoto(const QVariantMap &requested)
+{
+    downloadAttachment(requested, QStringLiteral("image"));
+}
+
+void RpcClient::downloadAttachment(const QVariantMap &requested, const QString &expectedKind, std::function<void(bool)> finished)
+{
     const auto id = requested.value(QStringLiteral("id")).toString();
     const auto chat = requested.value(QStringLiteral("chat_jid")).toString();
-    if (id.isEmpty() || chat.isEmpty() || requested.value(QStringLiteral("kind")).toString() != QStringLiteral("document"))
+    if (id.isEmpty() || chat.isEmpty() || requested.value(QStringLiteral("kind")).toString() != expectedKind
+        || requested.value(QStringLiteral("revoked")).toBool()) {
+        if (finished) finished(false);
         return;
+    }
     const auto profile = m_profile;
     const auto key = profile + QLatin1Char('/') + chat + QLatin1Char('/') + id;
-    if (m_documentDownloads.contains(key))
+    if (m_documentDownloads.contains(key)) {
+        if (finished) finished(false);
         return;
+    }
     m_documentDownloads.insert(key);
     emit documentDownloadsChanged();
 
-    const auto save = [this, key, profile](const QVariantMap &message) {
+    const auto save = [this, key, profile, finished](const QVariantMap &message) {
         const auto path = message.value(QStringLiteral("media_path")).toString();
         auto name = message.value(QStringLiteral("media_name")).toString();
         if (name.isEmpty())
@@ -3349,17 +4022,20 @@ void RpcClient::downloadDocument(const QVariantMap &requested)
         auto promise = std::make_shared<QPromise<DocumentSaveResult>>();
         auto *watcher = new QFutureWatcher<DocumentSaveResult>(this);
         connect(watcher, &QFutureWatcher<DocumentSaveResult>::finished, this,
-                [this, watcher, key, profile] {
+                [this, watcher, key, profile, finished] {
                     const auto result = watcher->result();
                     watcher->deleteLater();
                     m_documentDownloads.remove(key);
                     emit documentDownloadsChanged();
-                    if (m_profile != profile)
+                    if (m_profile != profile) {
+                        if (finished) finished(false);
                         return;
+                    }
                     if (!result.error.isEmpty())
                         emit errorOccurred(result.error);
                     else
                         emit noticeOccurred(tr("File saved to %1").arg(result.path));
+                    if (finished) finished(result.error.isEmpty());
                 });
         promise->start();
         watcher->setFuture(promise->future());
@@ -3377,18 +4053,22 @@ void RpcClient::downloadDocument(const QVariantMap &requested)
     }
     sendRequest(QStringLiteral("message.download"),
                 {{QStringLiteral("chat_jid"), chat}, {QStringLiteral("message_id"), id}},
-                [this, profile, key, id, save](const QJsonValue &result, const QJsonObject &error) {
+                [this, profile, key, id, chat, expectedKind, save, finished](const QJsonValue &result, const QJsonObject &error) {
                     if (!error.isEmpty() || m_profile != profile) {
                         m_documentDownloads.remove(key);
                         emit documentDownloadsChanged();
+                        if (finished) finished(false);
                         return;
                     }
                     const auto message = result.toObject().toVariantMap();
                     if (message.value(QStringLiteral("id")).toString() != id
-                        || message.value(QStringLiteral("kind")).toString() != QStringLiteral("document")) {
+                        || message.value(QStringLiteral("chat_jid")).toString() != chat
+                        || message.value(QStringLiteral("kind")).toString() != expectedKind
+                        || message.value(QStringLiteral("revoked")).toBool()) {
                         m_documentDownloads.remove(key);
                         emit documentDownloadsChanged();
-                        emit errorOccurred(tr("Could not download this document."));
+                        emit errorOccurred(tr("Could not download this attachment."));
+                        if (finished) finished(false);
                         return;
                     }
                     if (belongsToOpenChat(message))
@@ -3614,9 +4294,9 @@ void RpcClient::refreshChatAvatar(const QString &jid)
                 OnFailure::StayQuiet);
 }
 
-void RpcClient::applyChatAvatar(const QString &jid, const QString &path)
+void RpcClient::applyChatAvatar(const QString &jid, const QString &path, bool confirmedRemoval)
 {
-    if (jid.isEmpty() || path.isEmpty())
+    if (jid.isEmpty() || (path.isEmpty() && !confirmedRemoval))
         return;
     const auto update = [&jid, &path](QVariantList &chats) {
         bool changed = false;

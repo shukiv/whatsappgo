@@ -13,6 +13,7 @@ WhatsAppMenuPopup {
     signal audioRequested()
     signal stickerRequested()
     signal contactRequested()
+    signal pollRequested()
     signal unavailableRequested(string feature)
 
     onOpened: documentAction.forceActiveFocus()
@@ -86,10 +87,10 @@ WhatsAppMenuPopup {
         text: qsTr("Poll")
         iconSource: Qt.resolvedUrl("icons/poll.svg")
         iconTint: Theme.attachmentPoll
-        Accessible.description: qsTr("Creating polls is not supported by the linked-device API yet")
+        Accessible.description: qsTr("Review a question and answer options before sending a poll")
         onClicked: {
             root.close()
-            root.unavailableRequested(text)
+            root.pollRequested()
         }
     }
 

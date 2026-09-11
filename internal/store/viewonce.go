@@ -10,7 +10,7 @@ import (
 func redactViewOnceTx(ctx context.Context, tx *sql.Tx, chatJID string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE messages SET body='',media_mime='',media_name='',media_path='',media_thumbnail='',
  media_size=0,media_duration=0,audio_waveform=NULL,gif_playback=0,link_url='',link_title='',link_description='',link_thumbnail='',
- contact_name='',contact_phone='',contact_count=0,latitude=0,longitude=0,starred=0
+ contact_name='',contact_phone='',contact_count=0,latitude=0,longitude=0,starred=0,mentions=''
  WHERE chat_jid=? AND kind='view_once'`, chatJID); err != nil {
 		return err
 	}

@@ -18,6 +18,11 @@ Item {
     property string currentId: ""
     property string currentPath: ""
     property bool isVideo: false
+    // Video controls do not alter the volume or speed of voice notes.
+    property bool videoMuted: false
+    property real videoVolume: 1.0
+    property real videoRate: 1.0
+    readonly property bool seekable: loader.item ? loader.item.seekable : false
     // Set by the window to the surface video frames are drawn on.
     property var videoSurface: null
     // The message waiting for its file to finish downloading.
@@ -135,7 +140,11 @@ Item {
         onLoaded: root.beginPlayback()
         sourceComponent: Component {
             MediaPlayer {
-                audioOutput: AudioOutput {}
+                audioOutput: AudioOutput {
+                    muted: root.isVideo && root.videoMuted
+                    volume: root.isVideo ? Math.max(0, Math.min(1, root.videoVolume)) : 1
+                }
+                playbackRate: root.isVideo ? Math.max(0.5, Math.min(2, root.videoRate)) : 1
                 videoOutput: root.videoSurface
 				onPlaybackStateChanged: {
 					if (playbackState === MediaPlayer.PlayingState && root.announcedId !== root.currentId) {

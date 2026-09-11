@@ -36,6 +36,7 @@ type TextRequest struct {
 	ReplyTo      string
 	ReplyChatJID string
 	Preview      model.LinkPreview
+	Mentions     []model.Mention
 }
 
 type Gateway interface {

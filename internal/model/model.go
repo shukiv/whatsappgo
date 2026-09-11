@@ -38,10 +38,12 @@ type Chat struct {
 	// The chat list draws the last message the way WhatsApp Web does: a type
 	// icon, the sender's receipt state, and a voice note's length. Those need
 	// the message's own fields, not just the rendered preview text.
-	LastMessageKind     string `json:"last_message_kind,omitempty"`
-	LastMessageFromMe   bool   `json:"last_message_from_me"`
-	LastMessageStatus   string `json:"last_message_status,omitempty"`
-	LastMessageDuration int    `json:"last_message_duration,omitempty"`
+	LastMessageKind       string `json:"last_message_kind,omitempty"`
+	LastMessageFromMe     bool   `json:"last_message_from_me"`
+	LastMessageStatus     string `json:"last_message_status,omitempty"`
+	LastMessageDuration   int    `json:"last_message_duration,omitempty"`
+	LastMessageSenderJID  string `json:"last_message_sender_jid,omitempty"`
+	LastMessageSenderName string `json:"last_message_sender_name,omitempty"`
 	// The lists this chat belongs to, so the sidebar can filter by one
 	// without a round trip per chat.
 	LabelIDs            []string `json:"label_ids,omitempty"`
@@ -64,34 +66,35 @@ type Label struct {
 }
 
 type Message struct {
-	ID              string `json:"id"`
-	ChatJID         string `json:"chat_jid"`
-	SenderJID       string `json:"sender_jid,omitempty"`
-	SenderName      string `json:"sender_name,omitempty"`
-	Timestamp       int64  `json:"timestamp"`
-	Kind            string `json:"kind"`
-	Body            string `json:"body,omitempty"`
-	FromMe          bool   `json:"from_me"`
-	Status          string `json:"status"`
-	DeliveredAt     int64  `json:"delivered_at,omitempty"`
-	ReadAt          int64  `json:"read_at,omitempty"`
-	PlayedAt        int64  `json:"played_at,omitempty"`
-	Starred         bool   `json:"starred,omitempty"`
-	ChatTitle       string `json:"chat_title,omitempty"`
-	ForwardingScore int    `json:"forwarding_score,omitempty"`
-	ReplyTo         string `json:"reply_to,omitempty"`
-	ReplyPreview    string `json:"reply_preview,omitempty"`
-	ReplySender     string `json:"reply_sender,omitempty"`
-	ReplyFromMe     bool   `json:"reply_from_me,omitempty"`
-	ReplyViewOnce   bool   `json:"reply_view_once,omitempty"`
-	Edited          bool   `json:"edited"`
-	Revoked         bool   `json:"revoked"`
-	MediaMIME       string `json:"media_mime,omitempty"`
-	MediaName       string `json:"media_name,omitempty"`
-	MediaPath       string `json:"media_path,omitempty"`
-	MediaThumbnail  string `json:"media_thumbnail,omitempty"`
-	MediaSize       int64  `json:"media_size,omitempty"`
-	GIFPlayback     bool   `json:"gif_playback,omitempty"`
+	ID              string    `json:"id"`
+	ChatJID         string    `json:"chat_jid"`
+	SenderJID       string    `json:"sender_jid,omitempty"`
+	SenderName      string    `json:"sender_name,omitempty"`
+	Timestamp       int64     `json:"timestamp"`
+	Kind            string    `json:"kind"`
+	Body            string    `json:"body,omitempty"`
+	Mentions        []Mention `json:"mentions,omitempty"`
+	FromMe          bool      `json:"from_me"`
+	Status          string    `json:"status"`
+	DeliveredAt     int64     `json:"delivered_at,omitempty"`
+	ReadAt          int64     `json:"read_at,omitempty"`
+	PlayedAt        int64     `json:"played_at,omitempty"`
+	Starred         bool      `json:"starred,omitempty"`
+	ChatTitle       string    `json:"chat_title,omitempty"`
+	ForwardingScore int       `json:"forwarding_score,omitempty"`
+	ReplyTo         string    `json:"reply_to,omitempty"`
+	ReplyPreview    string    `json:"reply_preview,omitempty"`
+	ReplySender     string    `json:"reply_sender,omitempty"`
+	ReplyFromMe     bool      `json:"reply_from_me,omitempty"`
+	ReplyViewOnce   bool      `json:"reply_view_once,omitempty"`
+	Edited          bool      `json:"edited"`
+	Revoked         bool      `json:"revoked"`
+	MediaMIME       string    `json:"media_mime,omitempty"`
+	MediaName       string    `json:"media_name,omitempty"`
+	MediaPath       string    `json:"media_path,omitempty"`
+	MediaThumbnail  string    `json:"media_thumbnail,omitempty"`
+	MediaSize       int64     `json:"media_size,omitempty"`
+	GIFPlayback     bool      `json:"gif_playback,omitempty"`
 	// Display-only original retained beside the PNG sticker fallback.
 	StickerSource   string     `json:"sticker_source,omitempty"`
 	StickerAnimated bool       `json:"sticker_animated,omitempty"`

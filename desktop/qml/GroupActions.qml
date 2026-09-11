@@ -17,8 +17,25 @@ Item {
     property string feedback: ""
     readonly property var members: client.groupInfo.participants || []
     signal notice(string message)
+    GroupInviteQRDialog { id: inviteQR; client: root.client }
 
     function show(action, target) {
+        if (action === "edit_photo") {
+            photoEditor.showForGroup()
+            return
+        }
+        if (action === "join_requests") {
+            joinRequests.showForGroup()
+            return
+        }
+        if (action === "permissions") {
+            permissionsEditor.showForGroup()
+            return
+        }
+        if (action === "edit_name" || action === "edit_description") {
+            metadataEditor.showFor(action === "edit_name" ? "name" : "description")
+            return
+        }
         jid = String(client.selectedChat.jid || "")
         mode = action
         member = target || ({})
@@ -31,6 +48,26 @@ Item {
         dialog.open()
         if (action === "invite") client.requestGroupInviteLink(jid, false)
         if (action === "list") client.refreshChatLabels()
+    }
+    GroupMetadataDialog {
+        id: metadataEditor
+        client: root.client
+        onSaved: message => root.notice(message)
+    }
+    GroupPhotoDialog {
+        id: photoEditor
+        client: root.client
+        onNotice: message => root.notice(message)
+    }
+    GroupPermissionsDialog {
+        id: permissionsEditor
+        client: root.client
+        onSaved: message => root.notice(message)
+    }
+    GroupJoinRequestsDialog {
+        id: joinRequests
+        client: root.client
+        onNotice: message => root.notice(message)
     }
     function toggle(jid) {
         const next = selected.slice()
@@ -251,6 +288,7 @@ Item {
             BusyIndicator { running: root.client.groupActionBusy; visible: running; Layout.alignment: Qt.AlignHCenter }
             DialogTextField { Layout.fillWidth: true; readOnly: true; text: root.client.groupInviteLink; placeholderText: qsTr("Invite link"); selectByMouse: true }
             GroupInfoRow { Layout.fillWidth: true; text: qsTr("Copy link"); iconSource: Qt.resolvedUrl("icons/copy.svg"); enabled: root.client.groupInviteLink !== "" && !root.client.groupActionBusy; onClicked: { root.client.copyText(root.client.groupInviteLink); root.notice(qsTr("Invite link copied")) } }
+            GroupInfoRow { Layout.fillWidth: true; text: qsTr("QR code"); objectName: "groupInviteQRAction"; enabled: !root.client.groupActionBusy; onClicked: inviteQR.showFor(root.jid) }
             GroupInfoRow { Layout.fillWidth: true; text: qsTr("Reset link…"); iconSource: Qt.resolvedUrl("icons/reconnect.svg"); visible: Boolean(root.client.groupInfo.can_manage); enabled: !root.client.groupActionBusy; onClicked: root.confirm("reset") }
         }
     }

@@ -15,6 +15,12 @@
   <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
+    <release version="0.1.8" date="2026-09-11">
+      <description>
+        <p>Expand group creation, management and mentions; improve participant names, synchronized pinned chats, sticker recovery, menus and keyboard navigation.</p>
+        <p>Add searchable starred messages, local-history calendar navigation, richer photo and video controls, and bulk media starring and downloads. Improve search feedback and light and dark theme accessibility.</p>
+      </description>
+    </release>
     <release version="0.1.7" date="2026-09-07">
       <description>
         <p>Show a centered unread-message count above the first unread message in both themes. Keep the divider stable across read receipts and older history pages, preserve arrivals during chat loading, and reject stale opening responses.</p>

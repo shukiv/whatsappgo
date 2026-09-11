@@ -1,3 +1,10 @@
+whatsappgo (0.1.8-1) unstable; urgency=medium
+
+  * Expand groups, mentions, media controls, search and keyboard navigation.
+  * Fix pinned-chat synchronization, sticker recovery and menu placement.
+
+ -- WhatsAppGo Contributors <maintainers@whatsappgo.org>  Fri, 11 Sep 2026 00:00:00 +0300
+
 whatsappgo (0.1.7-1) unstable; urgency=medium
 
   * Show a stable unread-message divider with a live count in both themes.

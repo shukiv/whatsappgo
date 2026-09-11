@@ -18,7 +18,29 @@ FocusScope {
     property real zoomFactor: 1.0
     property real panX: 0
     property real panY: 0
-    readonly property bool previewActive: String(imageUrl).length > 0
+    property var gallery: []
+    property int galleryIndex: -1
+    property var sourceMessage: ({})
+    property string ownerChat: ""
+    property string ownerProfile: ""
+    property int messageRevision: 0
+    readonly property bool previewActive: String(imageUrl).length > 0 || galleryIndex >= 0
+    readonly property bool ownerCurrent: ownerChat !== "" && ownerChat === String(backend.selectedChat.jid || "")
+        && ownerProfile === String(backend.profile)
+    readonly property var currentMessage: {
+        const revision = messageRevision
+        const loaded = ownerCurrent && messageId ? backend.messageById(messageId) : ({})
+        return loaded.id ? loaded : sourceMessage
+    }
+    readonly property bool messageEligible: ownerCurrent && Boolean(currentMessage.id)
+        && currentMessage.kind === "image" && !currentMessage.revoked
+    readonly property bool downloadBusy: (backend.documentDownloads || []).indexOf(
+        ownerChat + "/" + messageId) >= 0
+    onCurrentMessageChanged: Qt.callLater(validateCurrentPhoto)
+    readonly property bool inputReady: previewActive && !Theme.popupOwnsFocus(root.Overlay.overlay,
+        root.Window.window ? root.Window.window.activeFocusItem : null)
+    signal messageActionRequested(string action, var message)
+    signal sessionEnded()
     readonly property real minimumZoom: 1.0
     readonly property real maximumZoom: 5.0
     readonly property real zoomRatio: 1.2
@@ -29,6 +51,11 @@ FocusScope {
     Accessible.name: qsTr("Photo viewer")
 
     function openImage(url, title, avatarSource, timestampText, imageCaption, sourceMessageId) {
+        gallery = []
+        galleryIndex = -1
+        sourceMessage = ({})
+        ownerChat = ""
+        ownerProfile = ""
         imageUrl = url
         messageId = sourceMessageId || ""
         contactTitle = title || qsTr("Photo")
@@ -42,12 +69,104 @@ FocusScope {
     }
 
     function closePreview() {
+        imageActionMenu.close()
+        photoReactionPicker.close()
+        photoPinDialog.close()
+        saveImageDialog.close()
+        gallery = []
+        galleryIndex = -1
+        sourceMessage = ({})
+        ownerChat = ""
+        ownerProfile = ""
         imageUrl = ""
         messageId = ""
         zoomFactor = minimumZoom
         panX = 0
         panY = 0
+        sessionEnded()
     }
+
+    function openGallery(items, index, chat, profile) {
+        if (!items.length || index < 0 || index >= items.length) return
+        gallery = items
+        ownerChat = chat
+        ownerProfile = profile
+        selectPhoto(index)
+    }
+
+    function selectPhoto(index) {
+        if (!ownerCurrent || index < 0 || index >= gallery.length) return
+        imageActionMenu.close()
+        photoReactionPicker.close()
+        const item = gallery[index]
+        sourceMessage = item.message
+        messageId = String(item.message.id)
+        imageUrl = item.url || ""
+        contactTitle = item.title
+        contactAvatarSource = item.avatar || ""
+        sentAt = item.sentAt
+        caption = String(item.message.body || "")
+        galleryIndex = index
+        zoomFactor = minimumZoom
+        panX = 0
+        panY = 0
+        messageRevision++
+        thumbnails.positionViewAtIndex(index, ListView.Contain)
+        if (!item.message.media_path) backend.ensureMedia(messageId)
+        forceActiveFocus()
+    }
+
+    function requestMessageAction(action) {
+        if (!messageEligible) return
+        if (action === "download") backend.downloadPhoto(currentMessage)
+        else if (action === "star") backend.starMessage(messageId, currentMessage.sender_jid || "",
+                                                       Boolean(currentMessage.from_me), !currentMessage.starred)
+        else if (action === "pin") { photoPinSevenDays.checked = true; photoPinDialog.open() }
+        else if (action === "react") photoReactionPicker.open()
+        else messageActionRequested(action, currentMessage)
+    }
+
+    function panBy(dx, dy) {
+        if (zoomFactor <= minimumZoom) return
+        panX += dx
+        panY += dy
+        clampPan()
+    }
+
+    function validateCurrentPhoto() {
+        if (galleryIndex >= 0 && currentMessage.id
+                && (currentMessage.revoked || currentMessage.kind !== "image")) closePreview()
+    }
+
+    Connections {
+        target: backend
+        function onSelectedChatChanged() {
+            if (root.galleryIndex >= 0 && root.ownerChat !== String(backend.selectedChat.jid || ""))
+                root.closePreview()
+        }
+        function onProfileChanged() { if (root.previewActive) root.closePreview() }
+    }
+    Connections {
+        target: backend.messages
+        function onDataChanged() { root.messageRevision++ }
+        function onModelReset() { root.messageRevision++ }
+        function onRowsRemoved() { root.messageRevision++ }
+    }
+
+    Shortcut {
+        sequence: "Left"
+        enabled: root.inputReady && root.galleryIndex > 0
+        onActivated: root.selectPhoto(root.galleryIndex - 1)
+    }
+    Shortcut {
+        sequence: "Right"
+        enabled: root.inputReady && root.galleryIndex >= 0 && root.galleryIndex + 1 < root.gallery.length
+        onActivated: root.selectPhoto(root.galleryIndex + 1)
+    }
+    Shortcut { sequence: "Shift+Left"; enabled: root.inputReady; onActivated: root.panBy(60, 0) }
+    Shortcut { sequence: "Shift+Right"; enabled: root.inputReady; onActivated: root.panBy(-60, 0) }
+    Shortcut { sequence: "Shift+Up"; enabled: root.inputReady; onActivated: root.panBy(0, 60) }
+    Shortcut { sequence: "Shift+Down"; enabled: root.inputReady; onActivated: root.panBy(0, -60) }
 
     function replaceImage(url) {
         if (!url || String(imageUrl) === String(url))
@@ -156,7 +275,7 @@ FocusScope {
         RowLayout {
             anchors.left: parent.left
             anchors.leftMargin: 20
-            anchors.right: closeButton.left
+            anchors.right: toolbarActions.left
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
             spacing: 10
@@ -179,6 +298,7 @@ FocusScope {
                 Label {
                     Layout.fillWidth: true
                     text: root.contactTitle
+                    textFormat: Text.PlainText
                     color: Theme.text
                     font.pixelSize: 15
                     font.weight: Font.Medium
@@ -197,7 +317,9 @@ FocusScope {
         }
 
         RowLayout {
-            anchors.horizontalCenter: parent.horizontalCenter
+            id: toolbarActions
+            anchors.right: closeButton.left
+            anchors.rightMargin: 4
             anchors.verticalCenter: parent.verticalCenter
             spacing: 4
 
@@ -254,6 +376,43 @@ FocusScope {
                 ToolTip.visible: hovered
                 ToolTip.text: Accessible.name
             }
+
+            Repeater {
+                model: [
+                    { action: "jump", title: qsTr("Go to message"), icon: "chats" },
+                    { action: "reply", title: qsTr("Reply"), icon: "reply" },
+                    { action: "star", title: root.currentMessage.starred ? qsTr("Unstar") : qsTr("Star"), icon: "star" },
+                    { action: "pin", title: qsTr("Pin"), icon: "pin" },
+                    { action: "react", title: qsTr("React"), icon: "smile" },
+                    { action: "forward", title: qsTr("Forward"), icon: "forward" },
+                    { action: "download", title: qsTr("Download"), icon: "download" }
+                ]
+                ThemedToolButton {
+                    required property var modelData
+                    objectName: "photoAction_" + modelData.action
+                    visible: root.galleryIndex >= 0 && toolbar.width >= 1000
+                    enabled: root.messageEligible && (modelData.action !== "download" || !root.downloadBusy)
+                    Layout.preferredWidth: 36
+                    Layout.preferredHeight: 40
+                    iconSource: Qt.resolvedUrl("icons/" + modelData.icon + ".svg")
+                    iconSize: 20
+                    Accessible.name: modelData.title
+                    iconSpinning: modelData.action === "download" && root.downloadBusy
+                    onClicked: root.requestMessageAction(modelData.action)
+                    ToolTip.visible: root.inputReady && (hovered || activeFocus)
+                    ToolTip.text: Accessible.name
+                }
+            }
+            ThemedToolButton {
+                objectName: "photoActionsMenuButton"
+                Layout.preferredWidth: 40
+                Layout.preferredHeight: 40
+                iconSource: Qt.resolvedUrl("icons/menu.svg")
+                Accessible.name: qsTr("Photo actions")
+                onClicked: imageActionMenu.openUnder(this)
+                ToolTip.visible: !imageActionMenu.visible && root.inputReady && (hovered || activeFocus)
+                ToolTip.text: Accessible.name
+            }
         }
 
         ThemedToolButton {
@@ -293,6 +452,8 @@ FocusScope {
         anchors.bottom: filmstrip.top
         anchors.margins: 20
         clip: true
+        onWidthChanged: root.clampPan()
+        onHeightChanged: root.clampPan()
 
         Item {
             id: zoomSurface
@@ -335,11 +496,57 @@ FocusScope {
             }
         }
 
-        TapHandler {
+        MouseArea {
             objectName: "chatMediaViewerClickHandler"
+            anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            onTapped: eventPoint => root.openActionMenu(eventPoint.position.x, eventPoint.position.y)
+            cursorShape: root.zoomFactor > root.minimumZoom ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
+            property point pressPoint
+            property point initialPan
+            property bool panned: false
+            onPressed: mouse => {
+                pressPoint = Qt.point(mouse.x, mouse.y)
+                initialPan = Qt.point(root.panX, root.panY)
+                panned = false
+            }
+            onPositionChanged: mouse => {
+                if (!(pressedButtons & Qt.LeftButton) || root.zoomFactor <= root.minimumZoom) return
+                const dx = mouse.x - pressPoint.x
+                const dy = mouse.y - pressPoint.y
+                if (!panned && Math.abs(dx) + Math.abs(dy) < 8) return
+                panned = true
+                root.panX = initialPan.x + dx
+                root.panY = initialPan.y + dy
+                root.clampPan()
+            }
+            onClicked: mouse => { if (!panned) root.openActionMenu(mouse.x, mouse.y) }
+        }
+
+        ThemedToolButton {
+            objectName: "photoPrevious"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: 44; height: 44
+            visible: root.gallery.length > 1
+            enabled: root.galleryIndex > 0
+            iconSource: Qt.resolvedUrl("icons/back.svg")
+            Accessible.name: qsTr("Previous photo")
+            onClicked: root.selectPhoto(root.galleryIndex - 1)
+            ToolTip.visible: hovered || activeFocus
+            ToolTip.text: Accessible.name
+        }
+        ThemedToolButton {
+            objectName: "photoNext"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: 44; height: 44
+            visible: root.gallery.length > 1
+            enabled: root.galleryIndex + 1 < root.gallery.length
+            iconSource: Qt.resolvedUrl("icons/chevron-right.svg")
+            Accessible.name: qsTr("Next photo")
+            onClicked: root.selectPhoto(root.galleryIndex + 1)
+            ToolTip.visible: hovered || activeFocus
+            ToolTip.text: Accessible.name
         }
 
         BusyIndicator {
@@ -353,8 +560,8 @@ FocusScope {
 
         Label {
             anchors.centerIn: parent
-            visible: fullImage.status === Image.Error
-            text: qsTr("This photo could not be displayed")
+            visible: fullImage.status === Image.Error || String(root.imageUrl) === ""
+            text: qsTr("This photo is not available yet. Use Download to fetch it.")
             color: Theme.textMuted
             font.pixelSize: 15
         }
@@ -365,10 +572,11 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: 92
+        height: root.galleryIndex >= 0 ? 116 : 92
         color: Theme.surface
 
         Rectangle {
+            visible: root.galleryIndex < 0
             anchors.centerIn: parent
             width: 64
             height: 64
@@ -393,10 +601,65 @@ FocusScope {
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(0, (parent.width - 180) / 2)
             text: root.caption
-            visible: text.length > 0
+            visible: root.galleryIndex < 0 && text.length > 0
             color: Theme.textMuted
             font.pixelSize: 13
             elide: Text.ElideRight
+        }
+
+        Label {
+            id: galleryCaption
+            objectName: "photoGalleryCaption"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 12
+            visible: root.galleryIndex >= 0
+            text: (root.galleryIndex + 1) + " / " + root.gallery.length + (root.caption ? " · " + root.caption : "")
+            textFormat: Text.PlainText
+            color: Theme.textMuted
+            elide: Text.ElideRight
+            font.pixelSize: 13
+        }
+        ListView {
+            id: thumbnails
+            objectName: "photoThumbnails"
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: galleryCaption.bottom
+            anchors.bottom: parent.bottom
+            anchors.margins: 8
+            visible: root.galleryIndex >= 0
+            orientation: ListView.Horizontal
+            spacing: 8
+            clip: true
+            model: root.gallery
+            currentIndex: root.galleryIndex
+            delegate: ThemedToolButton {
+                required property var modelData
+                required property int index
+                objectName: "photoThumbnail_" + index
+                width: 68; height: 68
+                padding: 4
+                Accessible.name: qsTr("Photo %1 of %2, %3").arg(index + 1).arg(root.gallery.length).arg(modelData.title)
+                Accessible.description: modelData.message.body || ""
+                Accessible.selected: index === root.galleryIndex
+                onClicked: root.selectPhoto(index)
+                background: Rectangle {
+                    radius: 6
+                    color: Theme.surfaceMuted
+                    border.width: 3
+                    border.color: parent.activeFocus || parent.index === root.galleryIndex ? Theme.primary : "transparent"
+                }
+                contentItem: Image {
+                    source: parent.index === root.galleryIndex ? root.imageUrl : parent.modelData.url
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                }
+                ToolTip.visible: hovered || activeFocus
+                ToolTip.text: Accessible.name
+            }
+            ScrollBar.horizontal: ScrollBar {}
         }
 
         Rectangle {
@@ -413,6 +676,23 @@ FocusScope {
         objectName: "chatMediaViewerActionMenu"
         parent: Overlay.overlay
         width: 230
+
+        Repeater {
+            model: [
+                { action: "jump", title: qsTr("Go to message") }, { action: "reply", title: qsTr("Reply") },
+                { action: "star", title: root.currentMessage.starred ? qsTr("Unstar") : qsTr("Star") },
+                { action: "pin", title: qsTr("Pin") }, { action: "react", title: qsTr("React") },
+                { action: "forward", title: qsTr("Forward") }, { action: "download", title: qsTr("Download") }
+            ]
+            WhatsAppMenuItem {
+                required property var modelData
+                objectName: "photoMenu_" + modelData.action
+                text: modelData.title
+                visible: root.galleryIndex >= 0
+                enabled: root.messageEligible && (modelData.action !== "download" || !root.downloadBusy)
+                onClicked: { imageActionMenu.close(); root.requestMessageAction(modelData.action) }
+            }
+        }
 
         WhatsAppMenuItem {
             objectName: "chatMediaViewerCopyAction"
@@ -433,6 +713,41 @@ FocusScope {
                 root.chooseSaveDestination()
             }
         }
+    }
+
+    EmojiPicker {
+        id: photoReactionPicker
+        objectName: "photoReactionPicker"
+        parent: Overlay.overlay
+        x: Math.max(8, Math.min(parent.width - width - 8, (parent.width - width) / 2))
+        y: Math.max(8, (parent.height - height) / 2)
+        onEmojiChosen: emoji => {
+            if (!root.messageEligible) return
+            const self = String(backend.status.user_jid || "").split("@")[0].split(":")[0]
+            const own = (root.currentMessage.reactions || []).find(r => String(r.sender_jid || "").split("@")[0].split(":")[0] === self)
+            backend.reactMessage(root.messageId, root.currentMessage.sender_jid || "", own && own.emoji === emoji ? "" : emoji)
+            close()
+        }
+        onClosed: if (root.previewActive) root.forceActiveFocus()
+    }
+
+    WhatsAppDialog {
+        id: photoPinDialog
+        objectName: "photoPinDialog"
+        title: qsTr("Choose how long to pin this message")
+        subtitle: qsTr("You can unpin it at any time.")
+        acceptText: qsTr("Pin")
+        acceptEnabled: root.messageEligible
+        onAccepted: {
+            if (root.messageEligible)
+                backend.pinMessage(root.messageId, root.currentMessage.sender_jid || "",
+                    (photoPinOneDay.checked ? 1 : photoPinThirtyDays.checked ? 30 : 7) * 86400)
+        }
+        onClosed: if (root.previewActive) root.forceActiveFocus()
+        ButtonGroup { id: photoPinDurations }
+        DialogRadioButton { id: photoPinOneDay; text: qsTr("24 hours"); ButtonGroup.group: photoPinDurations }
+        DialogRadioButton { id: photoPinSevenDays; text: qsTr("7 days"); checked: true; ButtonGroup.group: photoPinDurations }
+        DialogRadioButton { id: photoPinThirtyDays; text: qsTr("30 days"); ButtonGroup.group: photoPinDurations }
     }
 
     FileDialog {

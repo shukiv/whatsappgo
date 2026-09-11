@@ -97,6 +97,8 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
   Media, Documents, and Links views backed by SQLite history
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
+- group member management and permission-aware group name/description editing,
+  with explicit Save, copyable details, and draft retention on errors
 - a compact desktop shell measured against the installed WhatsApp Web PWA,
   including 64 px navigation/header geometry, responsive filter overflow, and
   menus that reposition inside the window instead of being clipped

@@ -120,6 +120,7 @@ type sendTextParams struct {
 	ReplyTo      string            `json:"reply_to"`
 	ReplyChatJID string            `json:"reply_chat_jid"`
 	LinkPreview  model.LinkPreview `json:"link_preview"`
+	Mentions     []model.Mention   `json:"mentions"`
 }
 type linkPreviewParams struct {
 	Text string `json:"text"`
@@ -237,6 +238,8 @@ func readable(err error) error {
 
 func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	switch method {
+	case "messages.on_date":
+		return s.messageOnDate(ctx, raw)
 	case "rpc.discover":
 		return discoveryResult(), nil
 	case "status.get":
@@ -351,10 +354,22 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
+		var chats []model.Chat
+		var err error
 		if p.Archived {
-			return s.store.ListArchivedChats(ctx, p.Limit, p.Offset, p.Query)
+			chats, err = s.store.ListArchivedChats(ctx, p.Limit, p.Offset, p.Query)
+		} else {
+			chats, err = s.store.ListChats(ctx, p.Limit, p.Offset, p.Query)
 		}
-		return s.store.ListChats(ctx, p.Limit, p.Offset, p.Query)
+		if err != nil {
+			return nil, err
+		}
+		for i := range chats {
+			m := s.resolveMessageMentions(ctx, model.Message{ChatJID: chats[i].JID,
+				Kind: chats[i].LastMessageKind, Body: chats[i].LastMessagePreview})
+			chats[i].LastMessagePreview = model.MentionDisplayText(m.Body, m.Mentions)
+		}
+		return chats, nil
 	case "chats.search":
 		var p searchParams
 		if err := decode(raw, &p); err != nil {
@@ -487,6 +502,16 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return chat, nil
+	case "group.set_info":
+		return s.handleGroupInfoEdit(ctx, raw)
+	case "group.set_permission":
+		return s.handleGroupPermissionEdit(ctx, raw)
+	case "group.set_photo":
+		return s.handleGroupPhoto(ctx, raw)
+	case "poll.info", "poll.create", "poll.vote", "event.info", "group.invite_preview", "group.join_previewed", "group.invite_qr", "community.info", "community.description", "community.link", "status.audience_contacts":
+		return s.handleInteractiveFeature(ctx, method, raw)
+	case "group.requests.list", "group.requests.review":
+		return s.handleGroupRequests(ctx, method, raw)
 	case "group.info", "group.invite_link", "group.members", "group.leave":
 		return s.handleGroup(ctx, method, raw)
 	case "chats.mark_all_read":
@@ -770,6 +795,9 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		s.normalizeStickerMessages(ctx, page.Messages)
+		for i := range page.Messages {
+			page.Messages[i] = s.resolveMessageMentions(ctx, page.Messages[i])
+		}
 		return page, nil
 	case "messages.search":
 		var p searchParams
@@ -901,12 +929,16 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if strings.TrimSpace(p.Text) == "" {
 			return nil, errors.New("text is required")
 		}
+		mentions, err := model.NormalizeMentions(p.ChatJID, p.Text, p.Mentions)
+		if err != nil {
+			return nil, err
+		}
 		if !s.store.LinkPreviewsAllowed(ctx) {
 			p.LinkPreview = model.LinkPreview{}
 		}
 		msg, err := s.gateway.SendText(ctx, gateway.TextRequest{
 			ChatJID: p.ChatJID, Text: p.Text, ReplyTo: p.ReplyTo,
-			ReplyChatJID: p.ReplyChatJID, Preview: p.LinkPreview,
+			ReplyChatJID: p.ReplyChatJID, Preview: p.LinkPreview, Mentions: mentions,
 		})
 		if err != nil {
 			return nil, err
