@@ -319,3 +319,28 @@ func TestStartNotificationDaemonRejectsUnsafeCandidate(t *testing.T) {
 		t.Fatalf("unsafe daemon produced owner=%q launched=%v", owner, launched)
 	}
 }
+
+// The specification says a server that advertises body-markup parses a small
+// HTML subset in the body. Message text is written by other people, so it is
+// escaped for those servers and left alone for the rest.
+func TestBodyIsEscapedOnlyForServersThatParseMarkup(t *testing.T) {
+	markup := &Desktop{bodyMarkup: true}
+	plain := &Desktop{}
+	body := `5 < 6 & <b>bold</b> <img src="http://tracker.invalid/p.png">`
+	want := `5 &lt; 6 &amp; &lt;b&gt;bold&lt;/b&gt; &lt;img src="http://tracker.invalid/p.png"&gt;`
+	if got := markup.presentedBody(body); got != want {
+		t.Fatalf("markup server body = %q, want %q", got, want)
+	}
+	if got := plain.presentedBody(body); got != body {
+		t.Fatalf("plain server body = %q, want it unchanged", got)
+	}
+}
+
+func TestEscapingLeavesOrdinaryMessagesAlone(t *testing.T) {
+	markup := &Desktop{bodyMarkup: true}
+	for _, body := range []string{"Hello", "שלום", "😀 photo", "https://example.invalid/a?b=c"} {
+		if got := markup.presentedBody(body); got != body {
+			t.Fatalf("body %q was changed to %q", body, got)
+		}
+	}
+}

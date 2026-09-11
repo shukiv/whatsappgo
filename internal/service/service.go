@@ -730,6 +730,9 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		var p struct {
 			ChatJID string `json:"chat_jid"`
 			Path    string `json:"path"`
+			// Replacing a file is the caller's decision, not a default. The
+			// desktop's save dialog has already asked; a script has not.
+			Replace bool `json:"replace"`
 		}
 		if err := decode(raw, &p); err != nil {
 			return nil, err
@@ -737,7 +740,7 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if p.ChatJID == "" || p.Path == "" {
 			return nil, errors.New("chat_jid and path are required")
 		}
-		written, err := s.gateway.ExportChat(ctx, p.ChatJID, p.Path)
+		written, err := s.gateway.ExportChat(ctx, p.ChatJID, p.Path, p.Replace)
 		if err != nil {
 			return nil, err
 		}
@@ -923,8 +926,8 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(p.ChatJID) == "" {
-			return nil, errors.New("chat_jid is required")
+		if err := model.ValidateSendTarget(p.ChatJID); err != nil {
+			return nil, err
 		}
 		if strings.TrimSpace(p.Text) == "" {
 			return nil, errors.New("text is required")
@@ -954,8 +957,8 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(p.ChatJID) == "" {
-			return nil, errors.New("chat_jid is required")
+		if err := model.ValidateSendTarget(p.ChatJID); err != nil {
+			return nil, err
 		}
 		card, err := model.NewContactCard(p.Contact.Name, p.Contact.Phone)
 		if err != nil {
@@ -981,8 +984,11 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		if p.ChatJID == "" || p.Path == "" {
-			return nil, errors.New("chat_jid and path are required")
+		if p.Path == "" {
+			return nil, errors.New("path is required")
+		}
+		if err := model.ValidateSendTarget(p.ChatJID); err != nil {
+			return nil, err
 		}
 		modes := 0
 		for _, enabled := range []bool{p.Document, p.Voice, p.GIF, p.Sticker} {
@@ -1016,8 +1022,11 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		if p.ChatJID == "" || p.MessageID == "" || p.ToChatJID == "" {
-			return nil, errors.New("chat_jid, message_id and to_chat_jid are required")
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		if err := model.ValidateSendTarget(p.ToChatJID); err != nil {
+			return nil, err
 		}
 		sender, ok := s.gateway.(gateway.StickerSender)
 		if !ok {
@@ -1096,8 +1105,11 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if err := decode(raw, &p); err != nil {
 			return nil, err
 		}
-		if p.ChatJID == "" || p.MessageID == "" || p.ToChatJID == "" {
-			return nil, errors.New("chat_jid, message_id, and to_chat_jid are required")
+		if p.ChatJID == "" || p.MessageID == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		if err := model.ValidateSendTarget(p.ToChatJID); err != nil {
+			return nil, err
 		}
 		sent, err := s.gateway.ForwardMessage(ctx, p.ChatJID, p.MessageID, p.ToChatJID)
 		if err != nil {

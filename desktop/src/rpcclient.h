@@ -32,6 +32,7 @@ class RpcClient final : public QObject
     Q_PROPERTY(int archivedCount READ archivedCount NOTIFY archivedChatsChanged)
     Q_PROPERTY(QAbstractItemModel *messages READ messages CONSTANT)
     Q_PROPERTY(QVariantMap selectedChat READ selectedChat NOTIFY selectedChatChanged)
+    Q_PROPERTY(bool conversationActive READ conversationActive WRITE setConversationActive NOTIFY conversationActiveChanged)
     Q_PROPERTY(QVariantMap selectedPresence READ selectedPresence NOTIFY selectedPresenceChanged)
     Q_PROPERTY(QVariantMap chatInfo READ chatInfo NOTIFY chatInfoChanged)
     Q_PROPERTY(QVariantMap groupInfo READ groupInfo NOTIFY groupInfoChanged)
@@ -327,7 +328,9 @@ public:
     Q_INVOKABLE void clearComposerLinkPreview();
     Q_INVOKABLE void sendFile(const QString &localUrl, const QString &caption = {}, const QString &replyTo = {}, bool document = false, const QString &photoQuality = QStringLiteral("original"));
     Q_INVOKABLE void sendVoice(const QString &localUrl, const QString &chatJid, const QString &recordingProfile, const QString &replyTo = {});
-    Q_INVOKABLE void editMessage(const QString &messageId, const QString &text);
+    Q_INVOKABLE void editMessage(const QString &messageId, const QString &text, const QString &token = {});
+    bool conversationActive() const { return m_conversationActive; }
+    void setConversationActive(bool active);
     Q_INVOKABLE void deleteMessage(const QString &messageId, const QString &senderJid = {});
     Q_INVOKABLE void reactMessage(const QString &messageId, const QString &senderJid, const QString &reaction);
     Q_INVOKABLE void pinMessage(const QString &messageId, const QString &senderJid, int durationSeconds);
@@ -382,6 +385,9 @@ public:
     Q_INVOKABLE void refreshCommunities();
 
 signals:
+    void conversationActiveChanged();
+    void messageEditFinished(const QString &token, const QString &profile, const QString &chat,
+                             const QString &messageId, bool success, const QString &error);
     void daemonConnectedChanged();
     void statusChanged();
     void chatsChanged();
@@ -501,6 +507,8 @@ private:
     bool belongsToOpenChat(const QVariantMap &message) const;
     void refreshOneMessage(const QString &messageId);
     void acknowledgeIncoming(const QVariantMap &message);
+    void acknowledgeOpenConversation();
+    void scheduleStarredRefresh();
     void rememberMessages(const QString &chatJid, const QVariantList &messages);
     void forgetMessages(const QString &chatJid);
     void performChatRefresh();
@@ -527,6 +535,10 @@ private:
     QTimer m_reconnectTimer;
     QTimer m_searchReplayTimer;
     QTimer m_chatRefreshTimer;
+    // Star events arrive one per message, so a bulk star would otherwise read
+    // the whole list again for each of them.
+    QTimer m_starredReloadTimer;
+    qint64 m_starredReloadAt = 0;
     bool m_chatRefreshInFlight = false;
     bool m_chatRefreshAgain = false;
     QTimer m_chatPresenceExpiryTimer;
@@ -561,6 +573,10 @@ private:
     QHash<QString, qsizetype> m_messageCacheCosts;
     QStringList m_messageCacheOrder;
     QVariantMap m_selectedChat;
+    // Standalone clients retain explicit-open semantics; the window binds this
+    // to its actual foreground conversation visibility.
+    bool m_conversationActive = true;
+    bool m_deferredReadPage = false;
     QSet<QString> m_documentDownloads;
     QVariantMap m_selectedPresence;
     QVariantMap m_chatInfo;
@@ -579,9 +595,11 @@ private:
     QVariantMap m_notificationSettings;
     bool m_notificationSettingsBusy = false;
     quint64 m_notificationSettingsGeneration = 0;
+    quint64 m_notificationSettingsRevision = 0;
     QVariantMap m_localSettings;
     bool m_localSettingsBusy = false;
     quint64 m_localSettingsGeneration = 0;
+    quint64 m_localSettingsRevision = 0;
     quint64 m_privacyRequestGeneration = 0;
     QVariantMap m_ownProfile;
     QString m_ownProfileError;
@@ -610,6 +628,7 @@ private:
     bool m_mediaLibraryHasMore = false;
     QString m_mediaLibraryCategory;
     bool m_mediaLibraryLoading = false;
+    quint64 m_mediaLibraryGeneration = 0;
     QString m_libraryStarProfile;
     QVariantList m_sharedContent;
     bool m_sharedContentHasMore = false;
@@ -634,6 +653,8 @@ private:
     QString m_starredMessagesError;
     bool m_starredMessagesLoading = false;
     quint64 m_starredRequestGeneration = 0;
+    QString m_starredChatJid;
+    bool m_starredRequested = false;
     QVariantList m_statusUpdates;
     QVariantList m_callLogs;
     QVariantList m_channels;
@@ -660,15 +681,22 @@ private:
     QSet<QString> m_requestedHistoryBoundaries;
     bool m_waitingRemoteHistory = false;
     QString m_pendingCopyImageId;
+    QString m_pendingCopyImageChat;
+    quint64 m_copyGeneration = 0;
     QSet<QString> m_requestedMedia;
+    QHash<QString, qint64> m_mediaRetryAt;
 	QSet<QString> m_playedMedia;
     QSet<QString> m_requestedLinkPreviews;
     QSet<QString> m_requestedStatusAvatars;
     QSet<QString> m_pendingChatAvatars;
     QHash<QString, qint64> m_chatAvatarRequestedAt;
     QSet<QString> m_requestedStatusMedia;
+    QHash<QString, qint64> m_statusMediaRetryAt;
     // How many conversations one sidebar page holds, and where that listing
     // has got to.
+    // How long one starred-list read covers. A burst of star events inside
+    // this window shares a single later read.
+    static constexpr int starredRefreshWindowMs = 1000;
     static constexpr int chatPageSize = 200;
     // The most the daemon will return in one answer.
     static constexpr int chatListCeiling = 500;

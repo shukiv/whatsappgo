@@ -104,6 +104,22 @@ eagerly, polls for a late tray host, and hides a minimized window only while
 that icon is actually available. This prevents losing the window on GNOME
 installations without an AppIndicator host.
 
+Notification text is escaped for a server that advertises `body-markup`, and a
+refused notification is re-emitted as `notification.received` with `handled=0`
+so the window presents it with the platform's own API rather than the reader
+being told nothing. On Linux that platform API is the tray balloon, which the
+same notification service draws, so the second attempt can fail for the same
+reason; the message still reaches the chat list and the conversation. The alert-deduplication table drops its oldest entry when
+full, so a run of status updates cannot silence a call or security-code alert.
+
+Conversation sends - `message.send`, `message.send_media`, `message.send_contact`,
+`message.forward` and `sticker.send` - accept only person and group addresses.
+A status update arrives as an ordinary message whose chat is the status
+broadcast address, so answering the chat an event came from would otherwise
+publish a status update. `status.post` remains the way to publish one, and a
+reply to a status is addressed to the person with the status named in
+`reply_chat_jid`.
+
 ## Account isolation
 
 Every account is a profile name matching
@@ -230,7 +246,9 @@ emoticon; before sending it converts remaining eligible tokens before capturing
 the acknowledgement's draft text. Backtick-delimited code, escaped tokens, and
 URL/path fragments stay literal. Replacement uses the editor's native input
 event path as one undoable operation, preserving cursor/selection and leaving
-active IME composition alone. Existing message history is not rewritten.
+active IME composition alone. Individual tokens are replaced rather than the
+entire span between the first and last token, so unchanged mention character
+formats retain their recipient identities. Existing message history is not rewritten.
 
 The composer parks text/reply drafts until the daemon acknowledges a send.
 Completion signals carry the captured profile, chat, text and quote; QML clears
@@ -247,9 +265,42 @@ draft. A newer reply or another conversation's draft is left alone.
 An image download started by **Copy image** may finish after navigation. Its
 clipboard action can complete, but the downloaded message is inserted into the
 visible model only if the original account and conversation still match.
+A newer image/text copy increments the clipboard-intent generation and clears
+the pending image identity. Late callbacks check the generation and profile;
+media-event fallback also matches the source chat. Obsolete downloads cannot
+overwrite the newer clipboard content or surface their old copy error.
 When the backend disconnects, queued media work is discarded and cancellation
 callbacks release their slots before the active-download count is reset. This
 keeps the three-download limit intact after reconnection.
+
+### Desktop request ordering and ownership
+
+These rules describe the [unreleased reliability fixes](releases/UNRELEASED.md):
+
+- Preferences and notification settings have separate request generations and
+  event revisions. A response predating an update event cannot overwrite its
+  state; a completed write still clears its busy flag. Invalidating reads must
+  not accidentally strand pending-write UI state.
+- `RpcClient::editMessage` reports `messageEditFinished` with an editor token,
+  profile, chat and message identity. The dialog stays open on rejection and
+  only accepts completion for the current editing session. This is a desktop
+  completion contract, not a change to the daemon's `message.edit` wire format.
+- `WhatsAppDialog.chatScoped` opts confirmations into captured chat/profile
+  ownership. A mismatch dismisses the popup and its acceptance guard rejects
+  stale activation. Unscoped dialogs keep their normal behavior; closing a
+  submitted operation does not cancel its RPC.
+- Status reply state follows profile/sender/status identity, not QVariant map
+  object replacement. Media-path upgrades and same-status refreshes preserve
+  drafts and pending replies.
+- Star events update loaded results and invalidate older read snapshots.
+  Global media-library requests use a generation per request/reload and reject
+  overlapping same-category append requests. Account changes invalidate and
+  clear the library. These guards do not add server-wide sorting or pagination
+  beyond the existing APIs.
+- Failed automatic media downloads release their deduplication keys and impose
+  a two-second retry cooldown. Chat callbacks check the chat-open generation;
+  status cooldown keys include the account. A later request may retry; the
+  cooldown does not schedule an endless background retry loop.
 
 ### Bug-report intake
 
@@ -471,6 +522,15 @@ do not count again. Opening another chat/account or reselecting the chat resets
 the batch, and a new outgoing message clears it. Events arriving during the
 initial page request are replayed after its snapshot, and a generation guard
 rejects stale responses from earlier chat activations.
+
+`Main.qml` binds `RpcClient::conversationActive` to the visible, foreground,
+non-minimized Chats section, excluding photo/video/status viewers. Initial-page
+and live incoming read receipts defer while this is false; returning to the
+conversation acknowledges its loaded incoming messages. This is window-level
+eligibility, not per-bubble visibility detection. Standalone RPC clients retain
+explicit-open behavior by default, so other consumers must provide their own
+visibility binding if needed. Opening a different chat or switching accounts
+resets deferred-page state.
 
 `RpcClient::chatOpened` signals explicit conversation activation, including
 reselecting the current chat. It is distinct from `selectedChatChanged`, which
