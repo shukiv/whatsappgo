@@ -11,9 +11,23 @@ launch `whatsappgo`, and use it as one application—there is no service or
 systemd unit to start manually.
 
 > **Important:** WhatsAppGo is not affiliated with, authorized by, or endorsed
-> by WhatsApp or Meta. Protocol changes can interrupt it, and use of an
-> unofficial client may carry account risk. Voice and video calls cannot be
-> placed because the underlying protocol library does not implement them.
+> by WhatsApp or Meta. Voice and video calls cannot be placed because the
+> underlying protocol library does not implement them, and protocol changes can
+> interrupt the rest at any time.
+>
+> **Your account is at risk.** WhatsApp's Terms of Service permit only its own
+> applications. Connecting with a client built on a reverse-engineered protocol
+> breaches those terms, whatever you use it for, and WhatsApp may ban the
+> number rather than the software: the account is what it can reach. Automated
+> or high-volume sending, unsolicited messages, scraping, bulk or repeated
+> contact with people who have not asked to hear from you, and operating many
+> accounts from one place are what actually get numbers banned, and the bot API
+> here makes all of them easy to do by accident. A ban can take the phone
+> number with it, including the account you use with WhatsApp's own app.
+>
+> Use it with a number you can afford to lose, for conversations you are a part
+> of. There is no appeal process this project can offer you and no way to undo a
+> ban from here.
 
 ## Quick start
 

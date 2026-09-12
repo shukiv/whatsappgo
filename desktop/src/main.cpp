@@ -55,6 +55,13 @@ Q_GUI_EXPORT void qt_handleWheelEvent(QWindow *window, const QPointF &local,
                                       QPoint angleDelta, Qt::KeyboardModifiers modifiers,
                                       Qt::ScrollPhase phase);
 
+// The same seam for mouse events. Dragging a zoomed photo is a press, several
+// moves and a release, and only real events exercise the hit testing and the
+// button state the handler reads.
+Q_GUI_EXPORT void qt_handleMouseEvent(QWindow *window, const QPointF &local, const QPointF &global,
+                                      Qt::MouseButtons state, Qt::MouseButton button,
+                                      QEvent::Type type, Qt::KeyboardModifiers mods, int timestamp);
+
 namespace {
 
 QString configBaseDir()
@@ -2577,7 +2584,10 @@ QtObject {
             && fullImageFitsAtMinimumZoom
             && qFuzzyCompare(initialZoom, 1.0) && zoomedIn
             && enlargedZoom > 1.15 && enlargedZoom < 1.25
-            && qAbs(anchoredPanX - 60.0 * (enlargedZoom - 1.0)) < 0.01
+            // Anchoring the zoom at the pointer is clamped to the photo as well.
+            // At this zoom the letterboxed picture still fits the stage width,
+            // so no horizontal pan is available, while the height overflows.
+            && qFuzzyIsNull(anchoredPanX)
             && qAbs(anchoredPanY - 80.0 * (enlargedZoom - 1.0)) < 0.01
             && zoomedOut && qAbs(restoredZoom - 1.0) < 0.01
             && qFuzzyIsNull(nativeViewer->property("panX").toReal())
@@ -2615,6 +2625,113 @@ QtObject {
                 qWarning() << "Image viewer wheel delta/limit checks failed"
                            << pixelZoom << neutralZoom << maximumZoom << stayedAtMaximum;
         }
+        // Dragging a zoomed photo moves it. The wheel checks above set pan
+        // through the pointer anchor; this is the separate path a reader uses.
+        bool dragPanReady = false;
+        if (nativeViewer && stageItem && viewerWindow) {
+            int mouseTimestamp = 0;
+            Qt::MouseButtons heldButtons = Qt::NoButton;
+            const auto sendViewerMouse = [&](QEvent::Type type, Qt::MouseButton button, QPointF local) {
+                if (type == QEvent::MouseButtonPress)
+                    heldButtons |= button;
+                else if (type == QEvent::MouseButtonRelease)
+                    heldButtons &= ~button;
+                const QPointF position = stageItem->mapToScene(local);
+                qt_handleMouseEvent(viewerWindow, position, viewerWindow->mapToGlobal(position.toPoint()),
+                                    heldButtons, button, type, Qt::NoModifier, mouseTimestamp += 16);
+                QCoreApplication::processEvents();
+            };
+            const QPointF grabPoint(stageItem->width() / 2.0, stageItem->height() / 2.0);
+            const auto dragBy = [&](qreal dx, qreal dy) {
+                sendViewerMouse(QEvent::MouseButtonPress, Qt::LeftButton, grabPoint);
+                // Two moves: the first crosses the handler's 8px threshold, the
+                // second is the travel a reader expects the photo to follow.
+                sendViewerMouse(QEvent::MouseMove, Qt::NoButton, grabPoint + QPointF(dx / 4.0, dy / 4.0));
+                sendViewerMouse(QEvent::MouseMove, Qt::NoButton, grabPoint + QPointF(dx, dy));
+                sendViewerMouse(QEvent::MouseButtonRelease, Qt::LeftButton, grabPoint + QPointF(dx, dy));
+            };
+
+            // At minimum zoom the whole photo is visible and must not move.
+            dragBy(70.0, 50.0);
+            const bool unzoomedStaysPut = qFuzzyIsNull(nativeViewer->property("panX").toReal())
+                && qFuzzyIsNull(nativeViewer->property("panY").toReal());
+
+            QMetaObject::invokeMethod(nativeViewer, "setZoomAt", Q_ARG(QVariant, 3.0),
+                                      Q_ARG(QVariant, stageItem->width() / 2.0),
+                                      Q_ARG(QVariant, stageItem->height() / 2.0));
+            QCoreApplication::processEvents();
+            const bool zoomedForDrag = qAbs(nativeViewer->property("zoomFactor").toReal() - 3.0) < 0.01
+                && qFuzzyIsNull(nativeViewer->property("panX").toReal())
+                && qFuzzyIsNull(nativeViewer->property("panY").toReal());
+
+            dragBy(70.0, 50.0);
+            const qreal draggedPanX = nativeViewer->property("panX").toReal();
+            const qreal draggedPanY = nativeViewer->property("panY").toReal();
+            // The photo follows the pointer one-for-one; the surface is
+            // translated after it is scaled, so the delta is not multiplied.
+            const bool followedPointer = qAbs(draggedPanX - 70.0) < 0.01 && qAbs(draggedPanY - 50.0) < 0.01;
+
+            // A second drag continues from where the first one stopped.
+            dragBy(-40.0, 30.0);
+            const bool accumulated = qAbs(nativeViewer->property("panX").toReal() - 30.0) < 0.01
+                && qAbs(nativeViewer->property("panY").toReal() - 80.0) < 0.01;
+
+            // Past the edge of the enlarged photo the pan stops at the limit
+            // instead of revealing empty space.
+            dragBy(4000.0, 4000.0);
+            // The photo is letterboxed inside a wider stage, so the reachable
+            // limit is set by the drawn picture. Measuring the stage instead
+            // would allow the photo to be dragged off its own edge.
+            const auto drawn = nativeViewer->property("drawnSize").toSizeF();
+            const qreal drawnWidth = drawn.width();
+            const qreal drawnHeight = drawn.height();
+            const qreal limitX = qMax(0.0, (drawnWidth - stageItem->width()) / 2.0);
+            const qreal limitY = qMax(0.0, (drawnHeight - stageItem->height()) / 2.0);
+            const bool clampedAtEdge = limitX > 1.0 && limitX < stageItem->width() * (3.0 - 1.0) / 2.0
+                && qAbs(nativeViewer->property("panX").toReal() - limitX) < 0.01
+                && qAbs(nativeViewer->property("panY").toReal() - limitY) < 0.01;
+            // At that limit the picture still covers the stage: a drag can never
+            // open a gap of empty surface beside it.
+            const bool noEmptyGapAtLimit = drawnWidth / 2.0 - nativeViewer->property("panX").toReal()
+                    >= stageItem->width() / 2.0 - 0.01
+                && drawnHeight / 2.0 - nativeViewer->property("panY").toReal()
+                    >= stageItem->height() / 2.0 - 0.01;
+
+            // A press and release that barely travels is still a click. A hand
+            // shifts a pixel or two on the way down, so the menu must open
+            // rather than being eaten by the drag guard. Start from the centre:
+            // at the clamp limit a stray pan would be absorbed and invisible.
+            QMetaObject::invokeMethod(nativeViewer, "setZoomAt", Q_ARG(QVariant, 1.0),
+                                      Q_ARG(QVariant, stageItem->width() / 2.0),
+                                      Q_ARG(QVariant, stageItem->height() / 2.0));
+            QMetaObject::invokeMethod(nativeViewer, "setZoomAt", Q_ARG(QVariant, 3.0),
+                                      Q_ARG(QVariant, stageItem->width() / 2.0),
+                                      Q_ARG(QVariant, stageItem->height() / 2.0));
+            QCoreApplication::processEvents();
+            const qreal panBeforeClick = nativeViewer->property("panX").toReal();
+            sendViewerMouse(QEvent::MouseButtonPress, Qt::LeftButton, grabPoint);
+            sendViewerMouse(QEvent::MouseMove, Qt::NoButton, grabPoint + QPointF(3.0, 2.0));
+            sendViewerMouse(QEvent::MouseButtonRelease, Qt::LeftButton, grabPoint + QPointF(3.0, 2.0));
+            const bool clickStillOpensMenu = imageActionMenu && imageActionMenu->property("visible").toBool()
+                && qFuzzyCompare(nativeViewer->property("panX").toReal(), panBeforeClick);
+            if (imageActionMenu)
+                QMetaObject::invokeMethod(imageActionMenu, "close");
+            QCoreApplication::processEvents();
+
+            QMetaObject::invokeMethod(nativeViewer, "setZoomAt", Q_ARG(QVariant, 1.0),
+                                      Q_ARG(QVariant, stageItem->width() / 2.0),
+                                      Q_ARG(QVariant, stageItem->height() / 2.0));
+            QCoreApplication::processEvents();
+
+            dragPanReady = unzoomedStaysPut && zoomedForDrag && followedPointer && accumulated
+                && clampedAtEdge && noEmptyGapAtLimit && clickStillOpensMenu;
+            if (!dragPanReady)
+                qWarning() << "Image viewer drag panning failed: unzoomed" << unzoomedStaysPut
+                           << "zoomed" << zoomedForDrag << "followed" << followedPointer
+                           << draggedPanX << draggedPanY << "accumulated" << accumulated
+                           << "clamped" << clampedAtEdge << limitX << limitY
+                           << "gap" << noEmptyGapAtLimit << "click" << clickStillOpensMenu;
+        }
         const bool nativeViewerClosed = nativeClose && QMetaObject::invokeMethod(nativeClose, "click");
         QCoreApplication::processEvents();
         QFile::remove(receivedImagePath);
@@ -2622,7 +2739,7 @@ QtObject {
         QFile::remove(savedImagePath);
         if (!nativeViewerReady || !startedWithThumbnail || !completedDownload || !upgradedToFullImage
                 || !imageActionsReady || !viewerCopyWorked || !viewerSaveWorked
-                || !nativeZoomReady || !wheelLimitsReady || !nativeViewerClosed
+                || !nativeZoomReady || !wheelLimitsReady || !dragPanReady || !nativeViewerClosed
                 || nativeViewer->property("previewActive").toBool())
             return WHATSAPPGO_TEST_FAILURE();
         if (screenshotPath.isEmpty())

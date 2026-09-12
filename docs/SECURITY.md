@@ -1,9 +1,19 @@
 # Security and privacy
 
 WhatsAppGo is an unofficial client built on WhatsApp's linked-device protocol.
-It is not reviewed, endorsed, or supported by Meta or WhatsApp. Protocol
-changes may interrupt service, and using an unofficial client may carry account
-risk under WhatsApp's terms.
+It is not reviewed, endorsed, or supported by Meta or WhatsApp. Protocol changes
+may interrupt service at any time.
+
+Connecting with a client built on a reverse-engineered protocol breaches
+WhatsApp's Terms of Service, which permit only its own applications. WhatsApp
+enforces against the account rather than the software, so the consequence lands
+on the phone number, including the account used with WhatsApp's own app. What
+draws enforcement in practice is behaviour: automated or high-volume sending,
+unsolicited messages, scraping, bulk or repeated contact with people who have
+not asked to hear from you, and running many accounts from one place. The bot
+API makes each of those easy to do without intending to. Use a number you can
+afford to lose, and read the automation limits in
+[the API documentation](API.md).
 
 Messages are end-to-end encrypted in transit by whatsmeow. Decrypted message
 history is stored in `messages.db`, and decrypted attachments, including photos,

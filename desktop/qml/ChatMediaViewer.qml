@@ -177,9 +177,29 @@ FocusScope {
         panY = 0
     }
 
+    // The extent the photo actually covers at the current zoom. A photo whose
+    // aspect differs from the stage is letterboxed, so the stage box is wider or
+    // taller than the picture inside it.
+    //
+    // This repeats what PreserveAspectFit does rather than reading paintedWidth,
+    // because the painted size depends on the surface geometry, which the pan
+    // offset moves - reading it here would close a binding loop through
+    // clampPan. sourceSize is the decoded size and does not move.
+    readonly property size drawnSize: {
+        const sourceWidth = fullImage.sourceSize.width
+        const sourceHeight = fullImage.sourceSize.height
+        if (sourceWidth <= 0 || sourceHeight <= 0 || stage.width <= 0 || stage.height <= 0)
+            return Qt.size(stage.width * zoomFactor, stage.height * zoomFactor)
+        const fit = Math.min(stage.width / sourceWidth, stage.height / sourceHeight)
+        return Qt.size(sourceWidth * fit * zoomFactor, sourceHeight * fit * zoomFactor)
+    }
+
     function clampPan() {
-        const maxX = stage.width * Math.max(0, zoomFactor - 1) / 2
-        const maxY = stage.height * Math.max(0, zoomFactor - 1) / 2
+        // Pan is bounded by the photo, not by the stage around it. Measuring the
+        // stage would let a drag pull the picture off its own edge and leave the
+        // reader looking at the empty surface beside it.
+        const maxX = Math.max(0, (drawnSize.width - stage.width) / 2)
+        const maxY = Math.max(0, (drawnSize.height - stage.height) / 2)
         panX = Math.max(-maxX, Math.min(maxX, panX))
         panY = Math.max(-maxY, Math.min(maxY, panY))
     }
@@ -481,6 +501,9 @@ FocusScope {
                 cache: true
                 smooth: true
                 mipmap: true
+                // A photo that has just decoded, or one replaced by the next in
+                // the gallery, changes the bounds a pan is allowed to reach.
+                onSourceSizeChanged: root.clampPan()
                 Accessible.name: root.caption || qsTr("Shared photo")
             }
         }

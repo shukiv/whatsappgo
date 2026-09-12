@@ -1964,12 +1964,17 @@ ApplicationWindow {
                                     Layout.minimumWidth: 0
                                     spacing: 1
                                     Label {
+                                        objectName: "conversationTitle"
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
                                         text: window.friendlyTitle(backend.selectedChat.title, backend.selectedChat.jid)
                                         color: Theme.text
                                         font.pixelSize: 17
                                         font.weight: Font.Medium
+                                        // The header reads left to right, so the
+                                        // name begins beside the avatar whatever
+                                        // script it is written in.
+                                        horizontalAlignment: Text.AlignLeft
                                         elide: Text.ElideRight
                                     }
                                     Label {

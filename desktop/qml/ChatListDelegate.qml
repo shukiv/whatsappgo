@@ -258,6 +258,12 @@ ItemDelegate {
                     textFormat: root.highlightQuery.length > 0 ? Text.StyledText : Text.PlainText
                     color: Theme.text
                     font.pixelSize: 16
+                    // The row itself reads left to right - avatar, name, then the
+                    // timestamp on the right - so the name starts at the same
+                    // place whatever script it is written in. Left to itself a
+                    // Text aligns to its own writing direction, which pushed a
+                    // Hebrew or Arabic name across to the timestamp.
+                    horizontalAlignment: Text.AlignLeft
                     elide: Text.ElideRight
                     maximumLineCount: 1
                     ToolTip.visible: truncated && (titleHover.hovered || root.activeFocus)
