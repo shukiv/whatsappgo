@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.9
+Version:        0.1.10
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -44,6 +44,11 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Sat Sep 12 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.10-1
+- Bound photo panning by the photo instead of the viewer around it
+- Start a right-to-left contact name beside the avatar, as a Latin one does
+- State the Terms of Service and account-ban risk of an unofficial client
+
 * Fri Sep 11 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.9-1
 - Refuse sends to addresses that are not conversations; guard chat export
 - Hand refused notifications back to the window and escape markup bodies
