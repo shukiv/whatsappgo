@@ -8,9 +8,15 @@ the account profile once before controlling it.
 The client prints one JSON value to standard output and machine-readable errors
 to standard error. Successful commands exit 0 and failures exit non-zero.
 
-> WhatsAppGo is an unofficial client. Automate only accounts and conversations
-> you are authorized to use. Do not send spam, bypass consent, or build reply
-> loops. WhatsApp can restrict accounts that behave abusively.
+> **This API is the fastest way to get a number banned.** WhatsAppGo is an
+> unofficial client, and using one breaches WhatsApp's Terms of Service on its
+> own; automated sending is what turns that into enforcement against the phone
+> number. Automate only accounts and conversations you are authorized to use.
+> Do not send spam or bulk messages, contact people who have not asked to hear
+> from you, bypass consent, scrape, run many accounts from one place, or build
+> reply loops. Rate-limit anything that sends. A ban applies to the number, not
+> to this software, and cannot be undone from here. See
+> [security and privacy](SECURITY.md) for the rest of the risk.
 
 ## Start here
 
