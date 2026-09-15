@@ -294,6 +294,8 @@ int main(int argc, char *argv[])
     parser.addOption(searchNavigationTestOption);
     QCommandLineOption messageInteractionTestOption(QStringLiteral("message-interaction-test"), QStringLiteral("Verify message text can be selected and links are interactive"));
     parser.addOption(messageInteractionTestOption);
+    QCommandLineOption messageHistoryTestOption(QStringLiteral("message-history-test"), QStringLiteral("Verify every earlier version of a message is offered and listed"));
+    parser.addOption(messageHistoryTestOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
     parser.addOption(bundledFontTestOption);
     QCommandLineOption clipboardImageTestOption(QStringLiteral("clipboard-image-test"), QStringLiteral("Verify native image copy and paste preparation"));
@@ -362,6 +364,7 @@ int main(int argc, char *argv[])
     const bool menuPlacementTest = parser.isSet(menuPlacementTestOption);
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
+    const bool messageHistoryTest = parser.isSet(messageHistoryTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
     const bool styleDetectionTest = parser.isSet(styleDetectionTestOption);
     const bool fileUrlTest = parser.isSet(fileUrlTestOption);
@@ -390,7 +393,7 @@ int main(int argc, char *argv[])
     const auto screenshotRemoveAccount = parser.value(removeProfileOption);
     const auto screenshotConversationSearch = parser.value(conversationSearchOption);
     const auto screenshotChat = parser.value(screenshotChatOption);
-    const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
+    const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || messageHistoryTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
@@ -1002,6 +1005,192 @@ QtObject {
                                  .arg(uncovered.isEmpty() ? QStringLiteral("none") : uncovered.join(QLatin1Char(',')));
         return robotoPresent && resolved == QStringLiteral("Roboto") && styles.size() >= 3
                 && uncovered.isEmpty()
+            ? EXIT_SUCCESS
+            : EXIT_FAILURE;
+    }
+    if (messageHistoryTest) {
+        // A corrected message and a deleted one both have a past. The menu has
+        // to offer it in each case, and the dialog has to read as a sequence:
+        // what the message said first, what replaced it, and what stands now -
+        // which for a deleted message is the tombstone, its text surviving only
+        // in the versions above it.
+        QQmlComponent component(&engine);
+        component.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            ApplicationWindow {
+                id: harness
+                width: 900
+                height: 700
+                visible: true
+                property var editedMessage
+                property var deletedMessage
+                property var plainMessage
+                property string requestedId: ""
+                MessageDelegate {
+                    objectName: "editedHistoryDelegate"
+                    width: 800
+                    modelData: harness.editedMessage
+                    onHistoryRequested: message => harness.requestedId = String(message.id || "")
+                }
+                MessageDelegate {
+                    objectName: "deletedHistoryDelegate"
+                    width: 800
+                    y: 160
+                    modelData: harness.deletedMessage
+                    onHistoryRequested: message => harness.requestedId = String(message.id || "")
+                }
+                MessageDelegate {
+                    objectName: "plainHistoryDelegate"
+                    width: 800
+                    y: 320
+                    modelData: harness.plainMessage
+                }
+                MessageHistoryDialog {
+                    objectName: "historyDialogHarness"
+                }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/message-history-test.qml")));
+        const QVariantMap editedMessage{
+            {QStringLiteral("id"), QStringLiteral("edited-message")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("what it says now")},
+            {QStringLiteral("from_me"), true},
+            {QStringLiteral("timestamp"), 1000},
+            {QStringLiteral("status"), QStringLiteral("received")},
+            {QStringLiteral("edited"), true},
+        };
+        const QVariantMap deletedMessage{
+            {QStringLiteral("id"), QStringLiteral("deleted-message")},
+            {QStringLiteral("kind"), QStringLiteral("revoked")},
+            {QStringLiteral("body"), QString()},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 1000},
+            {QStringLiteral("status"), QStringLiteral("received")},
+            {QStringLiteral("revoked"), true},
+        };
+        const QVariantMap plainMessage{
+            {QStringLiteral("id"), QStringLiteral("plain-message")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("never touched")},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), 1000},
+            {QStringLiteral("status"), QStringLiteral("received")},
+        };
+        std::unique_ptr<QObject> harness(component.createWithInitialProperties({
+            {QStringLiteral("editedMessage"), editedMessage},
+            {QStringLiteral("deletedMessage"), deletedMessage},
+            {QStringLiteral("plainMessage"), plainMessage},
+        }));
+        if (!harness) {
+            qWarning().noquote() << component.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QCoreApplication::processEvents();
+        // The menu builds its actions when it is opened, not while the bubble
+        // sits idle, so each delegate is asked for its menu first.
+        const auto historyActionOf = [](QObject *delegate) -> QObject * {
+            auto *button = qobject_cast<QQuickItem *>(
+                delegate->findChild<QObject *>(QStringLiteral("messageMenuButton")));
+            if (button == nullptr || !QMetaObject::invokeMethod(button, "click"))
+                return nullptr;
+            QCoreApplication::processEvents();
+            return delegate->findChild<QObject *>(QStringLiteral("messageHistoryAction"));
+        };
+        auto *editedDelegate = harness->findChild<QObject *>(QStringLiteral("editedHistoryDelegate"));
+        auto *deletedDelegate = harness->findChild<QObject *>(QStringLiteral("deletedHistoryDelegate"));
+        auto *plainDelegate = harness->findChild<QObject *>(QStringLiteral("plainHistoryDelegate"));
+        if (editedDelegate == nullptr || deletedDelegate == nullptr || plainDelegate == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *editedAction = historyActionOf(editedDelegate);
+        const bool offeredOnEdited = editedAction != nullptr && editedAction->property("visible").toBool();
+        const bool editedAsked = editedAction != nullptr && QMetaObject::invokeMethod(editedAction, "click");
+        QCoreApplication::processEvents();
+        const auto editedRequested = harness->property("requestedId").toString();
+        harness->setProperty("requestedId", QString());
+        auto *deletedAction = historyActionOf(deletedDelegate);
+        const bool offeredOnDeleted = deletedAction != nullptr && deletedAction->property("visible").toBool();
+        const bool deletedAsked = deletedAction != nullptr && QMetaObject::invokeMethod(deletedAction, "click");
+        QCoreApplication::processEvents();
+        const auto deletedRequested = harness->property("requestedId").toString();
+        auto *plainAction = historyActionOf(plainDelegate);
+        const bool hiddenOnPlain = plainAction != nullptr && !plainAction->property("visible").toBool();
+
+        auto *dialog = harness->findChild<QObject *>(QStringLiteral("historyDialogHarness"));
+        if (dialog == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        const QVariantList corrections{
+            QVariantMap{{QStringLiteral("revision"), 0},
+                        {QStringLiteral("body"), QStringLiteral("what it said first")},
+                        {QStringLiteral("recorded_at"), 2000},
+                        {QStringLiteral("reason"), QStringLiteral("edited")}},
+            QVariantMap{{QStringLiteral("revision"), 1},
+                        {QStringLiteral("body"), QStringLiteral("what it said next")},
+                        {QStringLiteral("recorded_at"), 3000},
+                        {QStringLiteral("reason"), QStringLiteral("edited")}},
+        };
+        dialog->setProperty("message", editedMessage);
+        dialog->setProperty("revisions", corrections);
+        const bool dialogOpened = QMetaObject::invokeMethod(dialog, "open");
+        QCoreApplication::processEvents();
+        const auto editedEntries = dialog->property("entries").toList();
+        auto *list = dialog->findChild<QObject *>(QStringLiteral("messageHistoryList"));
+        const int listedVersions = list != nullptr ? list->property("count").toInt() : -1;
+        dialog->setProperty("message", deletedMessage);
+        dialog->setProperty("revisions", QVariantList{
+            QVariantMap{{QStringLiteral("revision"), 0},
+                        {QStringLiteral("body"), QStringLiteral("the text that was deleted")},
+                        {QStringLiteral("recorded_at"), 5000},
+                        {QStringLiteral("reason"), QStringLiteral("deleted")}},
+        });
+        QCoreApplication::processEvents();
+        const auto deletedEntries = dialog->property("entries").toList();
+        // A message corrected before versions were kept has none stored. What
+        // stands is still not what was first written, so it must not be called
+        // the original.
+        dialog->setProperty("message", editedMessage);
+        dialog->setProperty("revisions", QVariantList{});
+        QCoreApplication::processEvents();
+        const auto unkeptEntries = dialog->property("entries").toList();
+        const auto entryAt = [](const QVariantList &entries, int index) {
+            return index >= 0 && index < entries.size() ? entries.at(index).toMap() : QVariantMap{};
+        };
+        const auto original = entryAt(editedEntries, 0);
+        const auto correction = entryAt(editedEntries, 1);
+        const auto current = entryAt(editedEntries, 2);
+        const auto deletedOriginal = entryAt(deletedEntries, 0);
+        const auto tombstone = entryAt(deletedEntries, 1);
+        qInfo().noquote() << QStringLiteral("message history: edited=%1/%2 deleted=%3/%4 plainHidden=%5 listed=%6 entries=%7,%8")
+                                 .arg(offeredOnEdited).arg(editedRequested)
+                                 .arg(offeredOnDeleted).arg(deletedRequested)
+                                 .arg(hiddenOnPlain).arg(listedVersions)
+                                 .arg(editedEntries.size()).arg(deletedEntries.size());
+        return offeredOnEdited && editedAsked
+                && editedRequested == QStringLiteral("edited-message")
+                && offeredOnDeleted && deletedAsked
+                && deletedRequested == QStringLiteral("deleted-message")
+                && hiddenOnPlain && dialogOpened
+                // Three versions: what was written, what replaced it, what stands.
+                && editedEntries.size() == 3 && listedVersions == 3
+                && original.value(QStringLiteral("label")).toString() == QStringLiteral("Original")
+                && original.value(QStringLiteral("body")).toString() == QStringLiteral("what it said first")
+                && original.value(QStringLiteral("at")).toLongLong() == 1000
+                && correction.value(QStringLiteral("label")).toString() == QStringLiteral("Edited")
+                && correction.value(QStringLiteral("body")).toString() == QStringLiteral("what it said next")
+                && correction.value(QStringLiteral("at")).toLongLong() == 2000
+                && current.value(QStringLiteral("label")).toString() == QStringLiteral("Current")
+                && current.value(QStringLiteral("body")).toString() == QStringLiteral("what it says now")
+                && current.value(QStringLiteral("at")).toLongLong() == 3000
+                // A deleted message keeps its text here and nowhere else.
+                && deletedEntries.size() == 2
+                && deletedOriginal.value(QStringLiteral("body")).toString() == QStringLiteral("the text that was deleted")
+                && deletedOriginal.value(QStringLiteral("at")).toLongLong() == 1000
+                && tombstone.value(QStringLiteral("label")).toString() == QStringLiteral("Deleted")
+                && tombstone.value(QStringLiteral("deleted")).toBool()
+                && tombstone.value(QStringLiteral("at")).toLongLong() == 5000
+                && unkeptEntries.size() == 1
+                && entryAt(unkeptEntries, 0).value(QStringLiteral("label")).toString() == QStringLiteral("Current")
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }

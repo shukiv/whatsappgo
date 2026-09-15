@@ -1272,3 +1272,61 @@ func TestHashMismatchIsRecognisedThroughWrapping(t *testing.T) {
 		t.Fatal("a missing key is not a hash mismatch")
 	}
 }
+
+// An edit arrives wrapped in editedMessage. The library unwraps that much and
+// leaves a protocol envelope carrying the key of the message being corrected
+// and the text replacing it. Reading only the key leaves an envelope that
+// matches no message kind, so the correction used to be discarded and the
+// reader went on seeing what was written first.
+func TestEditCarriesItsNewTextOntoTheOriginalMessage(t *testing.T) {
+	chat := types.NewJID("123", types.DefaultUserServer)
+	edit := &waEvents.Message{
+		Info: types.MessageInfo{
+			MessageSource: types.MessageSource{Chat: chat},
+			ID:            "edit-stanza",
+			Timestamp:     time.Now(),
+		},
+		IsEdit: true,
+		Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+			Key:  &waCommon.MessageKey{ID: proto.String("original")},
+			EditedMessage: &waE2E.Message{
+				Conversation: proto.String("the corrected text"),
+			},
+		}},
+	}
+	m := messageFromEvent(edit)
+	if m.ID != "original" {
+		t.Fatalf("the edit did not land on the message it corrects: %q", m.ID)
+	}
+	if m.Body != "the corrected text" {
+		t.Fatalf("the edit did not carry its new text: %#v", m)
+	}
+	if m.Kind != "text" {
+		t.Fatalf("the edit was not recognised as a message: %#v", m)
+	}
+	if !m.Edited {
+		t.Fatal("the message is not marked as edited")
+	}
+}
+
+// The same correction sent as formatted text, which is how a message carrying
+// a mention or a link is edited.
+func TestEditCarriesExtendedText(t *testing.T) {
+	chat := types.NewJID("123", types.DefaultUserServer)
+	edit := &waEvents.Message{
+		Info:   types.MessageInfo{MessageSource: types.MessageSource{Chat: chat}, ID: "edit-stanza", Timestamp: time.Now()},
+		IsEdit: true,
+		Message: &waE2E.Message{ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+			Key:  &waCommon.MessageKey{ID: proto.String("original")},
+			EditedMessage: &waE2E.Message{
+				ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String("corrected, with a link")},
+			},
+		}},
+	}
+	m := messageFromEvent(edit)
+	if m.ID != "original" || m.Body != "corrected, with a link" || m.Kind != "text" || !m.Edited {
+		t.Fatalf("a formatted edit was not applied to the original message: %#v", m)
+	}
+}

@@ -116,6 +116,7 @@ qt_add_qml_module(whatsappgo
         qml/RowTime.qml
         qml/SearchResultsPane.qml
         qml/ChatSearchPanel.qml
+        qml/MessageHistoryDialog.qml
         qml/MessageDateDialog.qml
         qml/PairingPage.qml
         qml/ChatListDelegate.qml
@@ -565,6 +566,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-dark-theme COMMAND whatsappgo --theme dark --smoke-test)
     add_test(NAME desktop-search-navigation COMMAND whatsappgo --search-navigation-test)
     add_test(NAME desktop-message-interactions COMMAND whatsappgo --message-interaction-test)
+    add_test(NAME desktop-message-history COMMAND whatsappgo --message-history-test)
     add_test(NAME desktop-clipboard-images COMMAND whatsappgo --clipboard-image-test)
     add_test(NAME desktop-layout-regressions COMMAND whatsappgo --layout-regression-test)
     add_test(NAME desktop-media-preview COMMAND whatsappgo --media-preview-test)

@@ -177,6 +177,7 @@ whatsappctl call message.star '{"chat_jid":"15551234567@s.whatsapp.net","message
 whatsappctl --pretty call messages.starred '{"limit":50}'
 whatsappctl call message.forward '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","to_chat_jid":"15559876543@s.whatsapp.net"}'
 whatsappctl call message.edit '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID","text":"Corrected"}'
+whatsappctl --pretty call message.revisions '{"chat_jid":"15551234567@s.whatsapp.net","message_id":"ID"}'
 whatsappctl call message.delete @delete.json
 printf '{"query":"contract","limit":25}' | whatsappctl call messages.search -
 ```
@@ -344,6 +345,7 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `message.forward` | `chat_jid`, `message_id`, `to_chat_jid` | Re-send into another chat, marked as forwarded. Media must be downloaded first; a missing attachment returns an error, never a caption-only text forward. |
 | `message.edit` | `chat_jid`, `message_id`, `text` | Edit eligible sent text |
 | `message.delete` | `chat_jid`, `message_id`, `sender_jid` | Delete an eligible message for everyone |
+| `message.revisions` | `chat_jid`, `message_id` | Every earlier version of one message, oldest first: `revision`, `body`, `kind`, `recorded_at` (when that version stopped being current) and `reason` (`edited` or `deleted`). A deleted message keeps its text here and nowhere else. Versions are kept from the moment this daemon version stores them, so a message corrected earlier returns an empty list. |
 | `contact.resolve` | `phone` | Validate number and return/create its chat |
 | `contact.save` | `phone`, `name` | Resolve number and save a local chat label |
 

@@ -201,6 +201,7 @@ public:
     QString searchError() const { return m_searchError; }
     bool dateLookupBusy() const { return m_dateLookupBusy; }
     QString dateLookupError() const { return m_dateLookupError; }
+    Q_INVOKABLE void loadMessageRevisions(const QString &chatJid, const QString &messageId, const QString &token);
     Q_INVOKABLE void findMessageOnDate(qint64 start, qint64 end);
     Q_INVOKABLE void cancelDateLookup();
     bool mediaBatchBusy() const { return m_mediaBatchBusy; }
@@ -403,6 +404,7 @@ signals:
     void groupInfoEditFinished(const QString &token, const QString &error);
     void groupPermissionEditFinished(const QString &token, const QString &error);
     void groupJoinRequestsLoaded(const QString &token, const QVariantList &requests, const QString &error);
+    void messageRevisionsLoaded(const QString &token, const QVariantList &revisions, const QString &error);
     void groupPhotoPrepared(const QString &token, const QString &preview, const QString &error);
     void interactiveFeatureFinished(const QString &token, const QVariantMap &result, const QString &error);
     void groupPhotoSaved(const QString &token, const QString &error);

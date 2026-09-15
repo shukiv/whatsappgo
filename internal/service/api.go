@@ -72,6 +72,8 @@ var apiMethods = []MethodDescription{
 	method("chat.clear", "Empty a conversation on every device without removing it", false, map[string]any{"chat_jid": "1234567890@s.whatsapp.net"}),
 	method("chat.disappearing", "Set the disappearing-message timer for a chat, in seconds (0 turns it off)", false, map[string]any{"chat_jid": "1234567890@s.whatsapp.net", "duration_seconds": 604800}),
 	method("chat.export", "Write a conversation to a text file", false, map[string]any{"chat_jid": "1234567890@s.whatsapp.net", "path": "/home/user/chat.txt", "replace": false}),
+	method("message.revisions", "List the earlier versions of a message, including one that was deleted", false,
+		map[string]any{"chat_jid": "1234567890@s.whatsapp.net", "message_id": "ABCD1234"}),
 	method("channel.create", "Create a channel", true, map[string]any{"name": "My channel", "description": ""}),
 	method("channel.follow_link", "Follow a channel from its invite link", true, map[string]any{"link": "https://whatsapp.com/channel/CODE"}),
 	method("community.create", "Create a community", true, map[string]any{"name": "My community"}),

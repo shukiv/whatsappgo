@@ -32,6 +32,7 @@ Item {
     signal mentionRequested(string jid, string name)
     signal interactiveRequested(var message)
     signal infoRequested(var message)
+    signal historyRequested(var message)
 
     // Only Main dispatches shortcuts. A shared preview in Message info must
     // never compete with the conversation for a window-wide key sequence.
@@ -1934,6 +1935,18 @@ Item {
                     onClicked: {
                         root.closeActionPopups()
                         root.infoRequested(root.modelData)
+                    }
+                }
+
+                WhatsAppMenuItem {
+                    objectName: "messageHistoryAction"
+                    visible: Boolean(root.modelData.edited) || Boolean(root.modelData.revoked)
+                    height: visible ? 36 : 0
+                    text: qsTr("Edit history")
+                    iconSource: Qt.resolvedUrl("icons/info.svg")
+                    onClicked: {
+                        root.closeActionPopups()
+                        root.historyRequested(root.modelData)
                     }
                 }
 

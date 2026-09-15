@@ -2331,6 +2331,8 @@ ApplicationWindow {
                                 forwardDialog.open()
                             }
                             onImagePreviewRequested: message => window.openChatImage(message)
+                            onHistoryRequested: message =>
+                                messageHistoryDialog.show(String(backend.selectedChat.jid || ""), message)
 							onInfoRequested: message => {
 								window.infoDrawerOpen = false
 								window.messageInfoMessage = message
@@ -3977,6 +3979,9 @@ ApplicationWindow {
         acceptText: qsTr("Unlink")
         destructive: true
         onAccepted: backend.logout()
+    }
+    MessageHistoryDialog {
+        id: messageHistoryDialog
     }
     MessageDateDialog {
         id: messageDateDialog

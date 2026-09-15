@@ -196,6 +196,15 @@ JID and its recorded aliases. This also repairs lookup for profiles merged by
 older versions without copying or deleting durable attachment bytes. Metadata
 already discarded by an older merge cannot be reconstructed by this change.
 
+A message row holds only what the message says now, so every version it stops
+saying is written to `message_revisions` first: by an edit, and by a deletion,
+which otherwise clears the body for good. The row is keyed by chat, message and
+a revision number counting up from zero, and it records why the version was
+replaced. Identical consecutive bodies are not stored twice, because history
+synchronisation can deliver the same correction more than once. WhatsApp sends
+no history of its own, so a message corrected before this table existed has
+none.
+
 ### Application integration settings
 
 `AppSettings` is a desktop-only QML singleton for application-wide integration

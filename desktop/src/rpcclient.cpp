@@ -1941,6 +1941,28 @@ void RpcClient::saveGroupPhoto(const QString &jid, bool remove, const QString &t
         }, OnFailure::StayQuiet);
 }
 
+// The earlier versions of one message. A deleted message keeps its text here
+// and nowhere else, so this is read straight from the daemon rather than from
+// anything the conversation still holds.
+void RpcClient::loadMessageRevisions(const QString &chatJid, const QString &messageId, const QString &token)
+{
+    if (chatJid.isEmpty() || messageId.isEmpty()) {
+        emit messageRevisionsLoaded(token, {}, tr("Earlier versions could not be loaded."));
+        return;
+    }
+    const auto profile = m_profile;
+    sendRequest(QStringLiteral("message.revisions"),
+        {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("message_id"), messageId}},
+        [this, token, profile](const QJsonValue &result, const QJsonObject &error) {
+            if (profile != m_profile) return;
+            auto message = error.value(QStringLiteral("message")).toString();
+            if ((!error.isEmpty() || !result.isArray()) && message.isEmpty())
+                message = tr("Earlier versions could not be loaded.");
+            emit messageRevisionsLoaded(token, message.isEmpty() ? result.toArray().toVariantList() : QVariantList{},
+                                        message);
+        }, OnFailure::StayQuiet);
+}
+
 void RpcClient::loadGroupJoinRequests(const QString &jid, const QString &token, const QString &profile)
 {
     if (profile != m_profile || jid != m_groupInfoJid || jid != m_selectedChat.value(QStringLiteral("jid")).toString()

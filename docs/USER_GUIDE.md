@@ -466,6 +466,14 @@ The message menu can pin a message for 24 hours, 7 days, or 30 days. A pinned
 message appears above the conversation; click it to go to the message or unpin
 it. These actions are synchronized with WhatsApp rather than kept only locally.
 
+A message that has been corrected or deleted offers **Edit history** in its
+menu. The dialog lists every version in order: what the message said first, each
+correction that replaced it, and what stands now. A message deleted for everyone
+keeps its text here, because the conversation keeps only the tombstone. WhatsApp
+sends no history of its own, so versions are kept from the moment this version
+of the application first sees them: a message corrected before that shows no
+earlier version.
+
 Beyond what is on screen, the application keeps collecting in the background:
 older messages first, then the attachments belonging to them. Both run slowly on
 purpose and continue across restarts, so a freshly linked account fills in over

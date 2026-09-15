@@ -620,6 +620,11 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		return
 	}
 	previous, previousErr := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID)
+	if evt.IsEdit && previousErr == nil && previous.Body != "" && previous.Body != msg.Body {
+		// Keep the version being replaced before the upsert overwrites it, so
+		// the reader can still see what the message said before.
+		_ = c.store.RecordMessageRevision(context.Background(), msg.ChatJID, msg.ID, msg.Timestamp)
+	}
 	if previous.Kind == "view_once" {
 		msg = model.ViewOncePlaceholder(msg)
 	}
@@ -811,8 +816,16 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 			if msg.ID == "" {
 				continue
 			}
-			if previous, err := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID); err == nil && previous.Kind == "view_once" {
-				msg = model.ViewOncePlaceholder(msg)
+			if previous, err := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID); err == nil {
+				if previous.Kind == "view_once" {
+					msg = model.ViewOncePlaceholder(msg)
+				}
+				if parsed.IsEdit && previous.Body != "" && previous.Body != msg.Body {
+					// A correction can also reach us through history, long after
+					// it was made. Keep the version it replaces, exactly as the
+					// live path does.
+					_ = c.store.RecordMessageRevision(context.Background(), msg.ChatJID, msg.ID, msg.Timestamp)
+				}
 			}
 			msg = c.withCachedThumbnail(msg, parsed.Message)
 			msg = c.withCachedLinkPreview(msg, parsed.Message)
@@ -1169,14 +1182,31 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 	if eventIsViewOnce(evt) {
 		return model.ViewOncePlaceholder(m)
 	}
-	if evt.IsEdit && evt.RawMessage != nil {
-		if wrapper := evt.RawMessage.GetEditedMessage().GetMessage(); wrapper != nil {
-			if protocol := wrapper.GetProtocolMessage(); protocol != nil && protocol.GetKey() != nil && protocol.GetKey().GetID() != "" {
-				m.ID = protocol.GetKey().GetID()
+	msg := evt.Message
+	if evt.IsEdit {
+		// An edit arrives wrapped in editedMessage. The library unwraps that
+		// much, which leaves a protocol envelope holding two things: the key of
+		// the message being corrected, and the text that replaces it.
+		//
+		// Both have to be taken out of the envelope. The key becomes this
+		// message's id so the correction lands on the original row instead of
+		// arriving as a new message, and the replacement text becomes what is
+		// parsed below. Reading only the key leaves the switch with an envelope
+		// it cannot match, so the message is discarded as an empty one and the
+		// reader goes on seeing what was written first.
+		protocol := msg.GetProtocolMessage()
+		if protocol == nil && evt.RawMessage != nil {
+			protocol = evt.RawMessage.GetEditedMessage().GetMessage().GetProtocolMessage()
+		}
+		if protocol != nil {
+			if id := protocol.GetKey().GetID(); id != "" {
+				m.ID = id
+			}
+			if edited := protocol.GetEditedMessage(); edited != nil {
+				msg = edited
 			}
 		}
 	}
-	msg := evt.Message
 	if msg == nil {
 		return m
 	}

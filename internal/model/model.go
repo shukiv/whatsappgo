@@ -65,6 +65,22 @@ type Label struct {
 	Color int    `json:"color"`
 }
 
+// MessageRevision is one version a message has had. The first revision a
+// message gains is the text it was written with; each later one is what it said
+// before the next correction replaced it. A revision survives the message being
+// deleted for everyone, which is the only way to see what a deleted message
+// said.
+type MessageRevision struct {
+	MessageID  string `json:"message_id"`
+	ChatJID    string `json:"chat_jid"`
+	Revision   int    `json:"revision"`
+	Body       string `json:"body"`
+	Kind       string `json:"kind"`
+	RecordedAt int64  `json:"recorded_at"`
+	// Reason says what replaced this version: "edited" or "deleted".
+	Reason string `json:"reason"`
+}
+
 type Message struct {
 	ID              string    `json:"id"`
 	ChatJID         string    `json:"chat_jid"`

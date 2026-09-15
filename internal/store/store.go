@@ -128,6 +128,17 @@ CREATE TRIGGER IF NOT EXISTS revoke_poll_votes AFTER UPDATE OF revoked,kind ON m
  WHEN NEW.revoked=1 OR NEW.kind='view_once' BEGIN
  DELETE FROM poll_votes WHERE chat_jid=NEW.chat_jid AND poll_id=NEW.id;
 END;
+CREATE TABLE IF NOT EXISTS message_revisions (
+  chat_jid TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT '',
+  recorded_at INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (chat_jid, message_id, revision),
+  FOREIGN KEY (chat_jid) REFERENCES chats(jid) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS message_pins (
   chat_jid TEXT PRIMARY KEY,
   message_id TEXT NOT NULL,
@@ -1984,15 +1995,104 @@ func (s *Store) UpsertReactionChanged(ctx context.Context, r model.Reaction) (bo
 	return changed > 0, err
 }
 
-func (s *Store) MarkRevoked(ctx context.Context, chatJID, messageID string) error {
-	chatJID = s.canonicalChatJID(ctx, chatJID)
-	_, err := s.db.ExecContext(ctx, `UPDATE messages SET revoked=1,body='',mentions='',kind=CASE WHEN kind='view_once' THEN kind ELSE 'revoked' END WHERE chat_jid=? AND id=?`, chatJID, messageID)
+// recordRevision keeps what a message says before something replaces it.
+//
+// The caller passes the reason the text is about to stop being current, so the
+// history reads as a sequence of replacements: "edited" for a correction and
+// "deleted" for a revocation. Recording is skipped when the message holds
+// nothing worth keeping, and a body identical to the newest recorded version is
+// not stored twice, because history synchronisation can deliver the same
+// correction more than once.
+//
+// chatJID must already be canonical.
+func (s *Store) recordRevision(ctx context.Context, tx *sql.Tx, chatJID, messageID, reason string, at int64) error {
+	var body, kind string
+	err := tx.QueryRowContext(ctx,
+		`SELECT body,kind FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&body, &kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	var latest sql.NullString
+	var next int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(revision),-1)+1,
+                (SELECT body FROM message_revisions WHERE chat_jid=? AND message_id=? ORDER BY revision DESC LIMIT 1)
+         FROM message_revisions WHERE chat_jid=? AND message_id=?`,
+		chatJID, messageID, chatJID, messageID).Scan(&next, &latest); err != nil {
+		return err
+	}
+	if latest.Valid && latest.String == body {
+		return nil
+	}
+	if at <= 0 {
+		at = time.Now().UnixMilli()
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO message_revisions (chat_jid,message_id,revision,body,kind,recorded_at,reason)
+         VALUES (?,?,?,?,?,?,?)`, chatJID, messageID, next, body, kind, at, reason)
 	return err
 }
 
+// ListMessageRevisions returns every version a message has had, oldest first.
+// The message's current body is not included: it is already on screen.
+func (s *Store) ListMessageRevisions(ctx context.Context, chatJID, messageID string) ([]model.MessageRevision, error) {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT revision,body,kind,recorded_at,reason FROM message_revisions
+         WHERE chat_jid=? AND message_id=? ORDER BY revision ASC`, chatJID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	revisions := []model.MessageRevision{}
+	for rows.Next() {
+		revision := model.MessageRevision{ChatJID: chatJID, MessageID: messageID}
+		if err := rows.Scan(&revision.Revision, &revision.Body, &revision.Kind,
+			&revision.RecordedAt, &revision.Reason); err != nil {
+			return nil, err
+		}
+		revisions = append(revisions, revision)
+	}
+	return revisions, rows.Err()
+}
+
+// MarkRevoked records what the message said before deleting it for everyone.
+// The row keeps only the tombstone afterwards, so the recorded version is the
+// one way back to the text.
+func (s *Store) MarkRevoked(ctx context.Context, chatJID, messageID string) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.recordRevision(ctx, tx, chatJID, messageID, "deleted", 0); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET revoked=1,body='',mentions='',kind=CASE WHEN kind='view_once' THEN kind ELSE 'revoked' END WHERE chat_jid=? AND id=?`, chatJID, messageID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// EditMessage replaces the body, keeping the version it replaces.
 func (s *Store) EditMessage(ctx context.Context, chatJID, messageID, body string) error {
 	chatJID = s.canonicalChatJID(ctx, chatJID)
-	result, err := s.db.ExecContext(ctx, `UPDATE messages SET body=?,edited=1,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.recordRevision(ctx, tx, chatJID, messageID, "edited", 0); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE messages SET body=?,edited=1,
  link_url='',link_title='',link_description='',link_thumbnail=''
  WHERE chat_jid=? AND id=? AND revoked=0`, body, chatJID, messageID)
 	if err != nil {
@@ -2005,7 +2105,23 @@ func (s *Store) EditMessage(ctx context.Context, chatJID, messageID, body string
 	if affected == 0 {
 		return errors.New("message not found or already revoked")
 	}
-	return nil
+	return tx.Commit()
+}
+
+// RecordMessageRevision keeps the stored version of a message before an
+// incoming correction replaces it. The message handler upserts rather than
+// updating in place, so it records the old version itself.
+func (s *Store) RecordMessageRevision(ctx context.Context, chatJID, messageID string, at int64) error {
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.recordRevision(ctx, tx, chatJID, messageID, "edited", at); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // attachReactions loads the reactions for one page of messages with a single

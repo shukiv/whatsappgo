@@ -1196,6 +1196,22 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		}
 		s.events.Publish(events.Event{Name: "chat.updated", Data: map[string]string{"jid": chat.JID, "title": p.Name}})
 		return chat, nil
+	case "message.revisions":
+		var p struct {
+			ChatJID   string `json:"chat_jid"`
+			MessageID string `json:"message_id"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.ChatJID) == "" || strings.TrimSpace(p.MessageID) == "" {
+			return nil, errors.New("chat_jid and message_id are required")
+		}
+		revisions, err := s.store.ListMessageRevisions(ctx, p.ChatJID, p.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		return revisions, nil
 	case "chat.avatar":
 		var p messageListParams
 		if err := decode(raw, &p); err != nil {
