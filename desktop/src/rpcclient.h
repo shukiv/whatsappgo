@@ -19,6 +19,11 @@
 class QProcess;
 class ProfileMonitor;
 
+// Where an account that was handed over to another machine leaves its marker.
+// Declared here because the window picks the account it opens - and names its
+// single-instance socket after it - before any RpcClient exists.
+QString retiredMarkerPath(const QString &profile);
+
 class RpcClient final : public QObject
 {
     Q_OBJECT
@@ -678,6 +683,11 @@ private:
     // Accounts handed over to another machine, so the refusal is explained
     // once rather than on every reconnect.
     QSet<QString> m_retiredProfiles;
+    // Moves this window off an account that was handed over. Its daemon is
+    // gone on purpose, so staying on it only shows a backend that will never
+    // answer.
+    void leaveRetiredProfile();
+    QString anotherLiveProfile(const QString &leaving) const;
     QHash<QString, ProfileMonitor *> m_profileMonitors;
     bool m_shuttingDown = false;
     QString m_initialChat;

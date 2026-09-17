@@ -209,6 +209,8 @@ QString profileDataDir(const QString &profile)
     return QDir(dataBaseDir()).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(profile));
 }
 
+}  // namespace
+
 // An account saved to a file for another machine leaves this behind; see
 // internal/profile/transfer.go. The default profile keeps its data at the root
 // of the directory rather than under profiles/, the same way internal/config
@@ -221,6 +223,8 @@ QString retiredMarkerPath(const QString &profile)
         : QDir(base).filePath(QStringLiteral("profiles/%1").arg(profile));
     return QDir(directory).filePath(QStringLiteral("retired.json"));
 }
+
+namespace {
 
 QString profileCacheDir(const QString &profile)
 {
@@ -291,6 +295,13 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         if (!m_profiles.contains(m_profile))
             m_profiles.prepend(m_profile);
     }
+    if (QFileInfo::exists(retiredMarkerPath(m_profile))) {
+        const auto elsewhere = anotherLiveProfile(m_profile);
+        if (!elsewhere.isEmpty()) {
+            m_profile = elsewhere;
+            settings.setValue(QStringLiteral("accounts/current"), m_profile);
+        }
+    }
     if (validProfile.match(initialProfile).hasMatch()) {
         if (!m_profiles.contains(initialProfile))
             m_profiles.append(initialProfile);
@@ -358,6 +369,8 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         }
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
+        if (m_retiredProfiles.contains(m_profile))
+            leaveRetiredProfile();
         m_chatRefreshTimer.stop();
         m_chatRefreshAgain = false;
         const bool activityCleared = clearChatPresence();
@@ -450,6 +463,41 @@ bool RpcClient::backendIsListening(const QString &socketPath)
         return false;
     probe.abort();
     return true;
+}
+
+// The first account in the list that has not been handed over, so a window
+// that has to leave one has somewhere to go.
+QString RpcClient::anotherLiveProfile(const QString &leaving) const
+{
+    for (const auto &profile : m_profiles) {
+        if (profile == leaving)
+            continue;
+        if (!QFileInfo::exists(retiredMarkerPath(profile)))
+            return profile;
+    }
+    return {};
+}
+
+// An account that was handed over has no daemon on purpose. Saying the save
+// worked and then reporting the backend as broken reads as a failed save, so
+// the window moves to an account that still opens and says what happened.
+void RpcClient::leaveRetiredProfile()
+{
+    const auto named = [this](const QString &profile) {
+        const auto shown = m_profileDisplayNames.value(profile).toString().trimmed();
+        return shown.isEmpty() ? profile : shown;
+    };
+    const auto handedOver = m_profile;
+    const auto elsewhere = anotherLiveProfile(handedOver);
+    if (elsewhere.isEmpty()) {
+        emit noticeOccurred(tr("The account \"%1\" now belongs to the machine you saved it for, and will not "
+                               "open here again. Add an account to carry on using WhatsAppGo on this computer.")
+                                .arg(named(handedOver)));
+        return;
+    }
+    emit noticeOccurred(tr("The account \"%1\" now belongs to the machine you saved it for. Switched to \"%2\".")
+                            .arg(named(handedOver), named(elsewhere)));
+    switchProfile(elsewhere);
 }
 
 void RpcClient::startBackendForProfile(const QString &profile)
@@ -1623,6 +1671,10 @@ void RpcClient::exportProfile(const QString &destinationUrl, bool includeMedia, 
                     const auto written = result.toObject();
                     const auto megabytes = written.value(QStringLiteral("bytes")).toDouble() / (1024.0 * 1024.0);
                     if (written.value(QStringLiteral("deactivated")).toBool()) {
+                        // The daemon stops itself about a second from now.
+                        // Remembering that here keeps the disconnection from
+                        // being reported as a fault.
+                        m_retiredProfiles.insert(m_profile);
                         // The account now lives in that file. Saying so plainly
                         // matters more than brevity: this copy has stopped
                         // working, and the reader needs to know why.

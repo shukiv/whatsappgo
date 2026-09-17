@@ -48,6 +48,7 @@ ColumnLayout {
     }
 
     signal logoutRequested()
+    signal saveAccountFileRequested()
     signal shortcutsRequested()
     signal appearanceRequested()
     signal bugReportRequested()
@@ -534,6 +535,18 @@ ColumnLayout {
                     iconSource: Qt.resolvedUrl("icons/shield.svg")
                     showChevron: true
                     onClicked: root.openSection = "security"
+                }
+                // The account itself, in one file, for a machine with no
+                // screen. What it holds and what happens to this copy is asked
+                // before anything is written; see Main.qml's saveAccountDialog.
+                SettingsRow {
+                    objectName: "settingsSaveAccountFile"
+                    Layout.fillWidth: true
+                    text: qsTr("Save account file")
+                    description: qsTr("Download this account as one file another machine can import")
+                    iconSource: Qt.resolvedUrl("icons/download.svg")
+                    enabled: backend.loggedIn
+                    onClicked: root.saveAccountFileRequested()
                 }
                 Repeater {
                     model: [

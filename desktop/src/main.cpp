@@ -409,10 +409,26 @@ int main(int argc, char *argv[])
 
     auto initialProfile = parser.value(profileOption);
     const QRegularExpression validProfile(QStringLiteral("^[a-z0-9][a-z0-9_-]{0,31}$"));
-    if (!validProfile.match(initialProfile).hasMatch())
+    const auto askedForProfile = validProfile.match(initialProfile).hasMatch();
+    if (!askedForProfile)
         initialProfile = QSettings().value(QStringLiteral("accounts/current"), QStringLiteral("default")).toString();
     if (!validProfile.match(initialProfile).hasMatch())
         initialProfile = QStringLiteral("default");
+    // The account last used may have been saved to a file for another machine
+    // since. Its daemon refuses to open it, so open the next account that still
+    // works - unless this run asked for that account by name, which is the one
+    // case where being told it has gone is the answer wanted.
+    if (!askedForProfile && QFileInfo::exists(retiredMarkerPath(initialProfile))) {
+        const auto known = QSettings().value(QStringLiteral("accounts/profiles")).toStringList();
+        for (const auto &profile : known) {
+            if (profile == initialProfile || !validProfile.match(profile).hasMatch())
+                continue;
+            if (!QFileInfo::exists(retiredMarkerPath(profile))) {
+                initialProfile = profile;
+                break;
+            }
+        }
+    }
     auto runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
     if (runtime.isEmpty())
         runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);

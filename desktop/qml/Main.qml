@@ -3091,6 +3091,7 @@ ApplicationWindow {
                 Layout.maximumWidth: Math.min(parent.width, 460)
                 Layout.fillHeight: true
                 onLogoutRequested: logoutDialog.open()
+                onSaveAccountFileRequested: saveAccountDialog.open()
                 onShortcutsRequested: shortcutsDialog.open()
                 onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
                 onBugReportRequested: window.reportBug()
