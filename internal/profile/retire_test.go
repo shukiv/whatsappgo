@@ -2,6 +2,7 @@ package profile
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,5 +158,51 @@ func TestAFreshProfileOpens(t *testing.T) {
 	fresh := config.Paths{Profile: "new", DataDir: t.TempDir()}
 	if _, retired := Retired(fresh); retired {
 		t.Fatal("a profile with nothing in it counts as handed over")
+	}
+}
+
+// An archive holds an account, so one is never written over - and an export
+// that refuses must not retire the copy it failed to hand over.
+func TestAnExportNeverWritesOverAnArchive(t *testing.T) {
+	source := newProfile(t, "israeli")
+	archive := filepath.Join(t.TempDir(), "israeli.wagprofile")
+	if err := os.WriteFile(archive, []byte("an earlier export"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Export(context.Background(), source, archive, false, true); err == nil {
+		t.Fatal("an export wrote over an archive that was already there")
+	}
+	if _, retired := Retired(source); retired {
+		t.Fatal("the account was retired even though no archive was written")
+	}
+	kept, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != "an earlier export" {
+		t.Fatal("the archive that was already there did not survive")
+	}
+}
+
+// Retirement comes after the archive, never before: a copy retired first and
+// then failed to export is an account that is neither exported nor usable.
+// Every other way of failing is refused before the account is touched, so the
+// archive itself is made to fail here.
+func TestTheArchiveIsWrittenBeforeTheCopyIsRetired(t *testing.T) {
+	source := newProfile(t, "israeli")
+	archive := filepath.Join(t.TempDir(), "israeli.wagprofile")
+
+	made := createArchive
+	t.Cleanup(func() { createArchive = made })
+	createArchive = func(string) (*os.File, error) {
+		return nil, errors.New("the disk is full")
+	}
+
+	if _, err := Export(context.Background(), source, archive, false, true); err == nil {
+		t.Fatal("an export that could not write the archive reported success")
+	}
+	if _, retired := Retired(source); retired {
+		t.Fatal("this copy was retired before the archive it was handed over to existed")
 	}
 }

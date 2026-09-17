@@ -141,6 +141,15 @@ type Result struct {
 // deactivate retires this copy once the archive exists, so the account cannot
 // be opened here again. It is the difference between a safeguard and a note to
 // self, and it is why the order matters: the archive is complete first.
+// createArchive makes the file the account is written to. The file is created
+// 0600 rather than fixed afterwards: between creating it and changing its mode
+// it would be readable by anyone. It is a variable because a failure here is
+// the one place the export can break after the snapshots and before the
+// archive exists, and a test has no other way to reach it.
+var createArchive = func(destination string) (*os.File, error) {
+	return os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
 func Export(ctx context.Context, paths config.Paths, destination string, includeMedia, deactivate bool) (Result, error) {
 	if strings.TrimSpace(destination) == "" {
 		return Result{}, errors.New("a path to write the archive to is required")
@@ -182,9 +191,7 @@ func Export(ctx context.Context, paths config.Paths, destination string, include
 		Media:      includeMedia,
 		Files:      wanted,
 	}
-	// The file is created 0600 rather than fixed afterwards: between creating
-	// it and changing its mode it would be readable by anyone.
-	archive, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	archive, err := createArchive(destination)
 	if err != nil {
 		return Result{}, err
 	}

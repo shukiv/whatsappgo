@@ -209,6 +209,19 @@ QString profileDataDir(const QString &profile)
     return QDir(dataBaseDir()).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(profile));
 }
 
+// An account saved to a file for another machine leaves this behind; see
+// internal/profile/transfer.go. The default profile keeps its data at the root
+// of the directory rather than under profiles/, the same way internal/config
+// lays it out.
+QString retiredMarkerPath(const QString &profile)
+{
+    const auto base = QDir(dataBaseDir()).filePath(QStringLiteral("whatsappgo"));
+    const auto directory = profile == QStringLiteral("default")
+        ? base
+        : QDir(base).filePath(QStringLiteral("profiles/%1").arg(profile));
+    return QDir(directory).filePath(QStringLiteral("retired.json"));
+}
+
 QString profileCacheDir(const QString &profile)
 {
     return QDir(cacheBaseDir()).filePath(QStringLiteral("whatsappgo/profiles/%1").arg(profile));
@@ -446,6 +459,21 @@ void RpcClient::startBackendForProfile(const QString &profile)
     // answering them would recreate the data that was just deleted.
     if (!m_profiles.contains(profile))
         return;
+    // An account that was handed over to another machine is refused by the
+    // daemon, which exits immediately. Starting one anyway would spawn a
+    // process for every reconnect, so say what happened once and leave it.
+    if (QFileInfo::exists(retiredMarkerPath(profile))) {
+        if (!m_retiredProfiles.contains(profile)) {
+            m_retiredProfiles.insert(profile);
+            emit errorOccurred(tr("The account \"%1\" was saved to a file for another machine, and this copy "
+                                  "was retired. It will not open here again. If the move did not happen, "
+                                  "delete retired.json from the account's folder.")
+                                   .arg(profile));
+        }
+        return;
+    }
+    m_retiredProfiles.remove(profile);
+
     auto *running = m_ownedBackends.value(profile, nullptr);
     if (running != nullptr && running->state() != QProcess::NotRunning)
         return;

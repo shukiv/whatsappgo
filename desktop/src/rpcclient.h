@@ -675,6 +675,9 @@ private:
     QVariantMap m_profileUnreadCounts;
     bool m_busy = false;
     QHash<QString, QProcess *> m_ownedBackends;
+    // Accounts handed over to another machine, so the refusal is explained
+    // once rather than on every reconnect.
+    QSet<QString> m_retiredProfiles;
     QHash<QString, ProfileMonitor *> m_profileMonitors;
     bool m_shuttingDown = false;
     QString m_initialChat;
