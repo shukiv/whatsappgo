@@ -1576,6 +1576,40 @@ void RpcClient::exportChat(const QString &jid, const QString &destinationUrl)
                 });
 }
 
+void RpcClient::exportProfile(const QString &destinationUrl, bool includeMedia, bool deactivate)
+{
+    const auto path = QUrl(destinationUrl).isLocalFile()
+        ? QUrl(destinationUrl).toLocalFile()
+        : destinationUrl;
+    if (path.isEmpty())
+        return;
+    sendRequest(QStringLiteral("profile.export"),
+                {{QStringLiteral("path"), path},
+                 {QStringLiteral("include_media"), includeMedia},
+                 {QStringLiteral("deactivate"), deactivate}},
+                [this, path](const QJsonValue &result, const QJsonObject &error) {
+                    if (!error.isEmpty()) {
+                        emit errorOccurred(error.value(QStringLiteral("message")).toString());
+                        return;
+                    }
+                    const auto written = result.toObject();
+                    const auto megabytes = written.value(QStringLiteral("bytes")).toDouble() / (1024.0 * 1024.0);
+                    if (written.value(QStringLiteral("deactivated")).toBool()) {
+                        // The account now lives in that file. Saying so plainly
+                        // matters more than brevity: this copy has stopped
+                        // working, and the reader needs to know why.
+                        emit noticeOccurred(tr("Account saved to %1 (%2 MB). This copy has been retired and will not "
+                                               "open again - the account belongs to the machine you import it on. "
+                                               "Keep the file safe: it holds the account's keys.")
+                                                .arg(path).arg(megabytes, 0, 'f', 1));
+                        return;
+                    }
+                    emit noticeOccurred(tr("Account saved to %1 (%2 MB). The file holds the account's keys, so keep it "
+                                           "safe, and never run this account on two machines at once.")
+                                            .arg(path).arg(megabytes, 0, 'f', 1));
+                });
+}
+
 void RpcClient::setChatFavorite(const QString &jid, bool favorite)
 {
     sendRequest(QStringLiteral("chat.favorite"),

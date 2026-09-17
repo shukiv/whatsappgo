@@ -239,6 +239,10 @@ public:
     Q_INVOKABLE void clearChat(const QString &jid);
     Q_INVOKABLE void setChatDisappearing(const QString &jid, int seconds);
     Q_INVOKABLE void exportChat(const QString &jid, const QString &destinationUrl);
+    // Writes this account to a file another machine can import. deactivate
+    // retires this copy, which is what keeps one account from being run in two
+    // places; see docs/API.md.
+    Q_INVOKABLE void exportProfile(const QString &destinationUrl, bool includeMedia, bool deactivate);
     Q_INVOKABLE void setChatFavorite(const QString &jid, bool favorite);
     Q_INVOKABLE void markAllChatsRead();
     Q_INVOKABLE void createGroup(const QString &name, const QStringList &participants,
