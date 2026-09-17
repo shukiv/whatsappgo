@@ -11,12 +11,14 @@ import (
 	"go.mau.fi/whatsmeow"
 
 	"github.com/shukiv/whatsappgo/internal/bugreport"
+	"github.com/shukiv/whatsappgo/internal/config"
 	"github.com/shukiv/whatsappgo/internal/events"
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/linkpreview"
 	"github.com/shukiv/whatsappgo/internal/mediaformat"
 	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/notify"
+	"github.com/shukiv/whatsappgo/internal/profile"
 	"github.com/shukiv/whatsappgo/internal/store"
 )
 
@@ -31,7 +33,15 @@ type Service struct {
 	started  time.Time
 	reporter bugreport.Submitter
 	updates  updateState
+	// paths is where this profile's databases live. Only the daemon knows it,
+	// and only profile.export needs it.
+	paths config.Paths
 }
+
+// OwnProfile tells the service which profile's files it is serving, so that
+// profile can be exported. Without it, profile.export is refused rather than
+// guessing at a path.
+func (s *Service) OwnProfile(paths config.Paths) { s.paths = paths }
 
 func New(st *store.Store, gw gateway.Gateway, broker *events.Broker) *Service {
 	s := &Service{
@@ -726,6 +736,24 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
+	case "profile.export":
+		var p struct {
+			Path string `json:"path"`
+			// Attachments are the difference between an archive of tens of
+			// megabytes and one of several gigabytes, and a profile without
+			// them still holds every message, so they are opt-in.
+			IncludeMedia bool `json:"include_media"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.Path) == "" {
+			return nil, errors.New("path is required")
+		}
+		if s.paths.DeviceDB == "" {
+			return nil, errors.New("this daemon does not know where its profile lives")
+		}
+		return profile.Export(ctx, s.paths, p.Path, p.IncludeMedia)
 	case "chat.export":
 		var p struct {
 			ChatJID string `json:"chat_jid"`

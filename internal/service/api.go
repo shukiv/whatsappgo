@@ -42,6 +42,8 @@ var apiMethods = []MethodDescription{
 	method("pairing.start", "Start QR-code pairing", true, nil),
 	method("pairing.phone", "Request a phone pairing code", true, map[string]any{"phone": "15551234567"}),
 	method("account.logout", "Unlink this profile and delete its device session", true, nil),
+	method("profile.export", "Write this account to a portable archive; it carries the device credentials, so move it like a password and run the profile on one machine only", true,
+		map[string]any{"path": "/tmp/israeli.wagprofile", "include_media": false}),
 	method("chats.list", "List or search chats", false, map[string]any{"limit": 100, "offset": 0, "query": "", "archived": false}),
 	method("chats.archived_count", "Count archived chats", false, nil),
 	method("chats.unread_count", "Count unread messages in visible chats", false, nil),

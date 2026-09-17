@@ -140,6 +140,7 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 	broker := events.New()
 	app := service.New(messageStore, wa, broker)
 	app.Describe(version, countProfiles())
+	app.OwnProfile(paths)
 	// Look for a newer release now and every few hours after that. Nothing is
 	// downloaded here: the desktop is told what exists and the reader decides.
 	app.WatchForUpdates(ctx, updates.Interval, func(ctx context.Context) (updates.Release, error) {

@@ -70,12 +70,21 @@ func main() {
 	profile := flag.String("profile", "default", "account profile to control")
 	socket := flag.String("socket", "", "override the daemon Unix socket")
 	daemon := flag.String("daemon", "", "path to whatsappd (default: beside this binary, else PATH)")
+	importFrom := flag.String("import", "", "import a profile archive into --profile, then exit")
+	force := flag.Bool("force", false, "with --import, replace a profile that already holds databases")
 	noStart := flag.Bool("no-start", false, "never start a daemon; fail if none is listening")
 	timeout := flag.Duration("timeout", 30*time.Second, "RPC timeout for a single call")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
+		return
+	}
+	if *importFrom != "" {
+		if err := importProfile(*importFrom, *profile, *force); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 	address := *socket
