@@ -1,4 +1,4 @@
-.PHONY: all daemon cli tools test lint cross check-desktop-deps desktop install
+.PHONY: all daemon cli mcp tools test lint cross check-desktop-deps desktop install
 
 all: tools
 
@@ -14,7 +14,13 @@ daemon:
 cli:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/whatsappctl ./cmd/whatsappctl
 
-tools: daemon cli
+# The Model Context Protocol server. It serves whatever the daemon serves, so
+# it needs no list of its own, and it starts a headless daemon when nothing is
+# listening for the profile it was given.
+mcp:
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/whatsappmcp ./cmd/whatsappmcp
+
+tools: daemon cli mcp
 
 test:
 	go test ./...

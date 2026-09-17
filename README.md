@@ -122,6 +122,9 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
   accessible controls
 - `whatsappctl` command-line automation with JSON output, live event streams,
   media sending, contact resolution, and a discoverable local API for bots
+- An **AI assistant interface**: `whatsappmcp` serves the same local API over
+  the Model Context Protocol, so an assistant can read and act on the account
+  through the tools the daemon already publishes
 - Flatpak, Debian, RPM, and AppImage packaging definitions
 - **Report a problem** opens the WhatsAppGo GitHub issues page directly in
   your browser, with no in-app form or intake key;
@@ -144,10 +147,11 @@ or video calls is not supported.
   packaging, and contribution workflow
 - [Architecture](docs/ARCHITECTURE.md): process lifecycle, storage, event flow,
   identity aliases, memory behavior, and RPC
-- [Command-line and bot API](docs/API.md): `whatsappctl`, events, raw methods,
-  security, and automation examples
+- [Command-line and bot API](docs/API.md): `whatsappctl`, the `whatsappmcp`
+  Model Context Protocol server, events, raw methods, security, and automation
+  examples
 - [Security and privacy](docs/SECURITY.md): local plaintext data, credentials,
-  reporting, and account risk
+  exported profiles, reporting, and account risk
 - [WhatsApp Web PWA control inventory](docs/WHATSAPP_WEB_PWA_CONTROL_INVENTORY.md):
   traversed controls, menus, state branches, and measured reference geometry
 - [WhatsApp Web PWA gap audit](docs/WHATSAPP_WEB_PWA_GAP_AUDIT.md): implemented
@@ -226,6 +230,7 @@ Unix permissions but no additional application-level encryption.
 ```text
 cmd/whatsappd/       internal Go backend executable
 cmd/whatsappctl/     JSON command-line and bot client
+cmd/whatsappmcp/     Model Context Protocol server for AI assistants
 internal/whatsapp/  whatsmeow adapter and event handling
 internal/store/     SQLite message index and migrations
 internal/mediastore/ SQLite attachment storage

@@ -45,6 +45,10 @@ ApplicationWindow {
         }
     }
     property bool recordingVoice: Boolean(voiceRecorderLoader.item && voiceRecorderLoader.item.recording)
+    // Set while an account file is being saved: true hands the account to
+    // another machine and retires this copy, false keeps a copy that must
+    // never be run anywhere.
+    property bool savingAccountForMove: true
     property string replyTargetId: ""
     property string replyPreview: ""
     // A draft belongs to the conversation it was written in, the way WhatsApp
@@ -98,6 +102,17 @@ ApplicationWindow {
         window.draftChatJid = String(jid || "")
         window.draftHeldKey = key
     }
+    // WhatsApp Web empties the box the moment a message is sent, and shows the
+    // message as pending until it is acknowledged. Waiting for the
+    // acknowledgement instead left the words sitting in the box for the whole
+    // round trip, beside the message they had already become. The parked draft
+    // is deliberately kept: it is what a refused send is restored from.
+    function clearSentComposer() {
+        composer.clear()
+        window.replyTargetId = ""
+        window.replyPreview = ""
+        ++window.draftRevision
+    }
     function clearDraft() {
         composer.clear()
         window.replyTargetId = ""
@@ -112,8 +127,16 @@ ApplicationWindow {
         const key = String(profile) + "\u0000" + String(jid)
         const pending = window.pendingTextMentions[key]
         delete window.pendingTextMentions[key]
-        if (!success)
+        if (!success) {
+            // The words left the box when the message was sent. A send that
+            // failed has to put them back - but only into the box they came
+            // from, and only while it is still empty. Newer typing, or another
+            // conversation, keeps what it has, and the parked draft waits
+            // under its own key for the reader to come back to it.
+            if (key === window.draftHeldKey && composer.text === "")
+                window.restoreDraft(window.draftChatJid)
             return
+        }
         if (key === window.draftHeldKey)
             window.rememberDraft()
         const draft = window.chatDrafts[key]
@@ -1427,6 +1450,14 @@ ApplicationWindow {
                                     text: qsTr("Add another account")
                                     iconSource: Qt.resolvedUrl("icons/new-chat.svg")
                                     onClicked: { sidebarMenu.close(); addAccountDialog.open() }
+                                }
+                                WhatsAppMenuItem {
+                                    objectName: "saveAccountFileMenuItem"
+                                    text: qsTr("Save account file…")
+                                    iconSource: Qt.resolvedUrl("icons/copy.svg")
+                                    // Only a linked account is worth moving.
+                                    enabled: backend.loggedIn
+                                    onClicked: { sidebarMenu.close(); saveAccountDialog.open() }
                                 }
                                 WhatsAppMenuItem {
                                     text: qsTr("Reconnect")
@@ -2900,6 +2931,7 @@ ApplicationWindow {
                                             const outgoing = composerMentions.outgoing()
                                             backend.sendMessage(body, replyTo, outgoing.text, outgoing.mentions)
                                             backend.setTyping(false)
+                                            window.clearSentComposer()
                                         } else if (window.recordingVoice) {
                                             voiceRecorderLoader.item.stop()
                                         } else {
@@ -3079,6 +3111,7 @@ ApplicationWindow {
                 Layout.maximumWidth: Math.min(parent.width, 460)
                 Layout.fillHeight: true
                 onLogoutRequested: logoutDialog.open()
+                onSaveAccountFileRequested: saveAccountDialog.open()
                 onShortcutsRequested: shortcutsDialog.open()
                 onAppearanceRequested: Theme.preferredMode = Theme.dark ? "light" : "dark"
                 onBugReportRequested: window.reportBug()
@@ -3319,6 +3352,19 @@ ApplicationWindow {
         currentFile: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
             + "/WhatsApp Chat - " + String(backend.selectedChat.title || backend.selectedChat.jid || "chat").replace(/[\/]/g, " ") + ".txt"
         onAccepted: backend.exportChat(backend.selectedChat.jid, selectedFile)
+    }
+
+    // Writes the account to a file another machine can import. Whether this
+    // copy keeps working afterwards is the question the dialog above asks.
+    FileDialog {
+        id: saveAccountFileDialog
+        objectName: "saveAccountFileDialog"
+        title: qsTr("Save account file")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("WhatsAppGo account (*.wagprofile)"), qsTr("All files (*)")]
+        currentFile: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
+            + "/" + String(backend.profile || "account").replace(/[\/]/g, " ") + ".wagprofile"
+        onAccepted: backend.exportProfile(selectedFile, false, window.savingAccountForMove)
     }
 
     FileDialog {
@@ -3690,6 +3736,59 @@ ApplicationWindow {
         sequence: "Ctrl+Alt+G"
         enabled: window.activeSection === "chats" && Boolean(backend.selectedChat.jid) && !mediaPreview.previewActive
         onActivated: { attachmentMenu.close(); emojiPicker.selectedTab = 1; emojiPicker.open() }
+    }
+
+    // An account can be moved to a machine with no desktop - a server, a
+    // Raspberry Pi - and served there over the local API or to an AI assistant.
+    // What the file holds is the account itself, so this asks before writing it
+    // rather than after.
+    WhatsAppDialog {
+        id: saveAccountDialog
+        objectName: "saveAccountDialog"
+        title: qsTr("Save account file")
+        subtitle: qsTr("Writes this account to one file another machine can import: its history and its "
+                       + "identity, without the attachments. The file holds the account's keys, so treat it "
+                       + "like a password and delete it once it has arrived.")
+        acceptText: qsTr("Choose file…")
+        preferredWidth: 480
+        onOpened: window.savingAccountForMove = true
+        onAccepted: saveAccountFileDialog.open()
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 10
+
+            CheckBox {
+                objectName: "saveAccountMoveCheck"
+                Layout.fillWidth: true
+                text: qsTr("This account is moving to the other machine")
+                checked: window.savingAccountForMove
+                onToggled: window.savingAccountForMove = checked
+                contentItem: Label {
+                    text: parent.text
+                    color: Theme.text
+                    font.pixelSize: 14
+                    leftPadding: parent.indicator.width + 8
+                    verticalAlignment: Text.AlignVCenter
+                    wrapMode: Text.Wrap
+                }
+            }
+            Label {
+                objectName: "saveAccountMoveExplanation"
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font.pixelSize: 13
+                lineHeight: 1.3
+                color: window.savingAccountForMove ? Theme.textMuted : Theme.danger
+                text: window.savingAccountForMove
+                    ? qsTr("This copy will be retired as soon as the file is written, and will not open again. "
+                           + "That is what keeps one account from running in two places.")
+                    : qsTr("WARNING: this copy keeps working. One WhatsApp account must never run on two "
+                           + "machines at once - both would share one message key, messages would arrive that "
+                           + "neither can read, and WhatsApp is expected to unlink the device. Leave this "
+                           + "unticked only if the file will not be run anywhere.")
+            }
+        }
     }
 
     WhatsAppDialog {
@@ -4083,6 +4182,36 @@ ApplicationWindow {
                 font.pixelSize: 14
                 wrapMode: Text.Wrap
                 lineHeight: 1.3
+            }
+            // An account can be created here to live somewhere else: linked on
+            // this screen, then saved to a file and imported on a machine with
+            // no desktop, where it is served to scripts or an AI assistant.
+            CheckBox {
+                id: accountForAnotherMachine
+                objectName: "accountForAnotherMachineCheck"
+                Layout.fillWidth: true
+                text: qsTr("This account is for another machine")
+                onToggled: window.savingAccountForMove = true
+                contentItem: Label {
+                    text: parent.text
+                    color: Theme.text
+                    font.pixelSize: 14
+                    leftPadding: parent.indicator.width + 8
+                    verticalAlignment: Text.AlignVCenter
+                    wrapMode: Text.Wrap
+                }
+            }
+            Label {
+                objectName: "accountForAnotherMachineHint"
+                Layout.fillWidth: true
+                visible: accountForAnotherMachine.checked
+                wrapMode: Text.Wrap
+                font.pixelSize: 13
+                lineHeight: 1.3
+                color: Theme.textMuted
+                text: qsTr("Link it here as usual, then choose Save account file… from this menu. The file "
+                           + "imports on a server or a Raspberry Pi, which serves the account with no desktop. "
+                           + "Saving it retires this copy, so the account runs in one place only.")
             }
             Rectangle {
                 Layout.fillWidth: true

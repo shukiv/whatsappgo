@@ -85,6 +85,35 @@ Before reporting a vulnerability, avoid attaching device databases, QR payloads,
 pairing codes, message contents, or logs containing JIDs. Rotate the linked
 device from the official WhatsApp application if credentials may be exposed.
 
+## ⚠️ WARNING: exported profiles - one account, one machine
+
+`profile.export` writes the account to a file. That file **is a credential**:
+it carries the linked-device keys, and whoever holds it can read and send as
+the account. It is written mode 0600 and never over an existing file, but once
+it leaves this machine nothing here can protect it. Move it the way you would
+move a password, and delete it from both machines afterwards.
+
+**Never run the same exported profile in two places.** A WhatsApp linked device
+is one cryptographic identity holding one message ratchet - a key that steps
+forward with every message and never back. Two copies connected at once step it
+independently and immediately disagree:
+
+- Messages arrive that one copy cannot decrypt, and they are **not
+  recoverable**.
+- WhatsApp sees two devices on one registration and unlinks it.
+- At worst the number is flagged for abuse. A ban applies to the phone number,
+  not to this software, and cannot be undone from here.
+
+Export with `"deactivate": true` whenever you are moving an account. It writes
+the archive first and retires this copy only once the archive exists, after
+which `whatsappd` refuses to open this copy and the running daemon stops. That
+is a safeguard; remembering is not.
+
+If you want two machines live, do not export. WhatsApp permits four linked
+devices: link the second machine as its own device and accept that it receives
+only recent history. See
+[moving an account to another machine](API.md#-warning-one-account-one-machine).
+
 ## Desktop notifications
 
 A notification carries the sender's name and, when previews are enabled, the

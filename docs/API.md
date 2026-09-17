@@ -299,9 +299,10 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `update.check` | `{}` | Ask GitHub now instead of waiting for the next three-hourly look |
 | `update.download` | `{}` | Start downloading this platform's artifact; reports itself with `update.progress`, `update.ready` and `update.failed` |
 | `connection.connect` / `connection.disconnect` | `{}` | Connect or disconnect this linked device |
-| `pairing.start` | `{}` | Start QR pairing and emit pairing events |
-| `pairing.phone` | `phone` | Return a phone-pairing code |
+| `pairing.start` | `{}` | Start QR pairing and emit pairing events. The exchange belongs to the daemon, not to the connection that started it, so a client may close its connection and reconnect to watch for the code |
+| `pairing.phone` | `phone` | Return a phone-pairing code. The daemon keeps watching for the phone to accept it, and reports `pairing.success` when it does |
 | `account.logout` | `{}` | Unlink the profile; destructive |
+| `profile.export` | `path`, `include_media` | Write the account to a portable archive; see [moving an account](#moving-an-account-to-another-machine). The archive carries the device credentials |
 | `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array; optional `last_message_sender_jid` and `last_message_sender_name` identify the preview's sender. Group sender names prefer locally saved contact names (including PN/LID aliases), then the message's push name. |
 | `chats.archived_count` | `{}` | Archived count |
 | `chats.unread_count` | `{}` | Exact unread-message total for the profile's visible chats |
@@ -455,6 +456,203 @@ quoting the status message from `status@broadcast`:
 whatsappctl send --to alice@lid --text "Great photo" \
   --reply-to STATUS_MESSAGE_ID --reply-chat status@broadcast
 ```
+
+## Model Context Protocol
+
+`whatsappmcp` serves the same methods to an AI assistant over the Model Context
+Protocol. It holds no list of its own: on the first listing it asks the daemon
+through `rpc.discover` and turns each method into a tool, so a method added to
+the daemon is callable without changing the server, and one removed stops being
+offered. A tool is the method name with underscores where the method uses dots
+(`message.send` becomes `message_send`), and a tool that changes the account is
+described as `[mutating]`.
+
+```bash
+make mcp                        # builds bin/whatsappmcp
+bin/whatsappmcp --profile default
+```
+
+It speaks JSON-RPC over standard input and output, one object per line, so a
+client starts it as a subprocess. Standard output carries the protocol and
+nothing else; the daemon's own log and this server's notices go to standard
+error.
+
+| Flag | Meaning |
+| --- | --- |
+| `--profile` | Which account profile to control. Default `default`. |
+| `--socket` | Talk to this socket instead of the profile's own. |
+| `--daemon` | Path to `whatsappd`. By default the copy beside this binary, else whatever is on `PATH`. |
+| `--no-start` | Never start a daemon; fail if none is listening. |
+| `--timeout` | How long one call may take. Default 30s. |
+
+**It starts a daemon when it needs one.** Every call dials the profile's socket
+first, so an account the desktop application is already running is reached
+rather than duplicated - two daemons on one profile would fight over the same
+files. If nothing answers, `whatsappd` is started headless for that profile
+with `--exit-with-parent`, so it goes away when the assistant closes the
+server. That makes the whole account usable with no desktop at all.
+
+### Linking an account
+
+A profile with no account linked to it answers `status_get` with
+`logged_in: false`, and every other method fails. Two tools beyond the daemon's
+methods exist for this, because linking is the one exchange whose answer does
+not arrive as a reply to a call:
+
+| Tool | What it does |
+| --- | --- |
+| `pairing_qr` | Starts QR pairing and returns the current code twice over: as a PNG, and as text a terminal can draw. Scan it on the phone under WhatsApp, Linked devices, Link a device. |
+| `pairing_phone` | Returns the eight-character code to type on the phone instead of scanning. |
+| `pairing_wait` | Returns the next thing that happens: the phone accepted the code, the code expired and was replaced (with the new one), or pairing failed. |
+
+A QR code expires in under a minute, so `pairing_qr` is normally followed by
+`pairing_wait` until it answers `paired`. The pairing tools refuse an account
+that is already linked; unlink it with `account_logout` first.
+
+### ⚠️ WARNING: ONE ACCOUNT, ONE MACHINE
+
+**Never run the same exported profile in two places. It will get your device
+unlinked, and it can lose messages permanently.**
+
+A WhatsApp linked device is not a login you can share. It is one cryptographic
+identity holding one **message ratchet** - a key that steps forward with every
+message and never steps back. Two copies of that identity, connected at the
+same time, step the same ratchet independently and immediately disagree about
+where it is. What follows:
+
+- Messages arrive that one copy cannot decrypt, and they are **not
+  recoverable** - the sender has moved on and will not re-encrypt them.
+- WhatsApp sees two devices claiming one registration and unlinks it.
+- In the worst case the account is flagged for abuse. A ban applies to the
+  phone number, not to this software, and cannot be undone from here.
+
+This is not a warning about inconvenience. Exporting a profile makes a second
+copy of a credential, and a credential that exists twice is one you have to
+actively stop from being used twice.
+
+#### Use `deactivate` and let the software remember for you
+
+`profile.export` takes `deactivate`. It writes the archive first, and only once
+the archive exists does it retire this copy - so there is never a moment when
+the account is neither exported nor usable. After that, **`whatsappd` refuses
+to open this copy at all**:
+
+```text
+profile "israeli" was exported to another machine on 2026-09-17 05:41 and this
+copy was retired. Running one account in two places gets the device unlinked.
+If the move did not happen, delete retired.json from the profile directory to
+use this copy again
+```
+
+The daemon serving that profile also shuts down shortly after answering, so the
+retirement takes effect immediately rather than at the next start.
+
+**Always pass `deactivate: true` when you are moving an account.** Leave it
+false only for a copy you are not going to run anywhere - and remember that
+such an archive is still a live credential sitting on disk.
+
+```bash
+# Moving the account. This is the safe form.
+whatsappctl --profile israeli call profile.export \
+  '{"path": "/tmp/israeli.wagprofile", "include_media": false, "deactivate": true}'
+```
+
+#### If you want both machines live, do not export
+
+Export moves an account. It does not duplicate one, and no flag makes it
+duplicate one safely. WhatsApp permits **four linked devices**, so the
+supported way to have a second machine is to link it as its own device:
+
+```bash
+whatsappmcp --profile israeli-pi     # then call the pairing_qr tool and scan it
+```
+
+The cost is history: WhatsApp sends a newly linked device only a recent window,
+not the full archive. That is the trade. Two live copies of one device is not
+an alternative to it - it is the failure this section exists to prevent.
+
+#### If you exported without `deactivate`
+
+Retire the source copy by hand before starting the account anywhere else:
+
+```bash
+printf '{"retired_at":0,"archive":"moved"}' \
+  > ~/.local/share/whatsappgo/profiles/israeli/retired.json
+chmod 600 ~/.local/share/whatsappgo/profiles/israeli/retired.json
+```
+
+Deleting that file is the undo, for the case where the move never happened and
+this is once again the only copy.
+
+### Moving an account to another machine
+
+An account can be lifted off one machine and put down on another, keeping its
+history and staying the same linked device. This is what makes an always-on
+headless deployment possible: export where the account lives today, move one
+file, import there, and serve it with `whatsappmcp`.
+
+A profile is three SQLite databases - the device identity, the history, and the
+attachments. Only the attachments are large, and only they can be fetched
+again, so they are left out unless asked for. On a real account whose profile
+is 3.6 GB the archive is **under 50 MB**, and holds every message.
+
+```bash
+# On the machine that has the account. The daemon can stay running: each
+# database is snapshotted through VACUUM INTO, so nothing is half-copied.
+whatsappctl --profile israeli call profile.export \
+  '{"path": "/tmp/israeli.wagprofile", "include_media": false}'
+
+# Move it, then on the receiving machine:
+whatsappmcp --profile israeli --import /tmp/israeli.wagprofile
+shred -u /tmp/israeli.wagprofile      # on both machines
+```
+
+`whatsappmcp` then serves that profile normally, starting its own headless
+daemon. `--import` refuses a profile that already holds databases unless
+`--force` is passed, and refuses outright while a daemon is serving that
+profile - importing replaces files a running daemon has open.
+
+Pass `"deactivate": true` on the export whenever you are moving the account -
+see the warning above. It retires this copy once the archive exists, so the
+account cannot be opened here again and nothing depends on you remembering.
+
+> **The archive is a credential, not a backup.** It carries the linked-device
+> keys: whoever holds the file can read and send as that account. Move it the
+> way you would move a password, and delete it from both machines afterwards.
+
+Attachments are not in a default archive, and the receiving machine downloads
+new ones as they arrive. On a small disk, turn that off:
+
+```bash
+whatsappctl --profile israeli call preferences.set '{"name": "download_video", "value": false}'
+whatsappctl --profile israeli call preferences.set '{"name": "download_image", "value": false}'
+```
+
+`download_audio`, `download_document` and `download_sticker` work the same way.
+These are local choices about network use; they are not account settings and do
+not follow the account anywhere.
+
+#### As a systemd user service
+
+The daemon needs no desktop, display, tray or session bus. It does need
+`XDG_RUNTIME_DIR`, which a **user** unit is given and a system unit is not -
+the socket's access control rests on that directory being private and per-user.
+Do not pass `--exit-with-parent` here: it is for a daemon owned by the desktop
+application, and under a service manager there is no such parent to watch.
+
+```ini
+[Unit]
+Description=WhatsAppGo backend (israeli)
+
+[Service]
+ExecStart=%h/.local/bin/whatsappd --profile israeli --notifications=false
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+`loginctl enable-linger <user>` keeps it running when nobody is logged in.
 
 ## Socket protocol
 

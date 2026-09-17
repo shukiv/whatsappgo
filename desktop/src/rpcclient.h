@@ -19,6 +19,11 @@
 class QProcess;
 class ProfileMonitor;
 
+// Where an account that was handed over to another machine leaves its marker.
+// Declared here because the window picks the account it opens - and names its
+// single-instance socket after it - before any RpcClient exists.
+QString retiredMarkerPath(const QString &profile);
+
 class RpcClient final : public QObject
 {
     Q_OBJECT
@@ -239,6 +244,10 @@ public:
     Q_INVOKABLE void clearChat(const QString &jid);
     Q_INVOKABLE void setChatDisappearing(const QString &jid, int seconds);
     Q_INVOKABLE void exportChat(const QString &jid, const QString &destinationUrl);
+    // Writes this account to a file another machine can import. deactivate
+    // retires this copy, which is what keeps one account from being run in two
+    // places; see docs/API.md.
+    Q_INVOKABLE void exportProfile(const QString &destinationUrl, bool includeMedia, bool deactivate);
     Q_INVOKABLE void setChatFavorite(const QString &jid, bool favorite);
     Q_INVOKABLE void markAllChatsRead();
     Q_INVOKABLE void createGroup(const QString &name, const QStringList &participants,
@@ -671,6 +680,14 @@ private:
     QVariantMap m_profileUnreadCounts;
     bool m_busy = false;
     QHash<QString, QProcess *> m_ownedBackends;
+    // Accounts handed over to another machine, so the refusal is explained
+    // once rather than on every reconnect.
+    QSet<QString> m_retiredProfiles;
+    // Moves this window off an account that was handed over. Its daemon is
+    // gone on purpose, so staying on it only shows a backend that will never
+    // answer.
+    void leaveRetiredProfile();
+    QString anotherLiveProfile(const QString &leaving) const;
     QHash<QString, ProfileMonitor *> m_profileMonitors;
     bool m_shuttingDown = false;
     QString m_initialChat;

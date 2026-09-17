@@ -164,6 +164,19 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 }
 
+// pairingLifetime is the context the code exchange runs under. It must not be
+// the request's. A client that asks to pair and then closes its connection -
+// the command line does, and so does the MCP server - would otherwise have the
+// code channel cancelled the moment its request was answered, and no code
+// would ever be drawn. Pairing belongs to the daemon, and ends when the daemon
+// does.
+func (c *Client) pairingLifetime() context.Context {
+	if c.baseCtx != nil {
+		return c.baseCtx
+	}
+	return context.Background()
+}
+
 func (c *Client) StartPairing(ctx context.Context) error {
 	c.mu.Lock()
 	if c.pairing {
@@ -179,7 +192,8 @@ func (c *Client) StartPairing(ctx context.Context) error {
 	if c.wa.IsConnected() {
 		c.wa.Disconnect()
 	}
-	qrChan, err := c.wa.GetQRChannel(ctx)
+	lifetime := c.pairingLifetime()
+	qrChan, err := c.wa.GetQRChannel(lifetime)
 	if err != nil {
 		c.mu.Lock()
 		c.pairing = false
@@ -193,7 +207,7 @@ func (c *Client) StartPairing(ctx context.Context) error {
 		return err
 	}
 	c.setStatus(func(s *model.ConnectionStatus) { s.State = "pairing" })
-	go c.consumeQR(ctx, qrChan)
+	go c.consumeQR(lifetime, qrChan)
 	return nil
 }
 
@@ -232,7 +246,8 @@ func (c *Client) PairPhone(ctx context.Context, phone string) (string, error) {
 		return "", errors.New("this account is already paired")
 	}
 	if !c.wa.IsConnected() {
-		qrChan, err := c.wa.GetQRChannel(ctx)
+		lifetime := c.pairingLifetime()
+		qrChan, err := c.wa.GetQRChannel(lifetime)
 		if err != nil {
 			return "", err
 		}
@@ -246,6 +261,14 @@ func (c *Client) PairPhone(ctx context.Context, phone string) (string, error) {
 			return "", errors.New("timed out preparing phone pairing")
 		case <-qrChan:
 		}
+		// The code is typed on the phone long after this call is answered, so
+		// the channel keeps being read until it says what happened. Nobody
+		// reading it would leave the account in pairing with no way to learn
+		// that the phone accepted or refused.
+		c.mu.Lock()
+		c.pairing = true
+		c.mu.Unlock()
+		go c.consumeQR(lifetime, qrChan)
 	}
 	code, err := c.wa.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err == nil {

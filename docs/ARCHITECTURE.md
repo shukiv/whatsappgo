@@ -13,7 +13,7 @@ whatsappgo (Qt 6 / QML)
    │
    ├── JSON-lines RPC over per-profile Unix sockets
    │        ▲
-   │        └── whatsappctl / authorized same-user bots
+   │        └── whatsappctl / whatsappmcp / authorized same-user bots
    │
    └── app-owned backend lifecycle
           │
@@ -403,6 +403,21 @@ The socket exists only below the user's runtime directory and is never exposed
 on the network. `whatsappctl` is a thin same-user client for this protocol; it
 does not start a daemon. `rpc.discover` provides the installed method and event
 catalogue. See [Command-line and bot API](API.md).
+
+`whatsappmcp` is the same client wearing another protocol: it serves every
+method `rpc.discover` lists to a Model Context Protocol client, so it holds no
+catalogue of its own and gains a method when the daemon does. It differs from
+`whatsappctl` in one way that matters to this diagram - it *will* start a
+daemon. Finding nothing listening for its profile, it starts one headless with
+`--exit-with-parent`, which makes an account usable with no desktop client at
+all. It dials before it starts, so a profile the application already owns is
+reached rather than duplicated.
+
+Pairing is the one exchange that does not fit a call and its reply: the code to
+scan arrives afterwards as a `pairing.qr` event. The exchange therefore belongs
+to the daemon's own lifetime rather than to the connection that asked for it
+(`whatsapp.Client.pairingLifetime`), so a client may ask to pair and close its
+connection without cancelling the code it was waiting for.
 
 ## Group information and membership
 
