@@ -299,8 +299,8 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `update.check` | `{}` | Ask GitHub now instead of waiting for the next three-hourly look |
 | `update.download` | `{}` | Start downloading this platform's artifact; reports itself with `update.progress`, `update.ready` and `update.failed` |
 | `connection.connect` / `connection.disconnect` | `{}` | Connect or disconnect this linked device |
-| `pairing.start` | `{}` | Start QR pairing and emit pairing events |
-| `pairing.phone` | `phone` | Return a phone-pairing code |
+| `pairing.start` | `{}` | Start QR pairing and emit pairing events. The exchange belongs to the daemon, not to the connection that started it, so a client may close its connection and reconnect to watch for the code |
+| `pairing.phone` | `phone` | Return a phone-pairing code. The daemon keeps watching for the phone to accept it, and reports `pairing.success` when it does |
 | `account.logout` | `{}` | Unlink the profile; destructive |
 | `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array; optional `last_message_sender_jid` and `last_message_sender_name` identify the preview's sender. Group sender names prefer locally saved contact names (including PN/LID aliases), then the message's push name. |
 | `chats.archived_count` | `{}` | Archived count |
@@ -455,6 +455,58 @@ quoting the status message from `status@broadcast`:
 whatsappctl send --to alice@lid --text "Great photo" \
   --reply-to STATUS_MESSAGE_ID --reply-chat status@broadcast
 ```
+
+## Model Context Protocol
+
+`whatsappmcp` serves the same methods to an AI assistant over the Model Context
+Protocol. It holds no list of its own: on the first listing it asks the daemon
+through `rpc.discover` and turns each method into a tool, so a method added to
+the daemon is callable without changing the server, and one removed stops being
+offered. A tool is the method name with underscores where the method uses dots
+(`message.send` becomes `message_send`), and a tool that changes the account is
+described as `[mutating]`.
+
+```bash
+make mcp                        # builds bin/whatsappmcp
+bin/whatsappmcp --profile default
+```
+
+It speaks JSON-RPC over standard input and output, one object per line, so a
+client starts it as a subprocess. Standard output carries the protocol and
+nothing else; the daemon's own log and this server's notices go to standard
+error.
+
+| Flag | Meaning |
+| --- | --- |
+| `--profile` | Which account profile to control. Default `default`. |
+| `--socket` | Talk to this socket instead of the profile's own. |
+| `--daemon` | Path to `whatsappd`. By default the copy beside this binary, else whatever is on `PATH`. |
+| `--no-start` | Never start a daemon; fail if none is listening. |
+| `--timeout` | How long one call may take. Default 30s. |
+
+**It starts a daemon when it needs one.** Every call dials the profile's socket
+first, so an account the desktop application is already running is reached
+rather than duplicated - two daemons on one profile would fight over the same
+files. If nothing answers, `whatsappd` is started headless for that profile
+with `--exit-with-parent`, so it goes away when the assistant closes the
+server. That makes the whole account usable with no desktop at all.
+
+### Linking an account
+
+A profile with no account linked to it answers `status_get` with
+`logged_in: false`, and every other method fails. Two tools beyond the daemon's
+methods exist for this, because linking is the one exchange whose answer does
+not arrive as a reply to a call:
+
+| Tool | What it does |
+| --- | --- |
+| `pairing_qr` | Starts QR pairing and returns the current code twice over: as a PNG, and as text a terminal can draw. Scan it on the phone under WhatsApp, Linked devices, Link a device. |
+| `pairing_phone` | Returns the eight-character code to type on the phone instead of scanning. |
+| `pairing_wait` | Returns the next thing that happens: the phone accepted the code, the code expired and was replaced (with the new one), or pairing failed. |
+
+A QR code expires in under a minute, so `pairing_qr` is normally followed by
+`pairing_wait` until it answers `paired`. The pairing tools refuse an account
+that is already linked; unlink it with `account_logout` first.
 
 ## Socket protocol
 
