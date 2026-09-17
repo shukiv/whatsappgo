@@ -102,6 +102,17 @@ ApplicationWindow {
         window.draftChatJid = String(jid || "")
         window.draftHeldKey = key
     }
+    // WhatsApp Web empties the box the moment a message is sent, and shows the
+    // message as pending until it is acknowledged. Waiting for the
+    // acknowledgement instead left the words sitting in the box for the whole
+    // round trip, beside the message they had already become. The parked draft
+    // is deliberately kept: it is what a refused send is restored from.
+    function clearSentComposer() {
+        composer.clear()
+        window.replyTargetId = ""
+        window.replyPreview = ""
+        ++window.draftRevision
+    }
     function clearDraft() {
         composer.clear()
         window.replyTargetId = ""
@@ -116,8 +127,16 @@ ApplicationWindow {
         const key = String(profile) + "\u0000" + String(jid)
         const pending = window.pendingTextMentions[key]
         delete window.pendingTextMentions[key]
-        if (!success)
+        if (!success) {
+            // The words left the box when the message was sent. A send that
+            // failed has to put them back - but only into the box they came
+            // from, and only while it is still empty. Newer typing, or another
+            // conversation, keeps what it has, and the parked draft waits
+            // under its own key for the reader to come back to it.
+            if (key === window.draftHeldKey && composer.text === "")
+                window.restoreDraft(window.draftChatJid)
             return
+        }
         if (key === window.draftHeldKey)
             window.rememberDraft()
         const draft = window.chatDrafts[key]
@@ -2912,6 +2931,7 @@ ApplicationWindow {
                                             const outgoing = composerMentions.outgoing()
                                             backend.sendMessage(body, replyTo, outgoing.text, outgoing.mentions)
                                             backend.setTyping(false)
+                                            window.clearSentComposer()
                                         } else if (window.recordingVoice) {
                                             voiceRecorderLoader.item.stop()
                                         } else {
