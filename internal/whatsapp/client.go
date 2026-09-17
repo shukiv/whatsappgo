@@ -75,6 +75,7 @@ type Client struct {
 	sendReactionMessage    func(context.Context, types.JID, types.JID, types.MessageID, string) (whatsmeow.SendResponse, error)
 	sendPeerMessage        func(context.Context, *waE2E.Message) (whatsmeow.SendResponse, error)
 	fetchAppState          func(context.Context, appstate.WAPatchName, bool, bool) error
+	sendAppState           func(context.Context, appstate.PatchInfo) error
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
@@ -219,6 +220,13 @@ func (c *Client) consumeQR(ctx context.Context, ch <-chan whatsmeow.QRChannelIte
 			return
 		case item, ok := <-ch:
 			if !ok {
+				return
+			}
+			// A daemon on its way down has nowhere to put these. The select
+			// above chooses at random when a code and the shutdown are both
+			// ready, so the shutdown is checked here as well: without this,
+			// whether a stopped exchange reports is a coin toss.
+			if ctx.Err() != nil {
 				return
 			}
 			if item.Event == whatsmeow.QRChannelEventCode {
