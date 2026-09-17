@@ -270,6 +270,50 @@ func (c *Client) backfillAppState(name appstate.WAPatchName, metadataKey, label,
 	c.emit(gateway.Event{Name: doneEvent})
 }
 
+// isAppStateConflict reports the one failure a second attempt can settle: the
+// server refused the change because this device's copy of the collection is
+// behind, and the catch-up patches it sent back do not add up to the hash it
+// signed. whatsmeow has already retried once by then, so the copy has to be
+// replaced before there is any point in trying again.
+func isAppStateConflict(err error) bool {
+	if !errors.Is(err, whatsmeow.ErrAppStateUpdate) {
+		return false
+	}
+	return isAppStateHashMismatch(err) || strings.Contains(err.Error(), `code="409"`)
+}
+
+// sendAppStatePatch sends one change that belongs to the account rather than to
+// this device - a pin, a mute, an archive, a label, the push name.
+//
+// These used to fail in front of the reader with a hash out of whatsmeow, which
+// says nothing about what to do and nothing about whether the conversation is
+// pinned now. A drifted copy is repairable: ask for the collection again and
+// send the change once more. Only a fresh copy that still does not verify needs
+// the phone, and that is the only case the reader hears about.
+func (c *Client) sendAppStatePatch(ctx context.Context, patch appstate.PatchInfo) error {
+	send := c.sendAppState
+	if send == nil {
+		send = c.wa.SendAppState
+	}
+	err := send(ctx, patch)
+	if err == nil || !isAppStateConflict(err) {
+		return err
+	}
+	fetch := c.fetchAppState
+	if fetch == nil {
+		fetch = c.wa.FetchAppState
+	}
+	if fetchErr := fetch(ctx, patch.Type, true, false); fetchErr != nil {
+		if isAppStateHashMismatch(fetchErr) {
+			c.recoverAppState(ctx, patch.Type, "settings change")
+			return fmt.Errorf("this device's copy of the account settings had drifted and could not be " +
+				"rebuilt here, so your phone was asked for a fresh one; try again in a moment")
+		}
+		return err
+	}
+	return send(ctx, patch)
+}
+
 // appStateRecoveryMetadataKey remembers when the phone was last asked for a
 // collection, so a mismatch that the phone cannot fix does not send it a
 // request on every connection.

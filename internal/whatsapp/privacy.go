@@ -85,7 +85,7 @@ func (c *Client) SetProfileName(ctx context.Context, name string) error {
 	if c.wa == nil || !c.wa.IsConnected() {
 		return errors.New("not connected")
 	}
-	if err := c.wa.SendAppState(ctx, appstate.BuildSettingPushName(name)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildSettingPushName(name)); err != nil {
 		return err
 	}
 	c.setStatus(func(s *model.ConnectionStatus) { s.UserName = name })

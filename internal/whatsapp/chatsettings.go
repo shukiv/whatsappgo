@@ -36,7 +36,7 @@ func (c *Client) SetChatPinned(ctx context.Context, chatJID string, pinned bool)
 	if err != nil {
 		return err
 	}
-	if err := c.wa.SendAppState(ctx, appstate.BuildPin(target, pinned)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildPin(target, pinned)); err != nil {
 		return err
 	}
 	if err := c.store.UpdateChatPinned(ctx, chatJID, pinned); err != nil {
@@ -67,7 +67,7 @@ func (c *Client) DeleteChat(ctx context.Context, chatJID string) error {
 			ID:        proto.String(last.ID),
 		}
 		patch := appstate.BuildDeleteChat(target, time.UnixMilli(last.Timestamp), key, false)
-		if err := c.wa.SendAppState(ctx, patch); err != nil {
+		if err := c.sendAppStatePatch(ctx, patch); err != nil {
 			return err
 		}
 	}
@@ -179,7 +179,7 @@ func (c *Client) SetChatFavorite(ctx context.Context, chatJID string, favorite b
 			},
 		}},
 	}
-	if err := c.wa.SendAppState(ctx, patch); err != nil {
+	if err := c.sendAppStatePatch(ctx, patch); err != nil {
 		return err
 	}
 	if err := c.store.UpdateChatFavorites(ctx, wanted); err != nil {
@@ -226,7 +226,7 @@ func (c *Client) ClearChat(ctx context.Context, chatJID string) error {
 				},
 			}},
 		}
-		if err := c.wa.SendAppState(ctx, patch); err != nil {
+		if err := c.sendAppStatePatch(ctx, patch); err != nil {
 			return err
 		}
 	}
@@ -246,7 +246,7 @@ func (c *Client) SetChatMuted(ctx context.Context, chatJID string, muted bool, d
 	if duration <= 0 {
 		duration = mutedForever
 	}
-	if err := c.wa.SendAppState(ctx, appstate.BuildMute(target, muted, duration)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildMute(target, muted, duration)); err != nil {
 		return err
 	}
 	var until int64
@@ -266,7 +266,7 @@ func (c *Client) SetChatArchived(ctx context.Context, chatJID string, archived b
 		return err
 	}
 	timestamp, key := c.lastMessageAnchor(ctx, chatJID)
-	if err := c.wa.SendAppState(ctx, appstate.BuildArchive(target, archived, timestamp, key)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildArchive(target, archived, timestamp, key)); err != nil {
 		return err
 	}
 	if err := c.store.UpdateChatArchived(ctx, chatJID, archived); err != nil {
@@ -297,7 +297,7 @@ func (c *Client) CreateLabel(ctx context.Context, name string, color int) (model
 	if err != nil {
 		return model.Label{}, err
 	}
-	if err := c.wa.SendAppState(ctx, appstate.BuildLabelEdit(id, name, int32(color), false)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildLabelEdit(id, name, int32(color), false)); err != nil {
 		return model.Label{}, err
 	}
 	label := model.Label{ID: id, Name: name, Color: color}
@@ -317,7 +317,7 @@ func (c *Client) SetChatLabeled(ctx context.Context, chatJID, labelID string, la
 	if strings.TrimSpace(labelID) == "" {
 		return errors.New("label_id is required")
 	}
-	if err := c.wa.SendAppState(ctx, appstate.BuildLabelChat(target, labelID, labeled)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildLabelChat(target, labelID, labeled)); err != nil {
 		return err
 	}
 	if err := c.store.SetChatLabeled(ctx, chatJID, labelID, labeled); err != nil {
@@ -443,7 +443,7 @@ func (c *Client) SetChatRead(ctx context.Context, chatJID string, read bool) err
 		return err
 	}
 	timestamp, key := c.lastMessageAnchor(ctx, chatJID)
-	if err := c.wa.SendAppState(ctx, appstate.BuildMarkChatAsRead(target, read, timestamp, key)); err != nil {
+	if err := c.sendAppStatePatch(ctx, appstate.BuildMarkChatAsRead(target, read, timestamp, key)); err != nil {
 		return err
 	}
 	if read {
@@ -485,7 +485,7 @@ func (c *Client) SetMessageStarred(ctx context.Context, chatJID, messageID, send
 		return err
 	}
 	patch := appstate.BuildStar(target, sender, types.MessageID(messageID), fromMe, starred)
-	if err := c.wa.SendAppState(ctx, patch); err != nil {
+	if err := c.sendAppStatePatch(ctx, patch); err != nil {
 		return err
 	}
 	if err := c.store.SetMessageStarred(ctx, chatJID, messageID, starred); err != nil {
