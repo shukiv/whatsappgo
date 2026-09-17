@@ -509,6 +509,81 @@ A QR code expires in under a minute, so `pairing_qr` is normally followed by
 `pairing_wait` until it answers `paired`. The pairing tools refuse an account
 that is already linked; unlink it with `account_logout` first.
 
+### ⚠️ WARNING: ONE ACCOUNT, ONE MACHINE
+
+**Never run the same exported profile in two places. It will get your device
+unlinked, and it can lose messages permanently.**
+
+A WhatsApp linked device is not a login you can share. It is one cryptographic
+identity holding one **message ratchet** - a key that steps forward with every
+message and never steps back. Two copies of that identity, connected at the
+same time, step the same ratchet independently and immediately disagree about
+where it is. What follows:
+
+- Messages arrive that one copy cannot decrypt, and they are **not
+  recoverable** - the sender has moved on and will not re-encrypt them.
+- WhatsApp sees two devices claiming one registration and unlinks it.
+- In the worst case the account is flagged for abuse. A ban applies to the
+  phone number, not to this software, and cannot be undone from here.
+
+This is not a warning about inconvenience. Exporting a profile makes a second
+copy of a credential, and a credential that exists twice is one you have to
+actively stop from being used twice.
+
+#### Use `deactivate` and let the software remember for you
+
+`profile.export` takes `deactivate`. It writes the archive first, and only once
+the archive exists does it retire this copy - so there is never a moment when
+the account is neither exported nor usable. After that, **`whatsappd` refuses
+to open this copy at all**:
+
+```text
+profile "israeli" was exported to another machine on 2026-09-17 05:41 and this
+copy was retired. Running one account in two places gets the device unlinked.
+If the move did not happen, delete retired.json from the profile directory to
+use this copy again
+```
+
+The daemon serving that profile also shuts down shortly after answering, so the
+retirement takes effect immediately rather than at the next start.
+
+**Always pass `deactivate: true` when you are moving an account.** Leave it
+false only for a copy you are not going to run anywhere - and remember that
+such an archive is still a live credential sitting on disk.
+
+```bash
+# Moving the account. This is the safe form.
+whatsappctl --profile israeli call profile.export \
+  '{"path": "/tmp/israeli.wagprofile", "include_media": false, "deactivate": true}'
+```
+
+#### If you want both machines live, do not export
+
+Export moves an account. It does not duplicate one, and no flag makes it
+duplicate one safely. WhatsApp permits **four linked devices**, so the
+supported way to have a second machine is to link it as its own device:
+
+```bash
+whatsappmcp --profile israeli-pi     # then call the pairing_qr tool and scan it
+```
+
+The cost is history: WhatsApp sends a newly linked device only a recent window,
+not the full archive. That is the trade. Two live copies of one device is not
+an alternative to it - it is the failure this section exists to prevent.
+
+#### If you exported without `deactivate`
+
+Retire the source copy by hand before starting the account anywhere else:
+
+```bash
+printf '{"retired_at":0,"archive":"moved"}' \
+  > ~/.local/share/whatsappgo/profiles/israeli/retired.json
+chmod 600 ~/.local/share/whatsappgo/profiles/israeli/retired.json
+```
+
+Deleting that file is the undo, for the case where the move never happened and
+this is once again the only copy.
+
 ### Moving an account to another machine
 
 An account can be lifted off one machine and put down on another, keeping its
@@ -537,16 +612,13 @@ daemon. `--import` refuses a profile that already holds databases unless
 `--force` is passed, and refuses outright while a daemon is serving that
 profile - importing replaces files a running daemon has open.
 
+Pass `"deactivate": true` on the export whenever you are moving the account -
+see the warning above. It retires this copy once the archive exists, so the
+account cannot be opened here again and nothing depends on you remembering.
+
 > **The archive is a credential, not a backup.** It carries the linked-device
 > keys: whoever holds the file can read and send as that account. Move it the
 > way you would move a password, and delete it from both machines afterwards.
->
-> **It is a move, not a copy.** One device identity must run in one place. The
-> same identity connected from two machines shares a single message ratchet,
-> and the expected outcome is WhatsApp unlinking the device. After importing,
-> stop using that profile on the machine it came from. If you want both
-> machines live, do not export - link the second one as its own device with
-> `pairing_qr`, accepting that WhatsApp sends a new device only recent history.
 
 Attachments are not in a default archive, and the receiving machine downloads
 new ones as they arrive. On a small disk, turn that off:

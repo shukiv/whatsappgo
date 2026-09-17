@@ -151,7 +151,7 @@ or video calls is not supported.
   Model Context Protocol server, events, raw methods, security, and automation
   examples
 - [Security and privacy](docs/SECURITY.md): local plaintext data, credentials,
-  reporting, and account risk
+  exported profiles, reporting, and account risk
 - [WhatsApp Web PWA control inventory](docs/WHATSAPP_WEB_PWA_CONTROL_INVENTORY.md):
   traversed controls, menus, state branches, and measured reference geometry
 - [WhatsApp Web PWA gap audit](docs/WHATSAPP_WEB_PWA_GAP_AUDIT.md): implemented

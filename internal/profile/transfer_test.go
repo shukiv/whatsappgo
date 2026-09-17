@@ -120,7 +120,7 @@ func TestAnExportedAccountCanBeImportedElsewhere(t *testing.T) {
 	source := newProfile(t, "israeli")
 	archive := filepath.Join(t.TempDir(), "israeli.wagprofile")
 
-	result, err := Export(context.Background(), source, archive, false)
+	result, err := Export(context.Background(), source, archive, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestAttachmentsAreLeftBehindUnlessAskedFor(t *testing.T) {
 	dir := t.TempDir()
 
 	lean := filepath.Join(dir, "lean.wagprofile")
-	if _, err := Export(context.Background(), source, lean, false); err != nil {
+	if _, err := Export(context.Background(), source, lean, false, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range entries(t, lean) {
@@ -161,7 +161,7 @@ func TestAttachmentsAreLeftBehindUnlessAskedFor(t *testing.T) {
 	}
 
 	full := filepath.Join(dir, "full.wagprofile")
-	if _, err := Export(context.Background(), source, full, true); err != nil {
+	if _, err := Export(context.Background(), source, full, true, false); err != nil {
 		t.Fatal(err)
 	}
 	var carried bool
@@ -189,7 +189,7 @@ func TestAnExportRunsWhileTheDatabaseIsOpen(t *testing.T) {
 	}
 
 	archive := filepath.Join(t.TempDir(), "open.wagprofile")
-	if _, err := Export(context.Background(), source, archive, false); err != nil {
+	if _, err := Export(context.Background(), source, archive, false, false); err != nil {
 		t.Fatalf("an export could not be taken from a database in use: %v", err)
 	}
 	target := config.Paths{Profile: "israeli", DataDir: filepath.Join(t.TempDir(), "profile")}
@@ -207,7 +207,7 @@ func TestAnExportRunsWhileTheDatabaseIsOpen(t *testing.T) {
 func TestImportingRefusesToReplaceAnAccountUnlessTold(t *testing.T) {
 	source := newProfile(t, "israeli")
 	archive := filepath.Join(t.TempDir(), "israeli.wagprofile")
-	if _, err := Export(context.Background(), source, archive, false); err != nil {
+	if _, err := Export(context.Background(), source, archive, false, false); err != nil {
 		t.Fatal(err)
 	}
 	occupied := newProfile(t, "other")
@@ -235,7 +235,7 @@ func TestExportingRefusesToOverwrite(t *testing.T) {
 	if err := os.WriteFile(archive, []byte("something else"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Export(context.Background(), source, archive, false); err == nil {
+	if _, err := Export(context.Background(), source, archive, false, false); err == nil {
 		t.Fatal("an existing file was overwritten")
 	}
 	if got, _ := os.ReadFile(archive); string(got) != "something else" {
@@ -248,7 +248,7 @@ func TestExportingRefusesToOverwrite(t *testing.T) {
 func TestAnArchiveIsWrittenPrivate(t *testing.T) {
 	source := newProfile(t, "israeli")
 	archive := filepath.Join(t.TempDir(), "israeli.wagprofile")
-	if _, err := Export(context.Background(), source, archive, false); err != nil {
+	if _, err := Export(context.Background(), source, archive, false, false); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(archive)
@@ -343,7 +343,7 @@ func TestAnArchiveFromANewerVersionIsRefused(t *testing.T) {
 func TestReplacingAProfileClearsWhatTheOldOneLeftBehind(t *testing.T) {
 	source := newProfile(t, "israeli")
 	archive := filepath.Join(t.TempDir(), "israeli.wagprofile")
-	if _, err := Export(context.Background(), source, archive, false); err != nil {
+	if _, err := Export(context.Background(), source, archive, false, false); err != nil {
 		t.Fatal(err)
 	}
 	occupied := newProfile(t, "other")

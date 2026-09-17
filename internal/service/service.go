@@ -36,7 +36,14 @@ type Service struct {
 	// paths is where this profile's databases live. Only the daemon knows it,
 	// and only profile.export needs it.
 	paths config.Paths
+	// shutdown ends the daemon. An export that hands the account to another
+	// machine has to stop serving it here, or the retirement it just wrote
+	// would not take effect until the next start.
+	shutdown func()
 }
+
+// OnShutdownRequest gives the service a way to end the daemon it belongs to.
+func (s *Service) OnShutdownRequest(stop func()) { s.shutdown = stop }
 
 // OwnProfile tells the service which profile's files it is serving, so that
 // profile can be exported. Without it, profile.export is refused rather than
@@ -743,6 +750,10 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 			// megabytes and one of several gigabytes, and a profile without
 			// them still holds every message, so they are opt-in.
 			IncludeMedia bool `json:"include_media"`
+			// Deactivate retires this copy once the archive exists, so the
+			// account cannot be opened here again. Without it, nothing but
+			// memory stops the same identity running in two places.
+			Deactivate bool `json:"deactivate"`
 		}
 		if err := decode(raw, &p); err != nil {
 			return nil, err
@@ -753,7 +764,19 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if s.paths.DeviceDB == "" {
 			return nil, errors.New("this daemon does not know where its profile lives")
 		}
-		return profile.Export(ctx, s.paths, p.Path, p.IncludeMedia)
+		result, err := profile.Export(ctx, s.paths, p.Path, p.IncludeMedia, p.Deactivate)
+		if err != nil {
+			return nil, err
+		}
+		if result.Deactivated && s.shutdown != nil {
+			// After the answer has been written, not before: the caller still
+			// needs to be told where the archive is.
+			go func() {
+				time.Sleep(time.Second)
+				s.shutdown()
+			}()
+		}
+		return result, nil
 	case "chat.export":
 		var p struct {
 			ChatJID string `json:"chat_jid"`

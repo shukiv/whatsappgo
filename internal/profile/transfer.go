@@ -48,7 +48,69 @@ const (
 	messageFile = "messages.db"
 	mediaFile   = "media.db"
 	manifestID  = "manifest.json"
+	retiredFile = "retired.json"
 )
+
+// Retirement marks a profile that has been exported and handed over. One
+// linked-device identity belongs in one place: the same identity connected
+// from two machines shares a single message ratchet, and WhatsApp is expected
+// to unlink the device. Remembering not to open the old copy is not a
+// safeguard, so the old copy refuses to open.
+type Retirement struct {
+	RetiredAt int64  `json:"retired_at"`
+	Archive   string `json:"archive"`
+}
+
+// Retire marks this copy of the profile as handed over. It is written after
+// the archive exists, so there is never a moment where the account is neither
+// exported nor usable.
+func Retire(paths config.Paths, archive string) error {
+	described, err := json.MarshalIndent(Retirement{
+		RetiredAt: time.Now().UnixMilli(), Archive: archive,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(paths.DataDir, retiredFile), described, 0o600)
+}
+
+// Retired reports whether this copy has been handed over, and when.
+func Retired(paths config.Paths) (Retirement, bool) {
+	described, err := os.ReadFile(filepath.Join(paths.DataDir, retiredFile))
+	if err != nil {
+		return Retirement{}, false
+	}
+	var retirement Retirement
+	if err := json.Unmarshal(described, &retirement); err != nil {
+		// A marker that cannot be read is still a marker, and refusing to open
+		// is the safe reading of it.
+		return Retirement{}, true
+	}
+	return retirement, true
+}
+
+// Revive undoes a retirement, for the case where the move did not happen and
+// this is once again the only copy. Whether that is true is the caller's
+// business; nothing here can check it.
+func Revive(paths config.Paths) error {
+	err := os.Remove(filepath.Join(paths.DataDir, retiredFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// RetiredError is what a daemon says when asked to open a handed-over copy.
+func RetiredError(profile string, retirement Retirement) error {
+	when := "another machine"
+	if retirement.RetiredAt > 0 {
+		when = "another machine on " + time.UnixMilli(retirement.RetiredAt).Format("2006-01-02 15:04")
+	}
+	return fmt.Errorf("profile %q was exported to %s and this copy was retired. "+
+		"Running one account in two places gets the device unlinked. "+
+		"If the move did not happen, delete %s from the profile directory to use this copy again",
+		profile, when, retiredFile)
+}
 
 // Manifest says what the archive holds, so an import can check before it
 // writes anything.
@@ -62,10 +124,11 @@ type Manifest struct {
 
 // Result reports what an export produced.
 type Result struct {
-	Path    string `json:"path"`
-	Bytes   int64  `json:"bytes"`
-	Media   bool   `json:"includes_media"`
-	Warning string `json:"warning"`
+	Path        string `json:"path"`
+	Bytes       int64  `json:"bytes"`
+	Media       bool   `json:"includes_media"`
+	Deactivated bool   `json:"deactivated"`
+	Warning     string `json:"warning"`
 }
 
 // Export writes one profile to a tar archive at destination.
@@ -75,7 +138,10 @@ type Result struct {
 // unless asked for, because they are the difference between an archive of
 // tens of megabytes and one of several gigabytes, and a profile without them
 // still holds every message.
-func Export(ctx context.Context, paths config.Paths, destination string, includeMedia bool) (Result, error) {
+// deactivate retires this copy once the archive exists, so the account cannot
+// be opened here again. It is the difference between a safeguard and a note to
+// self, and it is why the order matters: the archive is complete first.
+func Export(ctx context.Context, paths config.Paths, destination string, includeMedia, deactivate bool) (Result, error) {
 	if strings.TrimSpace(destination) == "" {
 		return Result{}, errors.New("a path to write the archive to is required")
 	}
@@ -135,7 +201,13 @@ func Export(ctx context.Context, paths config.Paths, destination string, include
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Path: destination, Bytes: written.Size(), Media: includeMedia, Warning: Warning}, nil
+	if deactivate {
+		if err := Retire(paths, destination); err != nil {
+			return Result{}, fmt.Errorf("the archive was written but this copy could not be retired: %w", err)
+		}
+	}
+	return Result{Path: destination, Bytes: written.Size(), Media: includeMedia,
+		Deactivated: deactivate, Warning: Warning}, nil
 }
 
 func writeArchive(out io.Writer, staging string, manifest Manifest) error {
@@ -254,6 +326,11 @@ func Import(archivePath string, paths config.Paths, force bool) (Manifest, error
 		}
 	}
 	if err := os.Chmod(paths.DataDir, 0o700); err != nil {
+		return Manifest{}, err
+	}
+	// An imported profile is the live copy by definition. A retirement left by
+	// whatever was here before describes an account that is gone.
+	if err := Revive(paths); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil

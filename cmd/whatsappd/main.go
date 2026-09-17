@@ -18,6 +18,7 @@ import (
 	"github.com/shukiv/whatsappgo/internal/mediastore"
 	"github.com/shukiv/whatsappgo/internal/notify"
 	"github.com/shukiv/whatsappgo/internal/parentwatch"
+	"github.com/shukiv/whatsappgo/internal/profile"
 	"github.com/shukiv/whatsappgo/internal/rpc"
 	"github.com/shukiv/whatsappgo/internal/service"
 	"github.com/shukiv/whatsappgo/internal/store"
@@ -82,6 +83,17 @@ func countProfiles() int {
 	return count
 }
 
+// refuseRetired stops a handed-over copy of an account from being opened.
+// Nothing here can tell whether the machine it was exported to is running it,
+// so this refuses on the evidence it has: an export that said it was a move.
+func refuseRetired(paths config.Paths) error {
+	retirement, retired := profile.Retired(paths)
+	if !retired {
+		return nil
+	}
+	return profile.RetiredError(paths.Profile, retirement)
+}
+
 func run(socketOverride, profile string, desktopNotifications, exitWithParent bool) error {
 	paths, err := config.ResolveProfile(profile)
 	if err != nil {
@@ -92,6 +104,12 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 	}
 	if err := paths.Ensure(); err != nil {
 		return fmt.Errorf("create application directories: %w", err)
+	}
+	// A profile that was exported and handed to another machine must not be
+	// opened here: one linked-device identity in two places gets the device
+	// unlinked.
+	if err := refuseRetired(paths); err != nil {
+		return err
 	}
 	messageStore, err := store.Open(paths.MessageDB)
 	if err != nil {
@@ -141,6 +159,7 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 	app := service.New(messageStore, wa, broker)
 	app.Describe(version, countProfiles())
 	app.OwnProfile(paths)
+	app.OnShutdownRequest(stop)
 	// Look for a newer release now and every few hours after that. Nothing is
 	// downloaded here: the desktop is told what exists and the reader decides.
 	app.WatchForUpdates(ctx, updates.Interval, func(ctx context.Context) (updates.Release, error) {
