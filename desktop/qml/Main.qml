@@ -248,12 +248,27 @@ ApplicationWindow {
         return true
     }
 
+    // The box takes the cursor back after anything is sent. Typing does this on
+    // its own; a picture, a file or a recording went through a dialog, which
+    // leaves the focus where it was rather than where the next message is
+    // written. Returns whether the box took it, so a caller - or a test - can
+    // tell this ran from a call that quietly did nothing.
+    function focusComposer() {
+        if (window.activeSection !== "chats")
+            return false
+        composer.forceActiveFocus()
+        return composer.activeFocus
+    }
+
     // sendAttachment sends a file as a reply when the composer is showing one,
     // which is what WhatsApp Web does with an attachment picked while replying.
     function sendAttachment(fileUrl, caption, document) {
         const replyTo = window.replyTargetId
         window.rememberDraft()
         backend.sendFile(fileUrl, caption || "", replyTo, document === true, settingsPane.photoQuality)
+        // After the dialog that chose the file, not during it: the focus is
+        // still the dialog's until it has finished closing.
+        Qt.callLater(window.focusComposer)
     }
 
     property var voiceRecordingContext: null
@@ -2593,6 +2608,7 @@ ApplicationWindow {
                             if (success) {
                                 window.finishImageReply(key, replyTo)
                                 mediaPreview.closePreview()
+                                window.focusComposer()
                             }
                         }
                         function onSelectedChatChanged() {
@@ -4940,6 +4956,7 @@ ApplicationWindow {
             for (let i = 0; i < dropSendDialog.files.length; ++i)
                 window.sendAttachment(dropSendDialog.files[i], i === 0 ? caption : "")
             dropSendDialog.close()
+            Qt.callLater(window.focusComposer)
         }
     }
 }

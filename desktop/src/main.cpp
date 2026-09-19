@@ -3338,6 +3338,43 @@ QtObject {
         backend.switchProfile(QStringLiteral("default"));
         QCoreApplication::processEvents();
 
+        // A picture, a file or a recording is sent from a dialog, and a dialog
+        // keeps the keyboard focus it took. The next message then needed a
+        // click in the box before a single letter could be typed.
+        if (auto *composerItem = qobject_cast<QQuickItem *>(composer)) {
+            // With no daemon the conversation is hidden, and a hidden box
+            // cannot hold focus. Reveal it the way the scroll test does.
+            for (auto *ancestor = composerItem->parentItem(); ancestor != nullptr;
+                 ancestor = ancestor->parentItem())
+                QQmlProperty(ancestor, QStringLiteral("visible")).write(true);
+        }
+        root->setProperty("activeSection", QStringLiteral("chats"));
+        QCoreApplication::processEvents();
+        QVariant tookFocus;
+        // invokeMethod succeeds against a window with no such function, so the
+        // answer is what says the box was asked for the cursor at all.
+        if (!QMetaObject::invokeMethod(root, "focusComposer", Q_RETURN_ARG(QVariant, tookFocus))
+                || !tookFocus.toBool() || !composer->property("activeFocus").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // And the send itself has to do it, which is what was missing: the
+        // cursor is taken away here the way a dialog takes it, and sending has
+        // to bring it back without being asked.
+        if (auto *composerItem = qobject_cast<QQuickItem *>(composer))
+            composerItem->setFocus(false);
+        QCoreApplication::processEvents();
+        if (composer->property("activeFocus").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        QMetaObject::invokeMethod(root, "sendAttachment",
+                                  Q_ARG(QVariant, QStringLiteral("file:///nonexistent/picture.png")),
+                                  Q_ARG(QVariant, QString()), Q_ARG(QVariant, false));
+        // The focus is returned once the dialog that chose the file has gone,
+        // which is a turn of the event loop later.
+        for (int pass = 0; pass < 10 && !composer->property("activeFocus").toBool(); ++pass)
+            QCoreApplication::processEvents();
+        if (!composer->property("activeFocus").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
         // A metadata refresh emits selectedChatChanged even without moving to
         // another chat. It must not throw away an in-progress bulk selection.
         backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));
