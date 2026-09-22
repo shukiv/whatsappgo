@@ -1,6 +1,7 @@
 #include "rpcclient.h"
 #include "traybehavior.h"
 #include "lucideprovider.h"
+#include "uninstall.h"
 
 #include <QApplication>
 #include <QAction>
@@ -359,7 +360,67 @@ int main(int argc, char *argv[])
     parser.addOption(sectionOption);
     QCommandLineOption settingsSectionOption(QStringLiteral("settings-section"), QStringLiteral("Open one page of Settings (profile, account, privacy, chats, blocked, or help)"), QStringLiteral("name"));
     parser.addOption(settingsSectionOption);
+    QCommandLineOption uninstallTestOption(QStringLiteral("uninstall-test"), QStringLiteral("Verify that uninstalling removes everything, and that --keep-accounts spares the accounts"));
+    parser.addOption(uninstallTestOption);
+    QCommandLineOption uninstallOption(QStringLiteral("uninstall"), QStringLiteral("Remove WhatsAppGo's accounts, settings and cached files from this computer"));
+    parser.addOption(uninstallOption);
+    QCommandLineOption uninstallYesOption(QStringLiteral("yes"), QStringLiteral("Answer yes to --uninstall rather than asking"));
+    parser.addOption(uninstallYesOption);
+    QCommandLineOption keepAccountsOption(QStringLiteral("keep-accounts"), QStringLiteral("With --uninstall, leave the accounts and their message history in place"));
+    parser.addOption(keepAccountsOption);
     parser.process(app);
+
+    // Removing the program is answered before anything is built: no window, no
+    // settings read back on the way out, and nothing started that would put
+    // back what is about to be removed.
+    if (parser.isSet(uninstallOption))
+        return runUninstall(planUninstall(), parser.isSet(uninstallYesOption), parser.isSet(keepAccountsOption));
+
+    if (parser.isSet(uninstallTestOption)) {
+        // The test's own installation: the XDG directories point at the build
+        // tree, so this can never reach the accounts of whoever runs the suite.
+        const auto data = QDir(qEnvironmentVariable("XDG_DATA_HOME")).filePath(QStringLiteral("whatsappgo"));
+        const auto cache = QDir(qEnvironmentVariable("XDG_CACHE_HOME")).filePath(QStringLiteral("whatsappgo"));
+        const auto settingsPath = QSettings().fileName();
+        const auto write = [](const QString &path, const QByteArray &contents) {
+            QDir().mkpath(QFileInfo(path).absolutePath());
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly))
+                return false;
+            return file.write(contents) == contents.size();
+        };
+        if (!write(QDir(data).filePath(QStringLiteral("device.db")), QByteArray(2048, 'k'))
+                || !write(QDir(data).filePath(QStringLiteral("profiles/work/messages.db")), QByteArray(1024, 'm'))
+                || !write(QDir(cache).filePath(QStringLiteral("avatar.png")), QByteArray(512, 'a'))
+                || !write(settingsPath, QByteArrayLiteral("[accounts]\nprofiles=default, work\ncurrent=work\n")))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Sparing the accounts spares exactly them: the settings and the cache
+        // still go, or "keep" would mean "keep everything".
+        if (runUninstall(planUninstall(), true, true) != 0)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!QFileInfo::exists(QDir(data).filePath(QStringLiteral("device.db")))
+                || !QFileInfo::exists(QDir(data).filePath(QStringLiteral("profiles/work/messages.db"))))
+            return WHATSAPPGO_TEST_FAILURE();
+        if (QFileInfo::exists(cache) || QFileInfo::exists(settingsPath))
+            return WHATSAPPGO_TEST_FAILURE();
+        // Wherever the settings are kept - a file here, the registry on
+        // Windows - nothing of them may be left.
+        if (!QSettings().allKeys().isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // And the whole thing leaves nothing of the account behind - the keys
+        // above all else.
+        if (runUninstall(planUninstall(), true, false) != 0)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (QFileInfo::exists(data))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // A computer with nothing on it is not an error, and removes nothing.
+        if (runUninstall(planUninstall(), true, false) != 0)
+            return WHATSAPPGO_TEST_FAILURE();
+        return EXIT_SUCCESS;
+    }
     const bool smokeTest = parser.isSet(smokeTestOption);
     const bool menuPlacementTest = parser.isSet(menuPlacementTestOption);
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);

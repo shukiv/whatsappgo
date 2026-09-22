@@ -225,6 +225,35 @@ and requests older pages while scrolling upward.
 The databases contain decrypted message text and metadata. They have per-user
 Unix permissions but no additional application-level encryption.
 
+## Uninstall
+
+The app removes itself, because it is the thing that knows where all of that
+went:
+
+```bash
+./WhatsAppGo-x86_64.AppImage --uninstall
+```
+
+It lists every directory and file it is about to remove with its size, and
+waits for you to type `yes`. Close the app first: its background service holds
+the databases, and quitting writes the settings back afterwards.
+
+| Flag | What it does |
+| --- | --- |
+| `--uninstall` | Lists what will go, asks, then removes it |
+| `--uninstall --yes` | Skips the question, for scripts |
+| `--uninstall --keep-accounts` | Removes settings, cache and the launcher entry; leaves the accounts and their message history |
+
+What goes: the accounts and their message history, the media cache, the
+settings, the runtime sockets, and the launcher entry an integrated AppImage
+leaves in `~/.local/share/applications`. The AppImage itself is left where it
+is - delete that file yourself. On Windows, use the normal Add or remove
+programs entry for the app, and this flag for the data.
+
+**Your messages live only on this computer, so removing them cannot be undone.
+Deleting them also tells WhatsApp nothing: your phone goes on listing this
+computer under Settings, Linked devices until you remove it there.**
+
 ## Project layout
 
 ```text

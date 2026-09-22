@@ -17,6 +17,8 @@ qt_policy(SET QTP0004 NEW)
 
 qt_add_executable(whatsappgo
     src/main.cpp
+    src/uninstall.cpp
+    src/uninstall.h
     src/lucideprovider.cpp
     src/lucideprovider.h
     src/messagemodel.cpp
@@ -602,6 +604,11 @@ if(BUILD_TESTING)
     add_test(NAME desktop-style-detection COMMAND whatsappgo --style-detection-test)
     set_tests_properties(desktop-style-detection PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-update-settings COMMAND whatsappgo --update-settings-test)
+    add_test(NAME desktop-uninstall COMMAND whatsappgo --uninstall-test)
+    # Uninstalling deletes accounts, so the test is given an installation of its
+    # own: these directories are the only ones it can reach.
+    set_tests_properties(desktop-uninstall PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/un;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/config")
     add_test(NAME desktop-composer-drafts COMMAND whatsappgo --composer-draft-test)
     # The drafts test adds and switches accounts, so it needs settings of its
     # own and a backend that cannot start: it must never touch the accounts the
