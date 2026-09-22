@@ -1406,3 +1406,87 @@ func TestOnDemandHistoryPageDoesNotClearUnreadMessages(t *testing.T) {
 		t.Fatalf("an on-demand page changed the unread count to %d, want 2", chat.UnreadCount)
 	}
 }
+
+func TestAMessageUnderTheOtherAddressJoinsTheSameConversation(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	phone := types.NewJID("972502215544", types.DefaultUserServer)
+	hidden := types.NewJID("123456789012345", types.HiddenUserServer)
+	// The conversation as this device already knows it: addressed by phone
+	// number, with history in it.
+	if err := st.UpsertMessage(ctx, model.Message{ID: "earlier", ChatJID: phone.String(), Timestamp: 100, Kind: "text", Body: "before", Status: "received"}, "Max Komp", false); err != nil {
+		t.Fatal(err)
+	}
+	// A new message alerts the reader, and that path wants a context and a
+	// notification server of its own; neither is what this test is about.
+	c := &Client{store: st, baseCtx: ctx, notifier: &refusingNotifier{}, subs: map[uint64]func(gateway.Event){}}
+	// The same person writes again, this time addressed by LID, which is how a
+	// freshly linked device is addressed before it has fetched the contact.
+	c.handleMessage(&waEvents.Message{
+		Info: types.MessageInfo{MessageSource: types.MessageSource{
+			Chat: hidden, Sender: hidden, SenderAlt: phone, AddressingMode: types.AddressingModeLID,
+		}, ID: "later", PushName: "Max Komp", Timestamp: time.UnixMilli(200)},
+		Message: &waE2E.Message{Conversation: proto.String("after")},
+	})
+	chats, err := st.ListChats(ctx, 20, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 {
+		t.Fatalf("one person opened %d conversations: %#v", len(chats), chats)
+	}
+	page, err := st.ListMessages(ctx, hidden.String(), 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 2 {
+		t.Fatalf("conversation holds %d messages, want both: %#v", len(page.Messages), page.Messages)
+	}
+	if st.CanonicalChatJID(ctx, phone.String()) != hidden.String() {
+		t.Fatalf("phone address still opens its own conversation: %q", st.CanonicalChatJID(ctx, phone.String()))
+	}
+}
+
+func TestHistorySyncPutsBothAddressesOfOnePersonInOneConversation(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	phone := types.NewJID("972502215544", types.DefaultUserServer)
+	hidden := types.NewJID("123456789012345", types.HiddenUserServer)
+	if err := st.UpsertMessage(ctx, model.Message{ID: "earlier", ChatJID: phone.String(), Timestamp: 100, Kind: "text", Body: "before", Status: "received"}, "Max Komp", false); err != nil {
+		t.Fatal(err)
+	}
+	// History names a conversation by one address only, so the device's own
+	// mapping is the only thing that can pair it with the other.
+	c := &Client{store: st, lookupIdentity: func(_ context.Context, jid types.JID) types.JID {
+		if jid.Server == types.HiddenUserServer {
+			return phone
+		}
+		return hidden
+	}}
+	c.handleHistorySync(&waEvents.HistorySync{Data: &waHistorySync.HistorySync{
+		SyncType: waHistorySync.HistorySync_INITIAL_BOOTSTRAP.Enum(),
+		Conversations: []*waHistorySync.Conversation{{
+			ID:               proto.String(hidden.String()),
+			Name:             proto.String("Max Komp"),
+			LastMsgTimestamp: proto.Uint64(1),
+		}},
+	}})
+	chats, err := st.ListChats(ctx, 20, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 {
+		t.Fatalf("one person opened %d conversations: %#v", len(chats), chats)
+	}
+	if st.CanonicalChatJID(ctx, phone.String()) != hidden.String() {
+		t.Fatalf("phone address still opens its own conversation: %q", st.CanonicalChatJID(ctx, phone.String()))
+	}
+}

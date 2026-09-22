@@ -519,6 +519,78 @@ func (c *Client) syncDirectory() {
 	c.emit(gateway.Event{Name: "directory.synced"})
 }
 
+// linkChatIdentity keeps WhatsApp's two addresses for one person on a single
+// conversation. A message arrives addressed either to the privacy-preserving
+// LID or to the phone number, and whichever form is used opens a conversation
+// of its own. Until something links them the reader sees the same contact
+// twice, one row named and one a bare number, with the thread split between
+// them - which is what a freshly linked device shows, because the directory
+// sync that used to be the only place this happened knows nothing yet about a
+// contact it has not fetched.
+//
+// alt is the other address the message itself carried. It is trusted first;
+// the device's own mapping table answers when the message carried nothing.
+func (c *Client) linkChatIdentity(ctx context.Context, chat, alt types.JID) {
+	if c.store == nil {
+		return
+	}
+	chat = chat.ToNonAD()
+	alt = alt.ToNonAD()
+	var lid, pn types.JID
+	switch chat.Server {
+	case types.HiddenUserServer:
+		lid = chat
+		if alt.Server == types.DefaultUserServer {
+			pn = alt
+		} else {
+			pn = c.mappedIdentity(ctx, lid)
+		}
+	case types.DefaultUserServer:
+		pn = chat
+		if alt.Server == types.HiddenUserServer {
+			lid = alt
+		} else {
+			lid = c.mappedIdentity(ctx, pn)
+		}
+	default:
+		// Groups and broadcasts have one address each.
+		return
+	}
+	if lid.IsEmpty() || pn.IsEmpty() || lid.Server != types.HiddenUserServer || pn.Server != types.DefaultUserServer {
+		return
+	}
+	// The LID is the canonical side, as it is for a contact from the
+	// directory: one rule, or the two paths would move rows back and forth.
+	_ = c.store.LinkChatAliases(ctx, lid.String(), pn.String())
+}
+
+// mappedIdentity asks the device's own table for a user's other address.
+func (c *Client) mappedIdentity(ctx context.Context, jid types.JID) types.JID {
+	if c.lookupIdentity != nil {
+		return c.lookupIdentity(ctx, jid)
+	}
+	if c.wa == nil || c.wa.Store == nil || c.wa.Store.LIDs == nil {
+		return types.JID{}
+	}
+	var other types.JID
+	switch jid.Server {
+	case types.HiddenUserServer:
+		other, _ = c.wa.Store.LIDs.GetPNForLID(ctx, jid)
+	case types.DefaultUserServer:
+		other, _ = c.wa.Store.LIDs.GetLIDForPN(ctx, jid)
+	}
+	return other
+}
+
+// messageAltAddress picks the other address of the person at the far end: for
+// a message this account sent that is the recipient's, otherwise the sender's.
+func messageAltAddress(evt *waEvents.Message) types.JID {
+	if evt.Info.IsFromMe {
+		return evt.Info.RecipientAlt
+	}
+	return evt.Info.SenderAlt
+}
+
 // authoritativeContactName deliberately excludes PushName. LID and phone-JID
 // entries can describe the same person, and the LID entry often contains only
 // a push name. Letting it overwrite the phone entry's address-book name made
@@ -659,6 +731,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		c.emit(gateway.Event{Name: "message.revoked", Data: map[string]string{"chat_jid": evt.Info.Chat.String(), "message_id": target}})
 		return
 	}
+	c.linkChatIdentity(context.Background(), evt.Info.Chat, messageAltAddress(evt))
 	msg := c.withSenderName(context.Background(), messageFromEvent(evt))
 	if msg.ID == "" || msg.ChatJID == "" {
 		return
@@ -831,6 +904,7 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 		if err != nil {
 			continue
 		}
+		c.linkChatIdentity(context.Background(), chatJID, types.JID{})
 		chatJIDs = append(chatJIDs, chatJID.String())
 		title := conversation.GetName()
 		if title == "" {

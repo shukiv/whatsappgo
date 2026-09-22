@@ -76,6 +76,9 @@ type Client struct {
 	sendPeerMessage        func(context.Context, *waE2E.Message) (whatsmeow.SendResponse, error)
 	fetchAppState          func(context.Context, appstate.WAPatchName, bool, bool) error
 	sendAppState           func(context.Context, appstate.PatchInfo) error
+	// lookupIdentity answers with a user's other address. It stands in for
+	// whatsmeow's mapping table, which a test has no way to populate.
+	lookupIdentity func(context.Context, types.JID) types.JID
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
