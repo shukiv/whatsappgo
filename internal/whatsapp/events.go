@@ -820,7 +820,8 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 	// On-demand history pages carry messages without mute, pin, or archive
 	// state; their absent fields must not be written back as cleared settings.
 	storeChat := c.store.UpsertChat
-	if historySyncCarriesChatSettings(evt.Data.GetSyncType()) {
+	carriesSettings := historySyncCarriesChatSettings(evt.Data.GetSyncType())
+	if carriesSettings {
 		storeChat = c.store.ApplyChatSnapshot
 	}
 	total := 0
@@ -902,6 +903,20 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 				c.recordHistoryReactions(context.Background(), chatJID, msg,
 					historyMessage.GetMessage().GetReactions())
 				total++
+			}
+		}
+		// Only a snapshot that carries settings states how much of the
+		// conversation is unread; an on-demand page says nothing about it, and
+		// its silence must not be read as "everything here has been read".
+		if carriesSettings {
+			if err := c.store.ApplyHistoryReadState(context.Background(), chatJID.String(),
+				int(conversation.GetUnreadCount()), int64(conversation.GetLastMsgTimestamp())*1000); err != nil {
+				c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "apply read state: " + err.Error()}})
+			}
+			// A chat the reader marked unread by hand has no unread messages
+			// to count, and says so with its own flag.
+			if conversation.GetMarkedAsUnread() {
+				_ = c.store.MarkChatUnread(context.Background(), chatJID.String())
 			}
 		}
 	}

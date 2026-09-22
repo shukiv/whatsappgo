@@ -1523,6 +1523,38 @@ func (s *Store) MarkChatReadThrough(ctx context.Context, chatJID string, through
 	return tx.Commit()
 }
 
+// ApplyHistoryReadState records what a conversation snapshot says about how
+// far the account has read. WhatsApp counts the unread messages of a chat on
+// the phone; history carries that number but nothing about the individual
+// messages, which all arrive looking merely received. Every message older than
+// the newest unreadCount of them was therefore read somewhere else, and saying
+// so is what stops a freshly linked device from showing badges on chats the
+// phone considers finished.
+//
+// through bounds what the snapshot describes: it is the conversation's own
+// last message time, so messages that arrived after the phone assembled it are
+// never marked read.
+func (s *Store) ApplyHistoryReadState(ctx context.Context, chatJID string, unreadCount int, through int64) error {
+	if through <= 0 || unreadCount < 0 {
+		return nil
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	var boundary int64
+	// The message one past the unread ones is the newest the phone has read.
+	// An empty answer means this device holds fewer messages than the phone
+	// counts as unread, so there is nothing here that was read.
+	err := s.db.QueryRowContext(ctx, `SELECT timestamp FROM messages
+	 WHERE chat_jid=? AND from_me=0 AND kind NOT IN ('unknown','system','') AND timestamp<=?
+	 ORDER BY timestamp DESC LIMIT 1 OFFSET ?`, chatJID, through, unreadCount).Scan(&boundary)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.MarkChatReadThrough(ctx, chatJID, boundary)
+}
+
 // RecalculateUnreadCounts repairs cached chat totals from receipt state while
 // preserving WhatsApp snapshot totals for chats that have no local incoming
 // read boundary. Outgoing read receipts are deliberately ignored.

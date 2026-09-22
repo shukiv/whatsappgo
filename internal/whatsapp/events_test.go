@@ -1330,3 +1330,79 @@ func TestEditCarriesExtendedText(t *testing.T) {
 		t.Fatalf("a formatted edit was not applied to the original message: %#v", m)
 	}
 }
+
+func TestInitialHistorySyncDropsBadgesThePhoneHasCleared(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	// What a conversation looks like after the app has been away: one message
+	// this device saw read, then everything that arrived while it was gone,
+	// which history delivers as merely received however long ago the phone
+	// read it.
+	for _, msg := range []model.Message{
+		{ID: "read-before-the-gap", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "one", Status: "read"},
+		{ID: "while-away-1", ChatJID: jid, Timestamp: 200, Kind: "text", Body: "two", Status: "received"},
+		{ID: "while-away-2", ChatJID: jid, Timestamp: 300, Kind: "text", Body: "three", Status: "received"},
+		{ID: "while-away-3", ChatJID: jid, Timestamp: 400, Kind: "text", Body: "four", Status: "received"},
+	} {
+		if err := st.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &Client{store: st}
+	c.handleHistorySync(&waEvents.HistorySync{Data: &waHistorySync.HistorySync{
+		SyncType: waHistorySync.HistorySync_INITIAL_BOOTSTRAP.Enum(),
+		Conversations: []*waHistorySync.Conversation{{
+			ID:               proto.String(jid),
+			LastMsgTimestamp: proto.Uint64(1),
+			UnreadCount:      proto.Uint32(1),
+		}},
+	}})
+	chat, err := st.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("chat shows %d unread messages, want the 1 the phone counts", chat.UnreadCount)
+	}
+}
+
+func TestOnDemandHistoryPageDoesNotClearUnreadMessages(t *testing.T) {
+	st, err := localstore.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	for _, msg := range []model.Message{
+		{ID: "one", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "one", Status: "received"},
+		{ID: "two", ChatJID: jid, Timestamp: 200, Kind: "text", Body: "two", Status: "received"},
+	} {
+		if err := st.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 200, UnreadCount: 2}); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{store: st}
+	c.handleHistorySync(&waEvents.HistorySync{Data: &waHistorySync.HistorySync{
+		SyncType: waHistorySync.HistorySync_ON_DEMAND.Enum(),
+		Conversations: []*waHistorySync.Conversation{{
+			ID:               proto.String(jid),
+			LastMsgTimestamp: proto.Uint64(1),
+		}},
+	}})
+	chat, err := st.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 2 {
+		t.Fatalf("an on-demand page changed the unread count to %d, want 2", chat.UnreadCount)
+	}
+}

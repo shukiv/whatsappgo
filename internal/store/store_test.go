@@ -1973,3 +1973,149 @@ func TestOlderReactionDoesNotReplaceTheCurrentOne(t *testing.T) {
 		t.Fatalf("a newer reaction did not apply: %#v err=%v", detail.Reactions, err)
 	}
 }
+
+func TestHistoryReadStateLeavesOnlyWhatThePhoneCountsUnread(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	for _, msg := range []model.Message{
+		{ID: "old-1", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "one", Status: "received"},
+		{ID: "old-2", ChatJID: jid, Timestamp: 200, Kind: "text", Body: "two", Status: "received"},
+		{ID: "mine", ChatJID: jid, Timestamp: 250, Kind: "text", Body: "reply", FromMe: true, Status: "sent"},
+		{ID: "unread-1", ChatJID: jid, Timestamp: 300, Kind: "text", Body: "three", Status: "received"},
+		{ID: "unread-2", ChatJID: jid, Timestamp: 400, Kind: "text", Body: "four", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 400, UnreadCount: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyHistoryReadState(ctx, jid, 2, 400); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 2 {
+		t.Fatalf("chat shows %d unread messages, want the 2 the phone counts", chat.UnreadCount)
+	}
+	// The recalculation runs on every connection, so the boundary has to
+	// survive it: this is where the badges came back before.
+	if err := s.RecalculateUnreadCounts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if chat, err = s.GetChat(ctx, jid); err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 2 {
+		t.Fatalf("recalculation raised the count to %d, want 2", chat.UnreadCount)
+	}
+	for id, want := range map[string]string{"old-1": "read", "old-2": "read", "unread-1": "received", "unread-2": "received"} {
+		var status string
+		if err := s.db.QueryRowContext(ctx, `SELECT status FROM messages WHERE chat_jid=? AND id=?`, jid, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != want {
+			t.Fatalf("message %s is %q, want %q", id, status, want)
+		}
+	}
+}
+
+func TestHistoryReadStateClearsAChatThePhoneHasFinished(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	for _, msg := range []model.Message{
+		{ID: "read-here", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "one", Status: "read"},
+		{ID: "arrived-while-unlinked", ChatJID: jid, Timestamp: 200, Kind: "text", Body: "two", Status: "received"},
+		{ID: "also-while-unlinked", ChatJID: jid, Timestamp: 300, Kind: "text", Body: "three", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 300, UnreadCount: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyHistoryReadState(ctx, jid, 0, 300); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecalculateUnreadCounts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 0 {
+		t.Fatalf("chat the phone has read shows %d unread messages", chat.UnreadCount)
+	}
+}
+
+func TestHistoryReadStateLeavesMessagesNewerThanTheSnapshot(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	for _, msg := range []model.Message{
+		{ID: "in-the-snapshot", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "one", Status: "received"},
+		{ID: "arrived-since", ChatJID: jid, Timestamp: 500, Kind: "text", Body: "new", Status: "received"},
+	} {
+		if err := s.UpsertMessage(ctx, msg, "Alice", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A conversation the phone had read, delivered late: the message that
+	// arrived afterwards is genuinely unread and must stay that way.
+	if err := s.ApplyHistoryReadState(ctx, jid, 0, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecalculateUnreadCounts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 1 {
+		t.Fatalf("chat shows %d unread messages, want the 1 that arrived after the snapshot", chat.UnreadCount)
+	}
+	var status string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM messages WHERE chat_jid=? AND id='arrived-since'`, jid).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status == "read" {
+		t.Fatal("a message newer than the snapshot was marked read")
+	}
+}
+
+func TestHistoryReadStateMarksNothingWhenTheHistoryIsShorterThanTheCount(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	const jid = "alice@s.whatsapp.net"
+	if err := s.UpsertMessage(ctx, model.Message{ID: "only", ChatJID: jid, Timestamp: 100, Kind: "text", Body: "one", Status: "received"}, "Alice", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyChatSnapshot(ctx, model.Chat{JID: jid, LastMessageAt: 100, UnreadCount: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyHistoryReadState(ctx, jid, 5, 100); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.GetChat(ctx, jid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.UnreadCount != 5 {
+		t.Fatalf("count from the phone was replaced with %d", chat.UnreadCount)
+	}
+	var status string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM messages WHERE chat_jid=? AND id='only'`, jid).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "received" {
+		t.Fatalf("message marked %q when the phone counts more unread than this device holds", status)
+	}
+}
