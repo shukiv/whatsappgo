@@ -26,6 +26,7 @@
 #include <QWindow>
 #include <QQuickWindow>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -299,6 +300,8 @@ int main(int argc, char *argv[])
     parser.addOption(messageHistoryTestOption);
     QCommandLineOption scheduleSendTestOption(QStringLiteral("schedule-send-test"), QStringLiteral("Verify the moment a scheduled message is given"));
     parser.addOption(scheduleSendTestOption);
+    QCommandLineOption channelPostsTestOption(QStringLiteral("channel-posts-test"), QStringLiteral("Verify a followed channel opens onto its posts and offers no composer"));
+    parser.addOption(channelPostsTestOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
     parser.addOption(bundledFontTestOption);
     QCommandLineOption clipboardImageTestOption(QStringLiteral("clipboard-image-test"), QStringLiteral("Verify native image copy and paste preparation"));
@@ -450,6 +453,7 @@ int main(int argc, char *argv[])
     const bool contactInfoTest = parser.isSet(contactInfoTestOption);
     const bool fileDropTest = parser.isSet(fileDropTestOption);
     const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
+    const bool channelPostsTest = parser.isSet(channelPostsTestOption);
     const bool presenceDisplayTest = parser.isSet(presenceDisplayTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const auto openDialogName = parser.value(openDialogOption);
@@ -461,6 +465,7 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
+        || channelPostsTest
         || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
         || styleDetectionTest || fileUrlTest || menuPlacementTest || composerDraftTest
         || !screenshotPath.isEmpty();
@@ -529,7 +534,11 @@ int main(int argc, char *argv[])
     // stub answers just enough for the window to come up.
     QLocalServer stubDaemon;
     int rejectedDraftSends = 0;
-    if (searchResultsTest || composerDraftTest || messageScrollTest || bugReportTest) {
+    // The channel a followed-channel run reads, and how many times its posts
+    // were asked for. A channel that is never asked shows nothing.
+    const auto fixtureChannel = QStringLiteral("120363421242390117@newsletter");
+    int channelPostRequests = 0;
+    if (searchResultsTest || composerDraftTest || messageScrollTest || bugReportTest || channelPostsTest) {
         const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
 #ifndef Q_OS_WIN
         QDir().mkpath(QFileInfo(stubPath).absolutePath());
@@ -540,9 +549,9 @@ int main(int argc, char *argv[])
                                         .arg(stubPath, stubDaemon.errorString());
             return WHATSAPPGO_TEST_FAILURE();
         }
-        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, &rejectedDraftSends] {
+        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, channelPostsTest, fixtureChannel, &channelPostRequests, &rejectedDraftSends] {
             auto *socket = stubDaemon.nextPendingConnection();
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, &rejectedDraftSends] {
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, channelPostsTest, fixtureChannel, &channelPostRequests, &rejectedDraftSends] {
                 while (socket->canReadLine()) {
                     const auto request = QJsonDocument::fromJson(socket->readLine()).object();
                     const auto method = request.value(QStringLiteral("method")).toString();
@@ -555,6 +564,36 @@ int main(int argc, char *argv[])
                     if (request.value(QStringLiteral("method")).toString() == QStringLiteral("status.get")) {
                         result = QJsonObject{{QStringLiteral("logged_in"), true},
                                              {QStringLiteral("state"), QStringLiteral("connected")}};
+                    }
+                    if (channelPostsTest) {
+                        const auto params = request.value(QStringLiteral("params")).toObject();
+                        const QJsonObject firstPost{
+                            {QStringLiteral("id"), QStringLiteral("POST1")},
+                            {QStringLiteral("chat_jid"), fixtureChannel},
+                            {QStringLiteral("sender_jid"), fixtureChannel},
+                            {QStringLiteral("kind"), QStringLiteral("text")},
+                            {QStringLiteral("body"), QStringLiteral("A post nobody was sent")},
+                            {QStringLiteral("timestamp"), 1790000000000LL},
+                            {QStringLiteral("status"), QStringLiteral("received")}};
+                        if (method == QStringLiteral("channels.list")) {
+                            result = QJsonArray{QJsonObject{
+                                {QStringLiteral("jid"), fixtureChannel},
+                                {QStringLiteral("name"), QStringLiteral("Labtop")},
+                                {QStringLiteral("description"), QStringLiteral("Technology news")},
+                                {QStringLiteral("subscriber_count"), 1200},
+                                {QStringLiteral("verified"), false},
+                                {QStringLiteral("muted"), false}}};
+                        } else if (method == QStringLiteral("channel.messages")) {
+                            if (params.value(QStringLiteral("jid")).toString() == fixtureChannel)
+                                ++channelPostRequests;
+                            result = QJsonArray{firstPost};
+                        } else if (method == QStringLiteral("messages.list")) {
+                            const auto asked = params.value(QStringLiteral("chat_jid")).toString();
+                            result = QJsonObject{
+                                {QStringLiteral("messages"), asked == fixtureChannel
+                                    ? QJsonArray{firstPost} : QJsonArray{}},
+                                {QStringLiteral("has_more"), false}};
+                        }
                     }
                     QJsonObject response{{QStringLiteral("version"), 1},
                                                {QStringLiteral("id"), request.value(QStringLiteral("id"))},
@@ -835,6 +874,111 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (channelPostsTest) {
+        if (applicationWindow == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto settle = [](int milliseconds) {
+            QEventLoop loop;
+            QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+            loop.exec();
+        };
+        QMetaObject::invokeMethod(&backend, "refreshChannels");
+        settle(400);
+
+        QQmlComponent harnessComponent(&engine);
+        harnessComponent.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            // A window, because a list only builds the rows it can show, and
+            // an item with no window shows nothing.
+            ApplicationWindow {
+                id: harness
+                width: 1200
+                height: 800
+                visible: true
+                property string requestedJid: ""
+                property string requestedName: ""
+                FeatureSection {
+                    id: channelsSection
+                    anchors.fill: parent
+                    section: "channels"
+                    onChannelRequested: (jid, name) => {
+                        harness.requestedJid = jid
+                        harness.requestedName = name
+                    }
+                }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/channel-posts-test.qml")));
+        std::unique_ptr<QObject> harness(harnessComponent.create());
+        if (!harness) {
+            qWarning().noquote() << harnessComponent.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QCoreApplication::processEvents();
+        auto *list = qobject_cast<QQuickItem *>(harness->findChild<QObject *>(QStringLiteral("featureSectionList")));
+        if (list == nullptr || list->property("count").toInt() != 1)
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // The row a reader clicks. It used to do nothing at all, which is what
+        // "the channel is empty" looked like from the outside.
+        // Offscreen, nothing is drawn unless it is asked for, and a list that
+        // has not laid out has built no rows to click.
+        QMetaObject::invokeMethod(list, "forceLayout");
+        QCoreApplication::processEvents();
+        QQuickItem *row = nullptr;
+        if (!QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem *, row), Q_ARG(int, 0))
+                || row == nullptr) {
+            qWarning().noquote() << QStringLiteral("channel row missing: count=%1 size=%2x%3")
+                                        .arg(list->property("count").toInt())
+                                        .arg(list->width()).arg(list->height());
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        if (!QMetaObject::invokeMethod(row, "clicked"))
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        if (harness->property("requestedJid").toString() != fixtureChannel
+                || harness->property("requestedName").toString() != QStringLiteral("Labtop"))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        QVariant opened;
+        if (!QMetaObject::invokeMethod(applicationWindow, "openChannelConversation", Q_RETURN_ARG(QVariant, opened),
+                                       Q_ARG(QVariant, fixtureChannel), Q_ARG(QVariant, QStringLiteral("Labtop")))
+                || !opened.toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        settle(500);
+
+        // The channel is read where every other conversation is read, so a
+        // post with a picture or a link already draws correctly.
+        if (backend.selectedChat().value(QStringLiteral("jid")).toString() != fixtureChannel)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (applicationWindow->property("activeSection").toString() != QStringLiteral("chats"))
+            return WHATSAPPGO_TEST_FAILURE();
+        // Posts are never delivered unasked. Opening the channel has to ask.
+        if (channelPostRequests < 1)
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *messages = applicationWindow->findChild<QObject *>(QStringLiteral("messageList"));
+        if (messages == nullptr || messages->property("count").toInt() != 1)
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Only the people who run a channel may post in it. A composer here
+        // would fail on every send.
+        auto *composerBar = applicationWindow->findChild<QObject *>(QStringLiteral("composerBar"));
+        auto *readOnlyBar = applicationWindow->findChild<QObject *>(QStringLiteral("channelReadOnlyBar"));
+        if (composerBar == nullptr || readOnlyBar == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (composerBar->property("visible").toBool() || !readOnlyBar->property("visible").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // And an ordinary conversation still has one.
+        QMetaObject::invokeMethod(&backend, "openChat", Q_ARG(QString, QStringLiteral("972500000000@s.whatsapp.net")),
+                                  Q_ARG(QString, QStringLiteral("Someone")));
+        settle(300);
+        if (!composerBar->property("visible").toBool() || readOnlyBar->property("visible").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        return EXIT_SUCCESS;
+    }
+
     if (statusStoriesTest) {
         const QVariantList aliceItems{
             QVariantMap{{QStringLiteral("id"), QStringLiteral("alice-1")},

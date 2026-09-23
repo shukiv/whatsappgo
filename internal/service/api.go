@@ -106,6 +106,8 @@ var apiMethods = []MethodDescription{
 	method("statuses.list", "List active status stories grouped by sender", false, nil),
 	method("calls.list", "List synchronized call records", false, nil),
 	method("channels.list", "List followed channels", false, nil),
+	method("channel.messages", "Read and store a channel's recent posts", false,
+		map[string]any{"jid": "123@newsletter", "count": 50}),
 	method("communities.list", "List joined communities", false, nil),
 	method("messages.list", "Page through one chat's messages", false, map[string]any{"chat_jid": "123@lid", "before": 0, "limit": 50}),
 	method("messages.search", "Search local message text", false, map[string]any{"query": "invoice", "limit": 50}),

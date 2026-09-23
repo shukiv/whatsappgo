@@ -262,6 +262,9 @@ public:
     Q_INVOKABLE void searchGroupContacts(const QString &query, const QString &token);
     Q_INVOKABLE void setChatRead(const QString &jid, bool read);
     Q_INVOKABLE void openChat(const QString &jid, const QString &title);
+    // Opening a channel shows what is already kept and then asks WhatsApp for
+    // its recent posts, which no device is ever sent unasked.
+    Q_INVOKABLE void openChannel(const QString &jid, const QString &name);
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void refreshChatInfo();
     Q_INVOKABLE void refreshGroupInfo();

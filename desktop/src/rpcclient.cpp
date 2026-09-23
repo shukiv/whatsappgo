@@ -1443,7 +1443,8 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     emit selectedChatChanged();
     emit selectedPresenceChanged();
     emit chatOpened(jid);
-    if (!jid.endsWith(QStringLiteral("@g.us")) && !jid.endsWith(QStringLiteral("@broadcast")))
+    if (!jid.endsWith(QStringLiteral("@g.us")) && !jid.endsWith(QStringLiteral("@broadcast"))
+            && !jid.endsWith(QStringLiteral("@newsletter")))
         sendRequest(QStringLiteral("contact.presence.subscribe"), {{QStringLiteral("chat_jid"), jid}},
                     {}, OnFailure::StayQuiet);
     refreshChatInfo();
@@ -1501,6 +1502,31 @@ void RpcClient::openChat(const QString &jid, const QString &title)
                         emit selectedChatChanged();
                         refreshChats();
                     }
+                },
+                OnFailure::StayQuiet);
+}
+
+void RpcClient::openChannel(const QString &jid, const QString &name)
+{
+    if (!jid.endsWith(QStringLiteral("@newsletter")))
+        return;
+    // What is already kept is shown at once, so a channel opened a second time
+    // is instant and a channel opened without a connection still reads.
+    openChat(jid, name);
+    const auto generation = m_chatOpenGeneration;
+    sendRequest(QStringLiteral("channel.messages"),
+                {{QStringLiteral("jid"), jid}, {QStringLiteral("count"), 50}},
+                [this, jid, generation](const QJsonValue &result, const QJsonObject &error) {
+                    // The reader has moved on. Their posts are kept either way;
+                    // replacing the open conversation now would be the wrong one.
+                    if (generation != m_chatOpenGeneration
+                            || m_selectedChat.value(QStringLiteral("jid")).toString() != jid)
+                        return;
+                    if (!error.isEmpty())
+                        return;
+                    if (result.toArray().isEmpty())
+                        return;
+                    refreshOpenMessages();
                 },
                 OnFailure::StayQuiet);
 }
@@ -4776,6 +4802,11 @@ void RpcClient::setConversationActive(bool active)
 void RpcClient::acknowledgeOpenConversation()
 {
     if (m_selectedChat.isEmpty()) return;
+    // A channel has no read receipts to send: nobody is waiting to know that a
+    // follower opened a post, and the address is not one a receipt can be
+    // addressed to.
+    if (m_selectedChat.value(QStringLiteral("jid")).toString().endsWith(QStringLiteral("@newsletter")))
+        return;
     m_deferredReadPage = !m_conversationActive;
     if (!m_conversationActive) return;
     QHash<QString, QJsonArray> unreadBySender;

@@ -114,6 +114,8 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
   Media, Documents, and Links views backed by SQLite history
 - chat filters, pinned and favorite conversations, groups, statuses, channels,
   communities, synchronized call records, and profile/settings screens
+- followed channels open onto their posts in the conversation view, and
+  communities you belong to through one of their groups are listed too
 - group member management and permission-aware group name/description editing,
   with explicit Save, copyable details, and draft retention on errors
 - a compact desktop shell measured against the installed WhatsApp Web PWA,

@@ -79,6 +79,12 @@ type Client struct {
 	// lookupIdentity answers with a user's other address. It stands in for
 	// whatsmeow's mapping table, which a test has no way to populate.
 	lookupIdentity func(context.Context, types.JID) types.JID
+	// The groups and channels this account belongs to, as WhatsApp reports
+	// them. A test has no server to ask.
+	fetchNewsletterMessages func(context.Context, types.JID, *whatsmeow.GetNewsletterMessagesParams) ([]*types.NewsletterMessage, error)
+	newsletterInfo          func(context.Context, types.JID) (*types.NewsletterMetadata, error)
+	joinedGroups            func(context.Context) ([]*types.GroupInfo, error)
+	groupInfo               func(context.Context, types.JID) (*types.GroupInfo, error)
 }
 
 func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media *mediastore.Store, notifier notify.Notifier) (*Client, error) {
@@ -552,15 +558,25 @@ func (c *Client) ListChannels(ctx context.Context) ([]model.Channel, error) {
 }
 
 func (c *Client) ListCommunities(ctx context.Context) ([]model.Community, error) {
-	groups, err := c.wa.GetJoinedGroups(ctx)
+	list := c.joinedGroups
+	if list == nil {
+		if c.wa == nil {
+			return nil, errors.New("WhatsApp is disconnected")
+		}
+		list = c.wa.GetJoinedGroups
+	}
+	groups, err := list(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]model.Community, 0)
+	seen := make(map[string]bool)
+	// The communities this account belongs to in its own right.
 	for _, group := range groups {
-		if group == nil || !group.IsParent {
+		if group == nil || !group.IsParent || seen[group.JID.String()] {
 			continue
 		}
+		seen[group.JID.String()] = true
 		result = append(result, model.Community{
 			JID:              group.JID.String(),
 			Name:             group.Name,
@@ -568,7 +584,46 @@ func (c *Client) ListCommunities(ctx context.Context) ([]model.Community, error)
 			ParticipantCount: group.ParticipantCount,
 		})
 	}
+	// And the ones it belongs to only through a group. Being in a community's
+	// group is how most people are in a community at all, and listing only the
+	// first kind left this page empty for them.
+	for _, group := range groups {
+		if group == nil || group.LinkedParentJID.IsEmpty() || seen[group.LinkedParentJID.String()] {
+			continue
+		}
+		seen[group.LinkedParentJID.String()] = true
+		community := model.Community{JID: group.LinkedParentJID.String()}
+		if info := c.lookUpGroup(ctx, group.LinkedParentJID); info != nil {
+			community.Name = info.Name
+			community.Description = info.Topic
+			community.ParticipantCount = info.ParticipantCount
+		}
+		if strings.TrimSpace(community.Name) == "" {
+			// A community whose name cannot be read is still a community this
+			// account is in, and hiding it is the empty page again.
+			community.Name = displayJID(community.JID)
+		}
+		result = append(result, community)
+	}
 	return result, nil
+}
+
+// lookUpGroup reads one group's details, or answers nil when they cannot be
+// read. The community a group is linked to is named nowhere else: the group
+// carries only its address.
+func (c *Client) lookUpGroup(ctx context.Context, jid types.JID) *types.GroupInfo {
+	read := c.groupInfo
+	if read == nil {
+		if c.wa == nil {
+			return nil
+		}
+		read = c.wa.GetGroupInfo
+	}
+	info, err := read(ctx, jid)
+	if err != nil {
+		return nil
+	}
+	return info
 }
 
 func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model.Message, error) {

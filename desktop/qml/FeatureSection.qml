@@ -85,6 +85,7 @@ RowLayout {
     signal createChannelRequested()
     signal followChannelRequested()
     signal createCommunityRequested()
+    signal channelRequested(string jid, string name)
 
     function jidLabel(jid) {
         const value = String(jid || "")
@@ -293,6 +294,10 @@ RowLayout {
                         if (root.section === "status" && modelData.media_path)
                             backend.openFile(modelData.media_path)
                         else if (root.section === "communities") communityDetails.showFor(modelData.jid)
+                        // A followed channel exists to be read. Clicking its
+                        // row used to do nothing at all.
+                        else if (root.section === "channels")
+                            root.channelRequested(String(modelData.jid || ""), String(modelData.name || ""))
                     }
                 }
 

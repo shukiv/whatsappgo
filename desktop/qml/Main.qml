@@ -374,6 +374,10 @@ ApplicationWindow {
     }
     // The sidebar swaps the chat list for grouped results while a query is
     // live, which several rows below need to know about.
+    // Only a channel's owner may post to one, and the daemon refuses a send to
+    // this address. A composer that always fails is worse than none.
+    readonly property bool selectedIsChannel:
+        String(backend.selectedChat.jid || "").endsWith("@newsletter")
     readonly property bool searching: String(backend.chatQuery || "").trim().length > 0
     function clearChatSearch() {
         searchField.clear()
@@ -720,6 +724,18 @@ ApplicationWindow {
         }
         const info = backend.chatInfo || ({})
         return presenceText(presence, Number(info.last_seen || 0))
+    }
+
+    // A channel is read in the conversation view, because that is where a
+    // message with a picture, a link preview or a reply already draws
+    // correctly. Nothing else has to know it is a channel except the composer,
+    // which is not offered: only the people who own a channel may post to one.
+    function openChannelConversation(jid, name) {
+        if (String(jid || "") === "")
+            return false
+        window.showSection("chats")
+        backend.openChannel(String(jid), String(name || ""))
+        return true
     }
 
     // Scheduling takes the words out of the composer and gives them to the
@@ -2683,7 +2699,26 @@ ApplicationWindow {
                 }
 
                 Rectangle {
+                    objectName: "channelReadOnlyBar"
                     Layout.fillWidth: true
+                    visible: window.selectedIsChannel
+                    implicitHeight: 56
+                    color: "transparent"
+                    Label {
+                        anchors.centerIn: parent
+                        width: parent.width - 48
+                        text: qsTr("Only the people who run this channel can post in it.")
+                        color: Theme.textMuted
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                    }
+                }
+
+                Rectangle {
+                    objectName: "composerBar"
+                    Layout.fillWidth: true
+                    visible: !window.selectedIsChannel
                     implicitHeight: composerColumn.implicitHeight + 20
                     color: "transparent"
 
@@ -3226,6 +3261,7 @@ ApplicationWindow {
             onCreateChannelRequested: newChannelDialog.open()
             onFollowChannelRequested: followChannelDialog.open()
             onCreateCommunityRequested: newCommunityDialog.open()
+            onChannelRequested: (jid, name) => window.openChannelConversation(jid, name)
         }
 
         RowLayout {

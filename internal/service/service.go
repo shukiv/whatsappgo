@@ -840,6 +840,18 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		return s.store.ListCallLogs(ctx, 200)
 	case "channels.list":
 		return s.gateway.ListChannels(ctx)
+	case "channel.messages":
+		var p struct {
+			JID   string `json:"jid"`
+			Count int    `json:"count"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.JID) == "" {
+			return nil, errors.New("jid is required")
+		}
+		return s.gateway.ChannelMessages(ctx, p.JID, p.Count)
 	case "communities.list":
 		return s.gateway.ListCommunities(ctx)
 	case "messages.list":

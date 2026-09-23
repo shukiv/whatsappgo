@@ -93,6 +93,8 @@ type Gateway interface {
 	SetMessageStarred(context.Context, string, string, string, bool, bool) error
 	ForwardMessage(context.Context, string, string, string) (model.Message, error)
 	ListChannels(context.Context) ([]model.Channel, error)
+	// ChannelMessages reads a channel's recent posts and stores them.
+	ChannelMessages(ctx context.Context, channelJID string, count int) ([]model.Message, error)
 	ListCommunities(context.Context) ([]model.Community, error)
 	Subscribe(func(Event)) (unsubscribe func())
 	Close() error
@@ -222,6 +224,9 @@ func (Unavailable) SetChatLabeled(context.Context, string, string, bool) error {
 }
 func (Unavailable) BlockedContacts(context.Context) ([]string, error)     { return nil, ErrUnavailable }
 func (Unavailable) ListChannels(context.Context) ([]model.Channel, error) { return nil, ErrUnavailable }
+func (Unavailable) ChannelMessages(context.Context, string, int) ([]model.Message, error) {
+	return nil, ErrUnavailable
+}
 func (Unavailable) ListCommunities(context.Context) ([]model.Community, error) {
 	return nil, ErrUnavailable
 }
