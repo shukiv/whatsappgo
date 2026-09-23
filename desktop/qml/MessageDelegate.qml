@@ -34,6 +34,24 @@ Item {
     signal infoRequested(var message)
     signal historyRequested(var message)
 
+    // Clicking who said something opens the conversation with them. The name
+    // above a group bubble is often the only place somebody outside the
+    // address book is named at all, and reaching them meant finding the group,
+    // opening its members and looking for the same name there.
+    //
+    // It is a function rather than only a handler so a test can ask for it: a
+    // click on a label is not something an offscreen run can produce.
+    function openSenderChat() {
+        if (!senderLabel.visible)
+            return false
+        const jid = String(root.modelData.sender_jid || "")
+        if (jid === "")
+            return false
+        root.mentionRequested(jid, String(root.modelData.sender_name || ""))
+        return true
+    }
+
+
     // Only Main dispatches shortcuts. A shared preview in Message info must
     // never compete with the conversation for a window-wide key sequence.
     readonly property bool shortcutHovered: bubbleHover.hovered
@@ -761,6 +779,21 @@ Item {
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
                 maximumLineCount: 1
+
+                MouseArea {
+                    objectName: "senderNameButton"
+                    // Only over the name itself. The label is as wide as the
+                    // bubble, and a click on the empty half of that line is
+                    // not a click on anybody.
+                    width: Math.min(senderLabel.contentWidth, senderLabel.width)
+                    height: senderLabel.height
+                    x: senderLabel.effectiveHorizontalAlignment === Text.AlignRight
+                        ? senderLabel.width - width : 0
+                    enabled: root.actionsEnabled && !root.selectionActive
+                        && String(root.modelData.sender_jid || "") !== ""
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: root.openSenderChat()
+                }
             }
 
             // A forward is labelled rather than shown as a quote: the reader

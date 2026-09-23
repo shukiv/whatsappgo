@@ -1302,6 +1302,10 @@ QtObject {
                 property string previewedMessageId: ""
                 property string previewedMediaPath: ""
                 property string quotedMessageId: ""
+                property string openedChatJid: ""
+                property string openedChatName: ""
+                property var groupMessage
+                property var directMessage
                 property string infoMessageId: ""
 				property var infoMessage: ({})
                 MessageDelegate {
@@ -1334,6 +1338,23 @@ QtObject {
                     objectName: "forwardedInteractionDelegate"
                     width: 800
                     modelData: harness.forwardedMessage
+                }
+                MessageDelegate {
+                    objectName: "groupSenderDelegate"
+                    width: 800
+                    modelData: harness.groupMessage
+                    onMentionRequested: (jid, name) => {
+                        harness.openedChatJid = jid
+                        harness.openedChatName = name
+                    }
+                }
+                MessageDelegate {
+                    objectName: "directSenderDelegate"
+                    width: 800
+                    modelData: harness.directMessage
+                    onMentionRequested: (jid, name) => {
+                        harness.openedChatJid = "one-to-one:" + jid
+                    }
                 }
                 MessageDelegate {
                     objectName: "imageInteractionDelegate"
@@ -1384,6 +1405,28 @@ QtObject {
                 {QStringLiteral("starred"), true},
                 {QStringLiteral("forwarding_score"), 6},
             }},
+            {QStringLiteral("groupMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("group-sender-test")},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("In the group")},
+                {QStringLiteral("chat_jid"), QStringLiteral("120363000000000000@g.us")},
+                {QStringLiteral("sender_jid"), QStringLiteral("123456789012345@lid")},
+                {QStringLiteral("sender_name"), QStringLiteral("Daniel Shtrasman")},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            }},
+            {QStringLiteral("directMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("direct-sender-test")},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("On our own")},
+                {QStringLiteral("chat_jid"), QStringLiteral("123456789012345@lid")},
+                {QStringLiteral("sender_jid"), QStringLiteral("123456789012345@lid")},
+                {QStringLiteral("sender_name"), QStringLiteral("Daniel Shtrasman")},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            }},
             {QStringLiteral("imageMessage"), QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("image-test")},
                 {QStringLiteral("kind"), QStringLiteral("image")},
@@ -1396,7 +1439,42 @@ QtObject {
         if (!harness)
             return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
-        auto *delegate = harness->findChild<QObject *>(QStringLiteral("messageInteractionDelegate"));
+        // The name above a group bubble is a way to that person's conversation.
+    {
+        auto *groupDelegate = harness->findChild<QObject *>(QStringLiteral("groupSenderDelegate"));
+        if (!groupDelegate)
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *senderButton = groupDelegate->findChild<QObject *>(QStringLiteral("senderNameButton"));
+        if (!senderButton || !senderButton->property("enabled").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        // A width of zero is a control nobody can hit, which is the same as
+        // not having one.
+        if (senderButton->property("width").toReal() <= 0)
+            return WHATSAPPGO_TEST_FAILURE();
+        // The answer comes back as a QVariant: that is what a QML function
+        // returns, and asking for a bool refuses the call outright.
+        QVariant opened;
+        if (!QMetaObject::invokeMethod(groupDelegate, "openSenderChat", Q_RETURN_ARG(QVariant, opened)) || !opened.toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        if (harness->property("openedChatJid").toString() != QStringLiteral("123456789012345@lid")
+                || harness->property("openedChatName").toString() != QStringLiteral("Daniel Shtrasman"))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // One-to-one bubbles carry no name at all, so there is nothing to
+        // click and nothing to open: the conversation is already this person.
+        auto *directDelegate = harness->findChild<QObject *>(QStringLiteral("directSenderDelegate"));
+        if (!directDelegate)
+            return WHATSAPPGO_TEST_FAILURE();
+        QVariant directOpened;
+        if (!QMetaObject::invokeMethod(directDelegate, "openSenderChat", Q_RETURN_ARG(QVariant, directOpened)) || directOpened.toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        if (harness->property("openedChatJid").toString() != QStringLiteral("123456789012345@lid"))
+            return WHATSAPPGO_TEST_FAILURE();
+    }
+
+    auto *delegate = harness->findChild<QObject *>(QStringLiteral("messageInteractionDelegate"));
         if (!delegate)
             return WHATSAPPGO_TEST_FAILURE();
         auto *body = delegate->findChild<QObject *>(QStringLiteral("messageBody"));
