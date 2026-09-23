@@ -133,7 +133,7 @@ Item {
     onVideoSurfaceChanged: beginPlayback()
 
     function seek(milliseconds) {
-        if (loader.item && loader.item.seekable)
+        if (readyToSeek())
             loader.item.position = Math.max(0, Math.min(milliseconds, loader.item.duration))
     }
 
@@ -144,7 +144,7 @@ Item {
     function seekFraction(messageId, path, fraction) {
         const target = Math.max(0, Math.min(1, Number(fraction) || 0))
         if (isCurrent(messageId)) {
-            if (loader.item && loader.item.seekable && duration > 0) {
+            if (readyToSeek()) {
                 seek(duration * target)
                 return
             }
@@ -156,14 +156,32 @@ Item {
     }
 
     // applyStartFraction places a kept position as soon as the player knows
-    // enough to accept one. Length and seekability arrive separately and in
-    // no fixed order, so both are watched.
+    // enough to accept one. Length, seekability and the file itself arrive
+    // separately and in no fixed order, so all three are watched.
+    //
+    // The share is cleared before the position is written, not after. Moving
+    // the position makes the decoder re-announce what it knows, and that
+    // arrives back here: a share still set would be placed again, and again,
+    // until the stack ran out.
     function applyStartFraction() {
-        if (startFraction <= 0 || !loader.item || !loader.item.seekable || loader.item.duration <= 0)
+        if (startFraction <= 0 || !readyToSeek())
             return
-        loader.item.position = Math.max(0, Math.min(loader.item.duration,
-                                                    loader.item.duration * startFraction))
+        const share = startFraction
         startFraction = 0
+        loader.item.position = Math.max(0, Math.min(loader.item.duration,
+                                                    loader.item.duration * share))
+    }
+
+    // readyToSeek is true only once the file is open and measured. Moving
+    // within a stream the decoder is still reading is what makes it report the
+    // samples it had to skip.
+    function readyToSeek() {
+        return loader.item
+            && loader.item.seekable
+            && loader.item.duration > 0
+            && (loader.item.mediaStatus === MediaPlayer.LoadedMedia
+                || loader.item.mediaStatus === MediaPlayer.BufferedMedia
+                || loader.item.mediaStatus === MediaPlayer.BufferingMedia)
     }
 
     // The player is created on first use. Declaring it eagerly would start the
@@ -194,6 +212,9 @@ Item {
                     root.finishCurrent()
                 }
                 onMediaStatusChanged: {
+                    // The moment the file is open is the moment a position
+                    // asked for before it opened can be placed.
+                    root.applyStartFraction()
                     if (mediaStatus !== MediaPlayer.EndOfMedia || root.isVideo)
                         return
                     const completed = root.currentId

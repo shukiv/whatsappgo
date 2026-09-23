@@ -1152,7 +1152,11 @@ Item {
                             objectName: "voiceScrubArea"
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            preventStealing: true
+                            // Deliberately not preventStealing: a flick that
+                            // begins on a waveform has to scroll the
+                            // conversation rather than take hold of the
+                            // recording. The list steals the press, the drag
+                            // is cancelled, and nothing starts playing.
                             function fractionAt(x) {
                                 return Math.max(0, Math.min(1, x / Math.max(1, width)))
                             }

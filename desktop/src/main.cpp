@@ -32,6 +32,7 @@
 #include <QKeyEvent>
 #include <QIcon>
 #include <QLibraryInfo>
+#include <QDataStream>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
@@ -45,6 +46,7 @@
 #include <QProcess>
 #include <QSystemTrayIcon>
 #include <QTemporaryDir>
+#include <QtMath>
 
 #include <cstdlib>
 #include <functional>
@@ -302,6 +304,10 @@ int main(int argc, char *argv[])
     parser.addOption(scheduleSendTestOption);
     QCommandLineOption channelPostsTestOption(QStringLiteral("channel-posts-test"), QStringLiteral("Verify a followed channel opens onto its posts and offers no composer"));
     parser.addOption(channelPostsTestOption);
+    QCommandLineOption voiceSeekTestOption(QStringLiteral("voice-seek-test"), QStringLiteral("Verify moving through a recording that is not playing survives the decoder"));
+    parser.addOption(voiceSeekTestOption);
+    QCommandLineOption voiceSeekFileOption(QStringLiteral("voice-seek-file"), QStringLiteral("The recording --voice-seek-test moves through"), QStringLiteral("path"));
+    parser.addOption(voiceSeekFileOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
     parser.addOption(bundledFontTestOption);
     QCommandLineOption clipboardImageTestOption(QStringLiteral("clipboard-image-test"), QStringLiteral("Verify native image copy and paste preparation"));
@@ -454,6 +460,7 @@ int main(int argc, char *argv[])
     const bool fileDropTest = parser.isSet(fileDropTestOption);
     const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
     const bool channelPostsTest = parser.isSet(channelPostsTestOption);
+    const bool voiceSeekTest = parser.isSet(voiceSeekTestOption);
     const bool presenceDisplayTest = parser.isSet(presenceDisplayTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const auto openDialogName = parser.value(openDialogOption);
@@ -465,7 +472,7 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || channelPostsTest
+        || channelPostsTest || voiceSeekTest
         || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
         || styleDetectionTest || fileUrlTest || menuPlacementTest || composerDraftTest
         || !screenshotPath.isEmpty();
@@ -874,6 +881,116 @@ int main(int argc, char *argv[])
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (voiceSeekTest) {
+        // Dragging the handle of a recording that is not playing asks for a
+        // position before the player has a length to measure it against. The
+        // position is kept and placed once it does, and placing it makes the
+        // decoder report what it skipped - which is where this crashed.
+        // A real voice note if one was named, otherwise a recording made here:
+        // the suite cannot carry an account's audio, and every encoder it
+        // could call may be absent. Plain PCM needs neither.
+        QTemporaryDir madeRecording;
+        auto recording = parser.value(voiceSeekFileOption);
+        if (recording.isEmpty()) {
+            if (!madeRecording.isValid())
+                return WHATSAPPGO_TEST_FAILURE();
+            recording = madeRecording.filePath(QStringLiteral("voice-seek.wav"));
+            QFile file(recording);
+            if (!file.open(QIODevice::WriteOnly))
+                return WHATSAPPGO_TEST_FAILURE();
+            const quint32 rate = 8000;
+            const quint32 seconds = 20;
+            const quint32 samples = rate * seconds;
+            const quint32 dataBytes = samples * 2;
+            QDataStream out(&file);
+            out.setByteOrder(QDataStream::LittleEndian);
+            file.write("RIFF");
+            out << quint32(36 + dataBytes);
+            file.write("WAVEfmt ");
+            out << quint32(16) << quint16(1) << quint16(1) << rate
+                << quint32(rate * 2) << quint16(2) << quint16(16);
+            file.write("data");
+            out << dataBytes;
+            for (quint32 sample = 0; sample < samples; ++sample)
+                out << qint16(8000 * qSin(2 * M_PI * 440.0 * sample / rate));
+            file.close();
+        }
+        if (!QFileInfo::exists(recording)) {
+            qWarning().noquote() << QStringLiteral("no recording at ") + recording;
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QQmlEngine playbackEngine;
+        auto *playback = playbackEngine.singletonInstance<QObject *>(
+            QStringLiteral("org.whatsappgo"), QStringLiteral("Playback"));
+        if (playback == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto settlePlayback = [](int milliseconds) {
+            QEventLoop loop;
+            QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+            loop.exec();
+        };
+        // Start somewhere other than the beginning, the way letting go of a
+        // dragged handle does.
+        if (!QMetaObject::invokeMethod(playback, "seekFraction",
+                                       Q_ARG(QVariant, QVariant(QStringLiteral("voice-seek"))),
+                                       Q_ARG(QVariant, QVariant(recording)),
+                                       Q_ARG(QVariant, QVariant(0.6))))
+            return WHATSAPPGO_TEST_FAILURE();
+        settlePlayback(1500);
+        const auto measured = playback->property("duration").toInt();
+        const auto landed = playback->property("position").toInt();
+        qInfo().noquote() << QStringLiteral("after the first drag: duration=%1 position=%2 playing=%3")
+                                 .arg(measured).arg(landed)
+                                 .arg(playback->property("playing").toBool());
+        // A recording dragged to six tenths and let go must play from there.
+        // Placing the position against a file that was not open yet threw it
+        // away, and the recording started from the beginning instead.
+        if (measured <= 0) {
+            qWarning().noquote() << QStringLiteral("the recording was never measured");
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        if (landed < measured * 0.45) {
+            qWarning().noquote() << QStringLiteral("dragged to six tenths, started at %1 of %2")
+                                        .arg(landed).arg(measured);
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        // And keep moving through it, which is what a second drag does.
+        for (const double fraction : {0.2, 0.9, 0.45, 0.05}) {
+            QMetaObject::invokeMethod(playback, "seekFraction",
+                                      Q_ARG(QVariant, QVariant(QStringLiteral("voice-seek"))),
+                                      Q_ARG(QVariant, QVariant(recording)),
+                                      Q_ARG(QVariant, QVariant(fraction)));
+            settlePlayback(250);
+        }
+        // Moving through one recording and then another, quickly, which is
+        // what a reader who wants a particular moment actually does. Each
+        // change of recording opens a decoder of its own.
+        for (int round = 0; round < 8; ++round) {
+            const auto id = round % 2 == 0 ? QStringLiteral("voice-seek") : QStringLiteral("voice-seek-again");
+            QMetaObject::invokeMethod(playback, "seekFraction",
+                                      Q_ARG(QVariant, QVariant(id)),
+                                      Q_ARG(QVariant, QVariant(recording)),
+                                      Q_ARG(QVariant, QVariant(0.1 * (round + 1))));
+            settlePlayback(120);
+        }
+        QMetaObject::invokeMethod(playback, "stop");
+        settlePlayback(150);
+        QMetaObject::invokeMethod(playback, "seekFraction",
+                                  Q_ARG(QVariant, QVariant(QStringLiteral("voice-seek"))),
+                                  Q_ARG(QVariant, QVariant(recording)),
+                                  Q_ARG(QVariant, QVariant(0.75)));
+        settlePlayback(800);
+        // A kept position must not still be waiting once the recording has
+        // been measured, or every later change re-applies it.
+        if (playback->property("startFraction").toReal() > 0.0) {
+            qWarning().noquote() << QStringLiteral("a kept position was never placed");
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QMetaObject::invokeMethod(playback, "stop");
+        settlePlayback(100);
+        return EXIT_SUCCESS;
+    }
+
     if (channelPostsTest) {
         if (applicationWindow == nullptr)
             return WHATSAPPGO_TEST_FAILURE();
