@@ -314,6 +314,18 @@ Item {
     readonly property real playProgress: playingThis && Playback.duration > 0
         ? Playback.position / Playback.duration : 0
 
+    // Where the handle is being dragged to, as a share of the recording, or -1
+    // while nobody is dragging it. A drag has to be shown as it happens: a
+    // handle that only moves once the button is released cannot be aimed.
+    property real voiceScrub: -1
+    readonly property real voiceHandleFraction:
+        voiceScrub >= 0 ? voiceScrub : (playingThis ? playProgress : 0)
+    // A recording of ours the other side has listened to. WhatsApp turns its
+    // play control and its handle the blue of a read receipt, which is the
+    // only thing that tells a recording that arrived from one that was heard.
+    readonly property bool voiceHeard:
+        audioKind && Boolean(modelData.from_me) && modelData.status === "played"
+
     // The amplitude bars the sender recorded. Messages that reached this
     // device without them still read as a voice note rather than a flat line:
     // the shape is derived from the message id, so it is stable while
@@ -1072,9 +1084,12 @@ Item {
                             ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
                         iconSize: 18
                         padding: 0
+                        iconTint: root.voiceHeard ? Theme.readReceipt : Theme.icon
                         Accessible.name: root.playingThis && Playback.playing
                             ? qsTr("Pause voice message")
-                            : qsTr("Play voice message")
+                            : root.voiceHeard
+                                ? qsTr("Play voice message, listened to")
+                                : qsTr("Play voice message")
                         // WhatsApp Web draws the play control as a bare glyph on the
                         // bubble. A filled circle behind it read as a button pasted
                         // onto the message.
@@ -1106,30 +1121,53 @@ Item {
                                     height: Math.max(3, Math.min(24, modelData * 0.24))
                                     radius: width / 2
                                     anchors.verticalCenter: parent.verticalCenter
-                                    // Everything up to the playing position is
-                                    // filled in, the way a played recording reads.
-                                    color: root.playingThis && (index / Math.max(1, root.waveformBars.length)) <= root.playProgress
+                                    // Everything up to the handle is filled in,
+                                    // the way a played recording reads.
+                                    color: (index / Math.max(1, root.waveformBars.length)) <= root.voiceHandleFraction
+                                        && root.voiceHandleFraction > 0
                                         ? Theme.primary
                                         : (root.modelData.from_me ? Qt.darker(Theme.outgoingBubble, 1.35) : Theme.scrollbarHandle)
                                 }
                             }
                         }
 
+                        // The handle. It is always there, at the start of a
+                        // recording nobody has played yet, because it is what
+                        // says a recording can be moved through at all.
                         Rectangle {
-                            visible: root.playingThis
-                            width: 9
-                            height: 9
-                            radius: 4.5
-                            color: Theme.primary
+                            objectName: "voiceHandle"
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: root.voiceHeard ? Theme.readReceipt : Theme.primary
+                            border.width: 1
+                            border.color: root.modelData.from_me ? Theme.outgoingBubble : Theme.surface
                             anchors.verticalCenter: parent.verticalCenter
-                            x: Math.max(0, Math.min(parent.width - width, parent.width * root.playProgress - width / 2))
+                            x: Math.max(0, Math.min(parent.width - width,
+                                                    parent.width * root.voiceHandleFraction - width / 2))
                         }
 
                         MouseArea {
+                            id: voiceScrubArea
+                            objectName: "voiceScrubArea"
                             anchors.fill: parent
-                            enabled: root.playingThis && Playback.duration > 0
-                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: mouse => Playback.seek(Playback.duration * (mouse.x / Math.max(1, width)))
+                            cursorShape: Qt.PointingHandCursor
+                            preventStealing: true
+                            function fractionAt(x) {
+                                return Math.max(0, Math.min(1, x / Math.max(1, width)))
+                            }
+                            onPressed: mouse => root.voiceScrub = fractionAt(mouse.x)
+                            onPositionChanged: mouse => {
+                                if (pressed)
+                                    root.voiceScrub = fractionAt(mouse.x)
+                            }
+                            onCanceled: root.voiceScrub = -1
+                            onReleased: mouse => {
+                                const target = fractionAt(mouse.x)
+                                root.voiceScrub = -1
+                                Playback.seekFraction(root.modelData.id,
+                                                      root.modelData.media_path || "", target)
+                            }
                         }
                     }
 

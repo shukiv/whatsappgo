@@ -33,6 +33,11 @@ Item {
     // first frames cannot be sent to a null VideoOutput.
     property bool startPending: false
 	property string announcedId: ""
+    // Where playback should begin, as a share of the whole recording. Dragging
+    // the handle of a recording that is not playing asks for a position the
+    // player does not know yet: it has no file open, so it has no length to
+    // measure the position against. The share is kept until it does.
+    property real startFraction: 0
 
     readonly property bool active: currentId !== ""
     readonly property bool playing: loader.item ? loader.item.playbackState === MediaPlayer.PlayingState : false
@@ -110,6 +115,7 @@ Item {
     // request for the next one, which then never played.
     function finishCurrent() {
         startPending = false
+        startFraction = 0
         if (loader.item) {
             loader.item.stop()
             loader.item.source = ""
@@ -131,6 +137,35 @@ Item {
             loader.item.position = Math.max(0, Math.min(milliseconds, loader.item.duration))
     }
 
+    // seekFraction moves within a recording by a share of its whole, which is
+    // what dragging a handle across a waveform produces. A recording that is
+    // not playing starts from where the handle was left rather than from the
+    // beginning: the handle was moved to be listened from.
+    function seekFraction(messageId, path, fraction) {
+        const target = Math.max(0, Math.min(1, Number(fraction) || 0))
+        if (isCurrent(messageId)) {
+            if (loader.item && loader.item.seekable && duration > 0) {
+                seek(duration * target)
+                return
+            }
+            startFraction = target
+            return
+        }
+        startFraction = target
+        start(messageId, path, false)
+    }
+
+    // applyStartFraction places a kept position as soon as the player knows
+    // enough to accept one. Length and seekability arrive separately and in
+    // no fixed order, so both are watched.
+    function applyStartFraction() {
+        if (startFraction <= 0 || !loader.item || !loader.item.seekable || loader.item.duration <= 0)
+            return
+        loader.item.position = Math.max(0, Math.min(loader.item.duration,
+                                                    loader.item.duration * startFraction))
+        startFraction = 0
+    }
+
     // The player is created on first use. Declaring it eagerly would start the
     // multimedia backend during application startup, which is both wasteful and
     // noisy on machines without a working audio stack.
@@ -146,6 +181,8 @@ Item {
                 }
                 playbackRate: root.isVideo ? Math.max(0.5, Math.min(2, root.videoRate)) : 1
                 videoOutput: root.videoSurface
+                onDurationChanged: root.applyStartFraction()
+                onSeekableChanged: root.applyStartFraction()
 				onPlaybackStateChanged: {
 					if (playbackState === MediaPlayer.PlayingState && root.announcedId !== root.currentId) {
 						root.announcedId = root.currentId

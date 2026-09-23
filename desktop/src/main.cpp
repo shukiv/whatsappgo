@@ -2689,6 +2689,64 @@ QtObject {
         require(voiceDuration != nullptr && voiceDuration->property("visible").toBool()
                     && voiceDuration->property("text").toString() == QStringLiteral("0:09"),
                 QStringLiteral("voice note does not show its length"));
+
+        // The handle. Without one a recording gives no sign that it can be
+        // moved through, and no sign of where it has reached.
+        auto *voiceHandle = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceHandle")));
+        auto *voiceScrub = qobject_cast<QQuickItem *>(voiceDelegate->findChild<QObject *>(QStringLiteral("voiceScrubArea")));
+        require(voiceHandle != nullptr && voiceHandle->isVisible() && voiceHandle->width() >= 10.0,
+                QStringLiteral("voice note has no handle to move"));
+        require(voiceScrub != nullptr && voiceScrub->isEnabled()
+                    && voiceProgress != nullptr && voiceScrub->width() >= voiceProgress->width() - 0.5,
+                QStringLiteral("the handle cannot be dragged across the whole waveform"));
+        if (voiceHandle != nullptr && voiceProgress != nullptr) {
+            require(voiceHandle->x() <= 1.0,
+                    QStringLiteral("a recording nobody has played starts its handle at %1, not at the beginning")
+                        .arg(voiceHandle->x()));
+            // A drag has to show where it is going while it is happening.
+            voiceDelegate->setProperty("voiceScrub", 0.5);
+            QCoreApplication::processEvents();
+            const auto wanted = voiceProgress->width() / 2 - voiceHandle->width() / 2;
+            require(qAbs(voiceHandle->x() - wanted) <= 1.5,
+                    QStringLiteral("dragging to the middle put the handle at %1, expected %2")
+                        .arg(voiceHandle->x()).arg(wanted));
+            voiceDelegate->setProperty("voiceScrub", -1.0);
+            QCoreApplication::processEvents();
+        }
+
+        // A recording of ours reads one of two ways: delivered, or listened
+        // to. Only the blue says it was heard.
+        const QColor listenedBlue(QStringLiteral("#007BFC"));
+        const auto voiceOfOurs = [&](const QString &status) {
+            QVariantMap mine = voice;
+            mine[QStringLiteral("id")] = QStringLiteral("voice-") + status;
+            mine[QStringLiteral("from_me")] = true;
+            mine[QStringLiteral("status")] = status;
+            return mine;
+        };
+        std::unique_ptr<QObject> heardDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), voiceOfOurs(QStringLiteral("played"))},
+        }));
+        std::unique_ptr<QObject> deliveredDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), voiceOfOurs(QStringLiteral("delivered"))},
+        }));
+        if (!heardDelegate || !deliveredDelegate)
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        auto *heardHandle = heardDelegate->findChild<QObject *>(QStringLiteral("voiceHandle"));
+        auto *heardPlay = heardDelegate->findChild<QObject *>(QStringLiteral("voicePlayButton"));
+        auto *deliveredHandle = deliveredDelegate->findChild<QObject *>(QStringLiteral("voiceHandle"));
+        auto *deliveredPlay = deliveredDelegate->findChild<QObject *>(QStringLiteral("voicePlayButton"));
+        require(heardHandle != nullptr && heardHandle->property("color").value<QColor>() == listenedBlue,
+                QStringLiteral("a recording that was listened to does not mark its handle"));
+        require(heardPlay != nullptr && heardPlay->property("iconTint").value<QColor>() == listenedBlue,
+                QStringLiteral("a recording that was listened to does not mark its play control"));
+        require(deliveredHandle != nullptr && deliveredHandle->property("color").value<QColor>() != listenedBlue,
+                QStringLiteral("a recording that only arrived is shown as listened to"));
+        require(deliveredPlay != nullptr && deliveredPlay->property("iconTint").value<QColor>() != listenedBlue,
+                QStringLiteral("a recording that only arrived marks its play control as heard"));
         if (voiceRow != nullptr) {
             qInfo().noquote() << QStringLiteral("voice row height=%1").arg(voiceRow->height());
             require(voiceRow->height() <= 56.0,
