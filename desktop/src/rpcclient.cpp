@@ -4778,6 +4778,10 @@ void RpcClient::acknowledgeIncoming(const QVariantMap &message)
     const auto id = message.value(QStringLiteral("id")).toString();
     if (chat.isEmpty() || id.isEmpty())
         return;
+    // A channel post has nobody to tell. The address takes no receipt, and a
+    // post arriving while the channel is open would send one.
+    if (chat.endsWith(QStringLiteral("@newsletter")))
+        return;
     if (!m_conversationActive) {
         m_deferredReadPage = true;
         return;
