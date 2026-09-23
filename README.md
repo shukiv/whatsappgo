@@ -89,6 +89,9 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - multiple isolated account profiles with top-level account tabs
 - text and media messages, voice notes, documents, replies, reactions, edits,
   delete-for-everyone, receipts, and typing indicators
+- write a message now and send it later: pick a moment, see what a conversation
+  still owes, and take any of it back before it goes (the app has to be running
+  at that moment; a message whose time passed goes out at the next start)
 - SQLite-backed history with 50-message pagination and message search
 - day separators through a conversation, and Up on an empty composer edits the
   last message you sent

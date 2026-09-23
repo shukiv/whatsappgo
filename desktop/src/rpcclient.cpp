@@ -1054,6 +1054,8 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
 		}
 		if (m_waitingRemoteHistory && !m_selectedChat.isEmpty())
 			loadRemoteHistoryPage();
+    } else if (name == QStringLiteral("schedule.updated")) {
+        refreshScheduledMessages();
     } else if (name == QStringLiteral("call.upsert") || name == QStringLiteral("calls.synced")) {
 		refreshCalls();
     } else if (name == QStringLiteral("preferences.updated")) {
@@ -1423,6 +1425,14 @@ void RpcClient::openChat(const QString &jid, const QString &title)
     clearChatInfo();
     m_selectedChat = {{QStringLiteral("jid"), jid}, {QStringLiteral("title"), title}};
     m_selectedPresence.clear();
+    // What this conversation owes belongs to this conversation. Clear it now
+    // rather than leaving the last one's messages on screen until the answer
+    // for this one arrives.
+    if (!m_scheduledMessages.isEmpty()) {
+        m_scheduledMessages.clear();
+        emit scheduledMessagesChanged();
+    }
+    refreshScheduledMessages();
     if (const auto cached = m_messageCache.constFind(jid); cached != m_messageCache.cend())
         m_messages.reset(cached.value());
     else
@@ -4600,6 +4610,64 @@ void RpcClient::ensureStatusMedia(const QString &messageId)
                     }
                     refreshStatuses();
                 }, OnFailure::StayQuiet);
+}
+
+void RpcClient::scheduleMessage(const QString &text, qint64 sendAt)
+{
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    if (chatJid.isEmpty() || text.trimmed().isEmpty())
+        return;
+    // The daemon checks the time as well. It has to: it is the side that can
+    // be reached by anything other than this window.
+    sendRequest(QStringLiteral("message.schedule"), {
+        {QStringLiteral("chat_jid"), chatJid},
+        {QStringLiteral("text"), text},
+        {QStringLiteral("send_at"), sendAt},
+    }, [this](const QJsonValue &, const QJsonObject &error) {
+        if (!error.isEmpty()) {
+            emit errorOccurred(error.value(QStringLiteral("message")).toString());
+            return;
+        }
+        refreshScheduledMessages();
+    });
+}
+
+void RpcClient::cancelScheduledMessage(const QString &id)
+{
+    if (id.isEmpty())
+        return;
+    sendRequest(QStringLiteral("message.unschedule"), {{QStringLiteral("id"), id}},
+                [this](const QJsonValue &, const QJsonObject &error) {
+        if (!error.isEmpty()) {
+            emit errorOccurred(error.value(QStringLiteral("message")).toString());
+            return;
+        }
+        refreshScheduledMessages();
+    });
+}
+
+void RpcClient::refreshScheduledMessages()
+{
+    const auto chatJid = m_selectedChat.value(QStringLiteral("jid")).toString();
+    if (chatJid.isEmpty()) {
+        if (!m_scheduledMessages.isEmpty()) {
+            m_scheduledMessages.clear();
+            emit scheduledMessagesChanged();
+        }
+        return;
+    }
+    sendRequest(QStringLiteral("messages.scheduled"), {{QStringLiteral("chat_jid"), chatJid}},
+                [this, chatJid](const QJsonValue &result, const QJsonObject &error) {
+        if (!error.isEmpty())
+            return;
+        // The answer belongs to the conversation that asked for it. Opening
+        // another one before it arrives must not fill this list with somebody
+        // else's messages.
+        if (m_selectedChat.value(QStringLiteral("jid")).toString() != chatJid)
+            return;
+        m_scheduledMessages = result.toArray().toVariantList();
+        emit scheduledMessagesChanged();
+    });
 }
 
 void RpcClient::refreshCalls()

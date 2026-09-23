@@ -297,6 +297,8 @@ int main(int argc, char *argv[])
     parser.addOption(messageInteractionTestOption);
     QCommandLineOption messageHistoryTestOption(QStringLiteral("message-history-test"), QStringLiteral("Verify every earlier version of a message is offered and listed"));
     parser.addOption(messageHistoryTestOption);
+    QCommandLineOption scheduleSendTestOption(QStringLiteral("schedule-send-test"), QStringLiteral("Verify the moment a scheduled message is given"));
+    parser.addOption(scheduleSendTestOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
     parser.addOption(bundledFontTestOption);
     QCommandLineOption clipboardImageTestOption(QStringLiteral("clipboard-image-test"), QStringLiteral("Verify native image copy and paste preparation"));
@@ -425,6 +427,7 @@ int main(int argc, char *argv[])
     const bool menuPlacementTest = parser.isSet(menuPlacementTestOption);
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
+    const bool scheduleSendTest = parser.isSet(scheduleSendTestOption);
     const bool messageHistoryTest = parser.isSet(messageHistoryTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
     const bool styleDetectionTest = parser.isSet(styleDetectionTestOption);
@@ -454,7 +457,7 @@ int main(int argc, char *argv[])
     const auto screenshotRemoveAccount = parser.value(removeProfileOption);
     const auto screenshotConversationSearch = parser.value(conversationSearchOption);
     const auto screenshotChat = parser.value(screenshotChatOption);
-    const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || messageHistoryTest || clipboardImageTest
+    const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || messageHistoryTest || scheduleSendTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
@@ -1271,6 +1274,152 @@ QtObject {
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }
+    if (scheduleSendTest) {
+        QQmlComponent component(&engine);
+        component.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            ApplicationWindow {
+                id: harness
+                width: 700
+                height: 700
+                visible: true
+                // Friday 2026-09-25, 21:30 local time. Late enough that
+                // "tonight at 20:00" has to mean tomorrow.
+                readonly property date fixedNow: new Date(2026, 8, 25, 21, 30, 0)
+                property real requested: 0
+                property string cancelled: ""
+                ScheduleSendDialog {
+                    id: scheduleDialog
+                    objectName: "scheduleDialogHarness"
+                    clock: function () { return harness.fixedNow }
+                    onScheduleRequested: sendAt => harness.requested = sendAt
+                }
+                ScheduledMessagesDialog {
+                    id: scheduledList
+                    objectName: "scheduledListHarness"
+                    chatScoped: false
+                    messages: [
+                        {id: "one", text: "Waiting", send_at: new Date(2026, 8, 26, 9, 0, 0).getTime(), error: ""},
+                    ]
+                    onCancelRequested: id => harness.cancelled = id
+                }
+                function openDialog() { return scheduleDialog.openFor("Happy birthday", "Alice") }
+                function chosen() { return scheduleDialog.sendAt }
+                function chooseTonight() { return scheduleDialog.chooseHour(0, 20) }
+                function typeFields(date, time) { return scheduleDialog.applyFields(date, time) }
+                function accept() { scheduleDialog.accept(); return true }
+                function canAccept() { return scheduleDialog.acceptEnabled }
+                // The dialog belongs to the conversation it was opened from
+                // and refuses to fire anywhere else. This harness has no
+                // conversation at all, so the guard is checked first and then
+                // lifted to test the moment it hands on.
+                function liftChatScope() { scheduleDialog.chatScoped = false; return true }
+                // A list inside a closed popup has no rows: nothing is built
+                // until it is on screen.
+                function openList() { scheduledList.open(); return true }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/schedule-send-test.qml")));
+        std::unique_ptr<QObject> harness(component.create());
+        if (!harness) {
+            qWarning().noquote() << component.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QCoreApplication::processEvents();
+        const auto call = [&harness](const char *name) {
+            QVariant answer;
+            if (!QMetaObject::invokeMethod(harness.get(), name, Q_RETURN_ARG(QVariant, answer)))
+                return QVariant();
+            return answer;
+        };
+        if (!call("openDialog").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+
+        // The dialog opens on an hour from now, to the minute.
+        const QDateTime expectedDefault(QDate(2026, 9, 25), QTime(22, 30, 0));
+        if (qint64(call("chosen").toDouble()) != expectedDefault.toMSecsSinceEpoch())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // "Tonight, 20:00" chosen at half past nine means tomorrow evening,
+        // not an hour and a half ago.
+        call("chooseTonight");
+        const QDateTime expectedTonight(QDate(2026, 9, 26), QTime(20, 0, 0));
+        if (qint64(call("chosen").toDouble()) != expectedTonight.toMSecsSinceEpoch())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Typed fields are read as local time, which is the only reading of
+        // "nine o'clock" anybody means.
+        QVariant applied;
+        if (!QMetaObject::invokeMethod(harness.get(), "typeFields", Q_RETURN_ARG(QVariant, applied),
+                                       Q_ARG(QVariant, QStringLiteral("2026-12-24")),
+                                       Q_ARG(QVariant, QStringLiteral("07:45")))
+                || !applied.toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        const QDateTime expectedTyped(QDate(2026, 12, 24), QTime(7, 45, 0));
+        if (qint64(call("chosen").toDouble()) != expectedTyped.toMSecsSinceEpoch())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // A moment that has passed cannot be confirmed: the daemon refuses it
+        // anyway, and a button that looks available is a promise.
+        QMetaObject::invokeMethod(harness.get(), "typeFields", Q_RETURN_ARG(QVariant, applied),
+                                  Q_ARG(QVariant, QStringLiteral("2020-01-01")),
+                                  Q_ARG(QVariant, QStringLiteral("07:45")));
+        QCoreApplication::processEvents();
+        if (call("canAccept").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // And a moment in the future is handed on exactly as chosen.
+        QMetaObject::invokeMethod(harness.get(), "typeFields", Q_RETURN_ARG(QVariant, applied),
+                                  Q_ARG(QVariant, QStringLiteral("2026-12-24")),
+                                  Q_ARG(QVariant, QStringLiteral("07:45")));
+        QCoreApplication::processEvents();
+        if (!call("canAccept").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Belonging to a conversation is part of what this dialog is: with
+        // none open, confirming it sends nothing.
+        call("accept");
+        QCoreApplication::processEvents();
+        if (harness->property("requested").toDouble() != 0)
+            return WHATSAPPGO_TEST_FAILURE();
+
+        call("liftChatScope");
+        call("accept");
+        QCoreApplication::processEvents();
+        if (qint64(harness->property("requested").toDouble()) != expectedTyped.toMSecsSinceEpoch())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // A waiting message can be taken back, which is the only way back once
+        // it is written.
+        call("openList");
+        // A row built by a Repeater hangs off the repeater, not off the
+        // window: ask the repeater for it rather than searching the tree.
+        const auto settle = [] {
+            QEventLoop loop;
+            QTimer::singleShot(120, &loop, &QEventLoop::quit);
+            loop.exec();
+        };
+        settle();
+        auto *repeater = harness->findChild<QObject *>(QStringLiteral("scheduledMessagesList"));
+        if (!repeater || repeater->property("count").toInt() != 1)
+            return WHATSAPPGO_TEST_FAILURE();
+        QQuickItem *scheduledRow = nullptr;
+        if (!QMetaObject::invokeMethod(repeater, "itemAt", Q_RETURN_ARG(QQuickItem *, scheduledRow), Q_ARG(int, 0))
+                || !scheduledRow)
+            return WHATSAPPGO_TEST_FAILURE();
+        auto *cancelButton = scheduledRow->findChild<QObject *>(QStringLiteral("cancelScheduledButton"));
+        if (!cancelButton)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!QMetaObject::invokeMethod(cancelButton, "clicked"))
+            return WHATSAPPGO_TEST_FAILURE();
+        settle();
+        if (harness->property("cancelled").toString() != QStringLiteral("one"))
+            return WHATSAPPGO_TEST_FAILURE();
+        return EXIT_SUCCESS;
+    }
+
     if (messageInteractionTest) {
         // The image branch of this test needs a real file on disk: a delegate
         // whose picture fails to load never builds the preview control the

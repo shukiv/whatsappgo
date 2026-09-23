@@ -99,6 +99,9 @@ class RpcClient final : public QObject
     Q_PROPERTY(QString starredMessagesError READ starredMessagesError NOTIFY starredMessagesChanged)
     Q_PROPERTY(QVariantList statusUpdates READ statusUpdates NOTIFY statusUpdatesChanged)
     Q_PROPERTY(QVariantList callLogs READ callLogs NOTIFY callLogsChanged)
+    // What the open conversation still owes: messages written now and
+    // waiting for their time.
+    Q_PROPERTY(QVariantList scheduledMessages READ scheduledMessages NOTIFY scheduledMessagesChanged)
     Q_PROPERTY(QVariantList channels READ channels NOTIFY channelsChanged)
     Q_PROPERTY(QVariantList communities READ communities NOTIFY communitiesChanged)
     Q_PROPERTY(bool clipboardHasImage READ clipboardHasImage NOTIFY clipboardChanged)
@@ -224,6 +227,10 @@ public:
     QString starredMessagesError() const { return m_starredMessagesError; }
     QVariantList statusUpdates() const { return m_statusUpdates; }
     QVariantList callLogs() const { return m_callLogs; }
+    QVariantList scheduledMessages() const { return m_scheduledMessages; }
+    Q_INVOKABLE void scheduleMessage(const QString &text, qint64 sendAt);
+    Q_INVOKABLE void cancelScheduledMessage(const QString &id);
+    Q_INVOKABLE void refreshScheduledMessages();
     QVariantList channels() const { return m_channels; }
     QVariantList communities() const { return m_communities; }
     bool clipboardHasImage() const;
@@ -459,6 +466,7 @@ signals:
     void starredMessagesChanged();
     void statusUpdatesChanged();
     void callLogsChanged();
+    void scheduledMessagesChanged();
     void channelsChanged();
     void communitiesChanged();
     void clipboardChanged();
@@ -668,6 +676,7 @@ private:
     bool m_starredRequested = false;
     QVariantList m_statusUpdates;
     QVariantList m_callLogs;
+    QVariantList m_scheduledMessages;
     QVariantList m_channels;
     QVariantList m_communities;
     QVariantMap m_composerLinkPreview;

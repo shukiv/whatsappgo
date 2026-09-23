@@ -162,6 +162,8 @@ qt_add_qml_module(whatsappgo
         qml/WhatsAppMenuItem.qml
         qml/VoiceRecorder.qml
         qml/MediaPreview.qml
+        qml/ScheduleSendDialog.qml
+        qml/ScheduledMessagesDialog.qml
         qml/ChatMediaViewer.qml
         qml/ContactInfoDrawer.qml
         qml/CopyableInfoText.qml
@@ -568,6 +570,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-dark-theme COMMAND whatsappgo --theme dark --smoke-test)
     add_test(NAME desktop-search-navigation COMMAND whatsappgo --search-navigation-test)
     add_test(NAME desktop-message-interactions COMMAND whatsappgo --message-interaction-test)
+    add_test(NAME desktop-schedule-send COMMAND whatsappgo --schedule-send-test)
     add_test(NAME desktop-message-history COMMAND whatsappgo --message-history-test)
     add_test(NAME desktop-clipboard-images COMMAND whatsappgo --clipboard-image-test)
     add_test(NAME desktop-layout-regressions COMMAND whatsappgo --layout-regression-test)

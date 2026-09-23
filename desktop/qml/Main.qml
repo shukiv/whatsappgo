@@ -722,6 +722,31 @@ ApplicationWindow {
         return presenceText(presence, Number(info.last_seen || 0))
     }
 
+    // Scheduling takes the words out of the composer and gives them to the
+    // daemon, which sends them at the chosen moment. The composer is only
+    // cleared once the message is queued: losing what somebody wrote because a
+    // dialog was dismissed would be worse than an unscheduled message.
+    function openScheduleDialog() {
+        if (composer.text.trim().length === 0)
+            return false
+        return scheduleSendDialog.openFor(composer.text, String(backend.selectedChat.title || ""))
+    }
+
+    function scheduleComposedMessage(sendAt) {
+        const body = composer.text
+        if (String(body).trim().length === 0)
+            return false
+        backend.scheduleMessage(body, sendAt)
+        backend.setTyping(false)
+        window.clearSentComposer()
+        return true
+    }
+
+    function openScheduledMessages() {
+        scheduledMessagesDialog.open()
+        return true
+    }
+
     function openChatImage(message) {
         if (!message || message.kind !== "image" || message.revoked)
             return
@@ -2708,6 +2733,64 @@ ApplicationWindow {
                             onDismissed: backend.clearComposerLinkPreview()
                         }
 
+                        // What this conversation still owes. A message waiting
+                        // to go is invisible everywhere else - it is in no
+                        // conversation yet - so the only place it can be seen
+                        // or taken back is here.
+                        Rectangle {
+                            objectName: "scheduledStrip"
+                            Layout.fillWidth: true
+                            visible: backend.scheduledMessages.length > 0
+                            implicitHeight: visible ? scheduledRow.implicitHeight + 10 : 0
+                            radius: 10
+                            color: Theme.composer
+                            border.color: Theme.border
+                            RowLayout {
+                                id: scheduledRow
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 8
+                                spacing: 8
+                                TintedIcon {
+                                    width: 14
+                                    height: 14
+                                    source: Qt.resolvedUrl("icons/calendar.svg")
+                                    tint: Theme.primary
+                                }
+                                Label {
+                                    objectName: "scheduledStripLabel"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    text: backend.scheduledMessages.length === 1
+                                        ? qsTr("1 message scheduled for %1").arg(
+                                            Qt.formatDateTime(new Date(Number(backend.scheduledMessages[0].send_at || 0)), "d MMM, HH:mm"))
+                                        : qsTr("%1 messages scheduled").arg(backend.scheduledMessages.length)
+                                    color: Theme.textMuted
+                                    font.pixelSize: 12
+                                    elide: Text.ElideRight
+                                }
+                                AbstractButton {
+                                    objectName: "openScheduledMessagesButton"
+                                    implicitWidth: scheduledViewLabel.implicitWidth + 20
+                                    implicitHeight: 28
+                                    Accessible.name: qsTr("Show scheduled messages")
+                                    onClicked: window.openScheduledMessages()
+                                    background: Rectangle {
+                                        radius: 14
+                                        color: parent.hovered ? Theme.hoverRow : "transparent"
+                                    }
+                                    contentItem: Label {
+                                        id: scheduledViewLabel
+                                        text: qsTr("View")
+                                        color: Theme.primary
+                                        font.pixelSize: 13
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                }
+                            }
+                        }
+
                         Rectangle {
                             Layout.fillWidth: true
                             // The box grows with the message and then stops and
@@ -2922,6 +3005,28 @@ ApplicationWindow {
                                 }
 
                                 ThemedToolButton {
+                                    id: scheduleButton
+                                    objectName: "messageScheduleButton"
+                                    // Only with something written. A clock
+                                    // beside an empty composer is a control
+                                    // for a message that does not exist.
+                                    visible: composer.text.trim().length > 0
+                                    Layout.preferredWidth: 44
+                                    Layout.preferredHeight: 44
+                                    iconSource: Qt.resolvedUrl("icons/calendar.svg")
+                                    iconTint: Theme.icon
+                                    Accessible.name: qsTr("Schedule this message")
+                                    enabled: !backend.busy
+                                    background: Rectangle {
+                                        radius: 22
+                                        color: parent.hovered ? Theme.hoverRow : "transparent"
+                                    }
+                                    onClicked: window.openScheduleDialog()
+                                    ToolTip.visible: hovered
+                                    ToolTip.text: Accessible.name
+                                }
+
+                                ThemedToolButton {
                                     id: sendButton
                                     objectName: "messageSendButton"
                                     Layout.preferredWidth: 44
@@ -2965,7 +3070,18 @@ ApplicationWindow {
                 }
             }
 
-            MediaPreview {
+            ScheduleSendDialog {
+        id: scheduleSendDialog
+        onScheduleRequested: sendAt => window.scheduleComposedMessage(sendAt)
+    }
+
+    ScheduledMessagesDialog {
+        id: scheduledMessagesDialog
+        messages: backend.scheduledMessages
+        onCancelRequested: id => backend.cancelScheduledMessage(id)
+    }
+
+    MediaPreview {
                 id: mediaPreview
                 enterIsSend: settingsPane.enterIsSend
                 replaceEmoticons: settingsPane.replaceEmoticons

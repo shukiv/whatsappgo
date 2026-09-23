@@ -40,6 +40,9 @@ type Service struct {
 	// machine has to stop serving it here, or the retirement it just wrote
 	// would not take effect until the next start.
 	shutdown func()
+	// clock is the time scheduled messages are measured against. Only a test
+	// sets it; everything else reads the wall clock.
+	clock func() time.Time
 }
 
 // OnShutdownRequest gives the service a way to end the daemon it belongs to.
@@ -1003,6 +1006,35 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
 		s.playOutgoingSound()
 		return msg, nil
+	case "message.schedule":
+		var p scheduleParams
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.scheduleMessage(ctx, p)
+	case "messages.scheduled":
+		var p struct {
+			ChatJID string `json:"chat_jid"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		return s.store.ScheduledMessages(ctx, p.ChatJID)
+	case "message.unschedule":
+		var p struct {
+			ID string `json:"id"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(p.ID) == "" {
+			return nil, errors.New("id is required")
+		}
+		if err := s.store.CancelScheduledMessage(ctx, p.ID); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "schedule.updated", Data: map[string]any{"id": p.ID}})
+		return map[string]any{"cancelled": true}, nil
 	case "message.send_contact":
 		var p gateway.ContactCardRequest
 		if err := decode(raw, &p); err != nil {

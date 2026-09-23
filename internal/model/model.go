@@ -57,6 +57,28 @@ type Chat struct {
 	IsGroup             bool     `json:"is_group"`
 }
 
+// ScheduledMessage is a message written now and meant to go later. It is kept
+// on this computer, not on WhatsApp: nothing about it exists for the person it
+// is addressed to until it is actually sent, and it can only be sent while
+// this app is running. One that comes due with the app closed goes out at the
+// next start, late rather than not at all.
+type ScheduledMessage struct {
+	ID        string `json:"id"`
+	ChatJID   string `json:"chat_jid"`
+	ChatTitle string `json:"chat_title,omitempty"`
+	Text      string `json:"text"`
+	// SendAt and the rest are milliseconds since the epoch, as every other
+	// time in this program is.
+	SendAt    int64  `json:"send_at"`
+	CreatedAt int64  `json:"created_at"`
+	SentAt    int64  `json:"sent_at,omitempty"`
+	MessageID string `json:"message_id,omitempty"`
+	// Error is what went wrong the last time sending was tried. A row keeps
+	// its place in the queue after a failure, so a network that comes back
+	// sends it on the next sweep.
+	Error string `json:"error,omitempty"`
+}
+
 // Label is one of WhatsApp's chat lists. WhatsApp Web calls them lists in the
 // interface and labels on the wire.
 type Label struct {

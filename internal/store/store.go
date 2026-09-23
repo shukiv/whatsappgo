@@ -166,6 +166,17 @@ CREATE TABLE IF NOT EXISTS chat_labels (
   PRIMARY KEY (label_id, chat_jid)
 );
 CREATE INDEX IF NOT EXISTS idx_chat_labels_chat ON chat_labels(chat_jid);
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id TEXT PRIMARY KEY,
+  chat_jid TEXT NOT NULL,
+  text TEXT NOT NULL,
+  send_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  sent_at INTEGER NOT NULL DEFAULT 0,
+  message_id TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_messages(sent_at, send_at);
 CREATE TABLE IF NOT EXISTS metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -1486,6 +1497,111 @@ func (s *Store) MediaPayload(ctx context.Context, chatJID, messageID string) ([]
 		return nil, false, nil
 	}
 	return payload, err == nil, err
+}
+
+// ScheduleMessage stores a message to send later. The caller supplies the id so
+// the window can name the row it has just made without waiting to be told.
+func (s *Store) ScheduleMessage(ctx context.Context, msg model.ScheduledMessage) error {
+	if strings.TrimSpace(msg.ID) == "" || strings.TrimSpace(msg.ChatJID) == "" {
+		return errors.New("a scheduled message needs an id and a conversation")
+	}
+	if strings.TrimSpace(msg.Text) == "" {
+		return errors.New("a scheduled message needs something to say")
+	}
+	if msg.SendAt <= 0 {
+		return errors.New("a scheduled message needs a time to go")
+	}
+	if msg.CreatedAt == 0 {
+		msg.CreatedAt = time.Now().UnixMilli()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduled_messages
+	 (id,chat_jid,text,send_at,created_at) VALUES(?,?,?,?,?)
+	 ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid,text=excluded.text,send_at=excluded.send_at`,
+		msg.ID, s.canonicalChatJID(ctx, msg.ChatJID), msg.Text, msg.SendAt, msg.CreatedAt)
+	return err
+}
+
+// ScheduledMessages lists what is still waiting to go, soonest first. An empty
+// chatJID asks for every conversation, which is what the window shows when it
+// lists everything the account owes.
+func (s *Store) ScheduledMessages(ctx context.Context, chatJID string) ([]model.ScheduledMessage, error) {
+	query := `SELECT m.id,m.chat_jid,COALESCE(c.title,''),m.text,m.send_at,m.created_at,m.error
+	 FROM scheduled_messages m LEFT JOIN chats c ON c.jid=m.chat_jid
+	 WHERE m.sent_at=0`
+	args := []any{}
+	if strings.TrimSpace(chatJID) != "" {
+		query += ` AND m.chat_jid=?`
+		args = append(args, s.canonicalChatJID(ctx, chatJID))
+	}
+	query += ` ORDER BY m.send_at ASC, m.id ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	scheduled := []model.ScheduledMessage{}
+	for rows.Next() {
+		var msg model.ScheduledMessage
+		if err := rows.Scan(&msg.ID, &msg.ChatJID, &msg.ChatTitle, &msg.Text, &msg.SendAt, &msg.CreatedAt, &msg.Error); err != nil {
+			return nil, err
+		}
+		scheduled = append(scheduled, msg)
+	}
+	return scheduled, rows.Err()
+}
+
+// DueScheduledMessages is what should already have gone by the given moment,
+// oldest first so a queue that built up while the app was closed goes out in
+// the order it was written.
+func (s *Store) DueScheduledMessages(ctx context.Context, now int64) ([]model.ScheduledMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,chat_jid,text,send_at,created_at,error
+	 FROM scheduled_messages WHERE sent_at=0 AND send_at<=? ORDER BY send_at ASC, id ASC`, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	due := []model.ScheduledMessage{}
+	for rows.Next() {
+		var msg model.ScheduledMessage
+		if err := rows.Scan(&msg.ID, &msg.ChatJID, &msg.Text, &msg.SendAt, &msg.CreatedAt, &msg.Error); err != nil {
+			return nil, err
+		}
+		due = append(due, msg)
+	}
+	return due, rows.Err()
+}
+
+// MarkScheduledSent records that a waiting message went, and which message it
+// became. The row is kept rather than deleted so a second sweep cannot send the
+// same words twice.
+func (s *Store) MarkScheduledSent(ctx context.Context, id, messageID string, at int64) error {
+	if at <= 0 {
+		at = time.Now().UnixMilli()
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE scheduled_messages SET sent_at=?,message_id=?,error=''
+	 WHERE id=? AND sent_at=0`, at, messageID, id)
+	return err
+}
+
+// MarkScheduledFailed keeps a message in the queue and remembers why it did not
+// go. A conversation that could not be reached now is usually reachable later,
+// and dropping the message would lose words nobody has a copy of.
+func (s *Store) MarkScheduledFailed(ctx context.Context, id, reason string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE scheduled_messages SET error=? WHERE id=? AND sent_at=0`, reason, id)
+	return err
+}
+
+// CancelScheduledMessage removes one that has not gone yet. A message already
+// sent is a message in a conversation, and this cannot reach it.
+func (s *Store) CancelScheduledMessage(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM scheduled_messages WHERE id=? AND sent_at=0`, id)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+		return errors.New("that message has either gone already or was never scheduled")
+	}
+	return nil
 }
 
 func (s *Store) MarkChatRead(ctx context.Context, chatJID string) error {

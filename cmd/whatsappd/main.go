@@ -173,6 +173,10 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 		downloader := updates.Downloader{Dir: filepath.Join(paths.CacheDir, "updates")}
 		return downloader.Fetch(ctx, release, runtime.GOOS, runtime.GOARCH, progress)
 	})
+	// Messages written for later go out from here. Nothing sends them while
+	// the daemon is not running, so one that came due meanwhile goes on the
+	// first sweep, late rather than never.
+	go app.RunScheduler(ctx)
 	defer app.Close()
 	server := rpc.NewServer(paths.Socket, app, broker)
 	if err := server.Listen(); err != nil {
