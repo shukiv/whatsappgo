@@ -70,6 +70,7 @@ func (c *Client) handleEvent(raw any) {
 			}
 			c.backfillCallLogs()
 			c.backfillChatSettings()
+			c.catchUpAppState()
 			go c.backfillReactions()
 			// Older messages and their attachments are collected side by
 			// side. Queueing the files behind the whole history would leave
@@ -222,6 +223,54 @@ const chatSettingsBackfillMetadataKey = "chat_settings_app_state_backfill_v7"
 // the low-priority one. A full sync is required once for installations that
 // linked before either was imported, because reconnecting only fetches
 // mutations newer than the cached collection version.
+// catchUpAppState asks for everything the account changed elsewhere while this
+// device was not listening, and repairs a collection that has stopped applying.
+//
+// whatsmeow fetches a collection when the server sends a notification saying it
+// changed, which it can only do while this device is connected. A call taken, a
+// conversation pinned or a contact blocked with the app closed is never
+// collected afterwards: the notification went to nobody. Worse, when patches
+// stop verifying the failure is written to a log and the stored version stays
+// where it was, so every later notification fails in the same place and the
+// collection is frozen for good - which is how a call list stops at a date
+// months ago while every other part of the app keeps working.
+func (c *Client) catchUpAppState() {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	fetch := c.fetchAppState
+	if fetch == nil {
+		fetch = c.wa.FetchAppState
+	}
+	for _, name := range appstate.AllPatchNames {
+		// The phone has been asked for this one and has not answered yet.
+		// Fetching it again only repeats the failure that asked.
+		if c.awaitingAppStateRecovery(ctx, name) {
+			continue
+		}
+		err := fetch(ctx, name, false, false)
+		if err == nil {
+			continue
+		}
+		if !isAppStateHashMismatch(err) {
+			// A collection that could not be reached is not a drifted one.
+			// The next connection asks again.
+			continue
+		}
+		if err := fetch(ctx, name, true, false); err != nil {
+			if isAppStateHashMismatch(err) {
+				// A fresh copy that still does not add up leaves only the
+				// phone, which is asked at most once a day.
+				c.recoverAppState(ctx, name, "account settings")
+			}
+			continue
+		}
+	}
+	// Whatever arrived came as mutations the handlers have already stored; the
+	// window is told to read them.
+	c.emit(gateway.Event{Name: "calls.synced"})
+	c.emit(gateway.Event{Name: "chat.updated"})
+}
+
 func (c *Client) backfillCallLogs() {
 	c.backfillAppState(appstate.WAPatchRegular, callLogBackfillMetadataKey, "sync call history", "calls.synced")
 }
