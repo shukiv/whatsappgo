@@ -320,11 +320,15 @@ Item {
     property real voiceScrub: -1
     readonly property real voiceHandleFraction:
         voiceScrub >= 0 ? voiceScrub : (playingThis ? playProgress : 0)
-    // A recording of ours the other side has listened to. WhatsApp turns its
-    // play control and its handle the blue of a read receipt, which is the
-    // only thing that tells a recording that arrived from one that was heard.
-    readonly property bool voiceHeard:
-        audioKind && Boolean(modelData.from_me) && modelData.status === "played"
+    // A recording that has been listened to, in either direction: one of ours
+    // the other side has heard, or one of theirs this reader has played. The
+    // handle turns from green to blue, which is the only thing separating a
+    // recording that arrived from one that was actually listened to.
+    readonly property bool voiceHeard: audioKind
+        && (modelData.status === "played" || Number(modelData.played_at || 0) > 0)
+    // Ours, heard by them. The play control is marked as well in that
+    // direction, because nothing else on the message reports it.
+    readonly property bool voiceHeardByOther: voiceHeard && Boolean(modelData.from_me)
 
     // The amplitude bars the sender recorded. Messages that reached this
     // device without them still read as a voice note rather than a flat line:
@@ -1080,11 +1084,16 @@ Item {
                         objectName: "voicePlayButton"
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 30
+                        // Solid, not an outline. The web client draws this one
+                        // control filled while every other play mark in the
+                        // interface is a stroke, and an outlined triangle on a
+                        // recording reads as a different control.
                         iconSource: root.playingThis && Playback.playing
-                            ? Qt.resolvedUrl("icons/pause.svg") : Qt.resolvedUrl("icons/play.svg")
+                            ? Qt.resolvedUrl("icons/pause-filled.svg")
+                            : Qt.resolvedUrl("icons/play-filled.svg")
                         iconSize: 18
                         padding: 0
-                        iconTint: root.voiceHeard ? Theme.readReceipt : Theme.icon
+                        iconTint: root.voiceHeardByOther ? Theme.voicePlayed : Theme.text
                         Accessible.name: root.playingThis && Playback.playing
                             ? qsTr("Pause voice message")
                             : root.voiceHeard
@@ -1139,7 +1148,7 @@ Item {
                             width: 12
                             height: 12
                             radius: 6
-                            color: root.voiceHeard ? Theme.readReceipt : Theme.primary
+                            color: root.voiceHeard ? Theme.voicePlayed : Theme.voiceUnplayed
                             border.width: 1
                             border.color: root.modelData.from_me ? Theme.outgoingBubble : Theme.surface
                             anchors.verticalCenter: parent.verticalCenter

@@ -62,6 +62,13 @@ ItemDelegate {
         }
     }
 
+    // Somebody's recording that has not been listened to yet. Our own
+    // recordings are never this: the mark is about what is owed to the reader.
+    readonly property bool unplayedVoiceNote:
+        String(root.modelData.last_message_kind || "") === "audio"
+        && !root.modelData.last_message_from_me
+        && String(root.modelData.last_message_status || "") !== "played"
+
     // A voice note reads as its length in the list, the way it does in the
     // conversation; everything else keeps the stored preview text.
     readonly property string previewText: {
@@ -329,7 +336,10 @@ ItemDelegate {
                     Layout.preferredHeight: 15
                     Layout.alignment: Qt.AlignVCenter
                     source: root.previewKindIcon !== "" ? Qt.resolvedUrl("icons/" + root.previewKindIcon) : ""
-                    tint: Theme.textMuted
+                    // A recording waiting to be listened to is marked here as
+                    // well as in the conversation, so a list of chats says
+                    // which one is holding something unheard.
+                    tint: root.unplayedVoiceNote ? Theme.primary : Theme.textMuted
                 }
 
                 Label {

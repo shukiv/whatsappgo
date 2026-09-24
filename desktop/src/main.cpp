@@ -2238,6 +2238,34 @@ QtObject {
         const auto timestampRight = timestamp->mapToItem(chatItem, QPointF(timestamp->width(), 0)).x();
         const auto badgeRight = badge->mapToItem(chatItem, QPointF(badge->width(), 0)).x();
 
+        // A chat holding a recording nobody has listened to says so in the
+        // list, and stops saying it once the recording has been played.
+        const auto voiceChat = [&](bool mine, const QString &status) {
+            QVariantMap row = chat;
+            row[QStringLiteral("last_message_kind")] = QStringLiteral("audio");
+            row[QStringLiteral("last_message_preview")] = QStringLiteral("0:01");
+            row[QStringLiteral("last_message_from_me")] = mine;
+            row[QStringLiteral("last_message_status")] = status;
+            return row;
+        };
+        const auto micTint = [&](const QVariantMap &row) {
+            std::unique_ptr<QObject> delegate(chatComponent.createWithInitialProperties({
+                {QStringLiteral("width"), 436},
+                {QStringLiteral("modelData"), row},
+                {QStringLiteral("current"), false},
+            }));
+            if (!delegate)
+                return QColor();
+            QCoreApplication::processEvents();
+            auto *icon = delegate->findChild<QObject *>(QStringLiteral("chatPreviewKindIcon"));
+            return icon == nullptr ? QColor() : icon->property("tint").value<QColor>();
+        };
+        const auto waitingGreen = micTint(voiceChat(false, QStringLiteral("received")));
+        const bool unplayedVoiceMarked = waitingGreen == QColor(QStringLiteral("#1DAA61"))
+            || waitingGreen == QColor(QStringLiteral("#00A884"));
+        const bool playedVoiceUnmarked = micTint(voiceChat(false, QStringLiteral("played"))) != waitingGreen;
+        const bool ownVoiceUnmarked = micTint(voiceChat(true, QStringLiteral("delivered"))) != waitingGreen;
+
         QQmlComponent messageComponent(&engine, QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/MessageDelegate.qml")));
         const auto shortLine = QStringLiteral("This is one short quoted line.");
         const auto multiline = QStringList(10, shortLine).join(QLatin1Char('\n'));
@@ -2305,6 +2333,9 @@ QtObject {
                 && note(preview->implicitHeight() <= 22.0, "preview height")
                 && note(!preview->property("text").toString().contains(QStringLiteral("<br>")), "preview line break")
                 && note(preview->property("text").toString().contains(QStringLiteral("line Second")), "preview text")
+                && note(unplayedVoiceMarked, "unplayed voice note marked in the list")
+                && note(playedVoiceUnmarked, "played voice note no longer marked in the list")
+                && note(ownVoiceUnmarked, "our own recording not marked as waiting")
                 && note(bubble && bubble->width() < 360.0, "bubble width")
                 && note(tail && qFuzzyIsNull(tail->rotation()) && tail->z() >= 0.0, "bubble tail")
                 // WhatsApp Web's tail is 8 device pixels wide and 14 tall, and
@@ -2902,39 +2933,66 @@ QtObject {
             QCoreApplication::processEvents();
         }
 
-        // A recording of ours reads one of two ways: delivered, or listened
-        // to. Only the blue says it was heard.
-        const QColor listenedBlue(QStringLiteral("#007BFC"));
-        const auto voiceOfOurs = [&](const QString &status) {
-            QVariantMap mine = voice;
-            mine[QStringLiteral("id")] = QStringLiteral("voice-") + status;
-            mine[QStringLiteral("from_me")] = true;
-            mine[QStringLiteral("status")] = status;
-            return mine;
+        // The play mark is solid here, while every other one in the interface
+        // is an outline. An outlined triangle on a recording reads as some
+        // other control.
+        require(voicePlay != nullptr
+                    && voicePlay->property("iconSource").toUrl().fileName() == QStringLiteral("play-filled.svg"),
+                QStringLiteral("the play mark on a recording is an outline"));
+
+        // A recording that has been listened to says so with a blue handle,
+        // whoever listened. These are the two colours the web client uses, not
+        // the blue on a read message, which reports a different thing.
+        const QColor unplayedGreen(QStringLiteral("#09D261"));
+        const QColor listenedBlue(QStringLiteral("#4FC3F7"));
+        require(voiceHandle != nullptr && voiceHandle->property("color").value<QColor>() == unplayedGreen,
+                QStringLiteral("a recording nobody has played is not marked as waiting to be"));
+
+        const auto voiceWith = [&](bool mine, const QString &status) {
+            QVariantMap message = voice;
+            message[QStringLiteral("id")] = QStringLiteral("voice-") + status
+                + (mine ? QStringLiteral("-mine") : QString());
+            message[QStringLiteral("from_me")] = mine;
+            message[QStringLiteral("status")] = status;
+            return message;
         };
-        std::unique_ptr<QObject> heardDelegate(component.createWithInitialProperties({
-            {QStringLiteral("width"), paneWidth},
-            {QStringLiteral("modelData"), voiceOfOurs(QStringLiteral("played"))},
-        }));
-        std::unique_ptr<QObject> deliveredDelegate(component.createWithInitialProperties({
-            {QStringLiteral("width"), paneWidth},
-            {QStringLiteral("modelData"), voiceOfOurs(QStringLiteral("delivered"))},
-        }));
-        if (!heardDelegate || !deliveredDelegate)
+        const auto delegateFor = [&](const QVariantMap &message) {
+            return std::unique_ptr<QObject>(component.createWithInitialProperties({
+                {QStringLiteral("width"), paneWidth},
+                {QStringLiteral("modelData"), message},
+            }));
+        };
+        auto heardDelegate = delegateFor(voiceWith(true, QStringLiteral("played")));
+        auto deliveredDelegate = delegateFor(voiceWith(true, QStringLiteral("delivered")));
+        // Theirs, played here: the reader's own listening turns this one.
+        auto listenedDelegate = delegateFor(voiceWith(false, QStringLiteral("played")));
+        auto arrivedDelegate = delegateFor(voiceWith(false, QStringLiteral("received")));
+        if (!heardDelegate || !deliveredDelegate || !listenedDelegate || !arrivedDelegate)
             return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
-        auto *heardHandle = heardDelegate->findChild<QObject *>(QStringLiteral("voiceHandle"));
-        auto *heardPlay = heardDelegate->findChild<QObject *>(QStringLiteral("voicePlayButton"));
-        auto *deliveredHandle = deliveredDelegate->findChild<QObject *>(QStringLiteral("voiceHandle"));
-        auto *deliveredPlay = deliveredDelegate->findChild<QObject *>(QStringLiteral("voicePlayButton"));
-        require(heardHandle != nullptr && heardHandle->property("color").value<QColor>() == listenedBlue,
-                QStringLiteral("a recording that was listened to does not mark its handle"));
-        require(heardPlay != nullptr && heardPlay->property("iconTint").value<QColor>() == listenedBlue,
-                QStringLiteral("a recording that was listened to does not mark its play control"));
-        require(deliveredHandle != nullptr && deliveredHandle->property("color").value<QColor>() != listenedBlue,
-                QStringLiteral("a recording that only arrived is shown as listened to"));
-        require(deliveredPlay != nullptr && deliveredPlay->property("iconTint").value<QColor>() != listenedBlue,
-                QStringLiteral("a recording that only arrived marks its play control as heard"));
+        const auto handleColour = [](const std::unique_ptr<QObject> &delegate) {
+            auto *handle = delegate->findChild<QObject *>(QStringLiteral("voiceHandle"));
+            return handle == nullptr ? QColor() : handle->property("color").value<QColor>();
+        };
+        const auto playTint = [](const std::unique_ptr<QObject> &delegate) {
+            auto *play = delegate->findChild<QObject *>(QStringLiteral("voicePlayButton"));
+            return play == nullptr ? QColor() : play->property("iconTint").value<QColor>();
+        };
+        require(handleColour(heardDelegate) == listenedBlue,
+                QStringLiteral("a recording of ours that was listened to does not mark its handle"));
+        require(playTint(heardDelegate) == listenedBlue,
+                QStringLiteral("a recording of ours that was listened to does not mark its play control"));
+        require(handleColour(deliveredDelegate) == unplayedGreen,
+                QStringLiteral("a recording of ours that only arrived is shown as listened to"));
+        require(playTint(deliveredDelegate) != listenedBlue,
+                QStringLiteral("a recording of ours that only arrived marks its play control as heard"));
+        require(handleColour(listenedDelegate) == listenedBlue,
+                QStringLiteral("a recording this reader has played is still marked as waiting"));
+        // The reader knows they pressed it. Only the handle reports it back.
+        require(playTint(listenedDelegate) != listenedBlue,
+                QStringLiteral("a recording this reader played marks its own play control"));
+        require(handleColour(arrivedDelegate) == unplayedGreen,
+                QStringLiteral("a recording that arrived and was never played is marked as heard"));
         if (voiceRow != nullptr) {
             qInfo().noquote() << QStringLiteral("voice row height=%1").arg(voiceRow->height());
             require(voiceRow->height() <= 56.0,

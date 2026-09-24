@@ -95,6 +95,13 @@ QtObject {
     // WhatsApp Web's `--icon-ack`, measured from the live client. It carries the
     // same value in both themes, which is why this one is not a light/dark pair.
     readonly property color readReceipt: "#007BFC"
+    // The handle on a voice note: green until the recording has been listened
+    // to, then blue. Both are read off the web client rather than chosen - its
+    // green is brighter than the interface green, and its blue is lighter than
+    // the blue on a read message, which is a different fact about a different
+    // thing.
+    readonly property color voiceUnplayed: "#09D261"
+    readonly property color voicePlayed: "#4FC3F7"
     // A link inside a bubble is drawn a shade deeper than the accent green so it
     // stays legible on the outgoing bubble's pale fill.
     readonly property color link: dark ? "#53BDEB" : "#1B8755"

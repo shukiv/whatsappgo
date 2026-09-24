@@ -206,7 +206,9 @@ qt_add_qml_module(whatsappgo
         qml/icons/forward.svg
         qml/icons/group-add.svg
         qml/icons/pause.svg
+        qml/icons/pause-filled.svg
         qml/icons/play.svg
+        qml/icons/play-filled.svg
         qml/icons/profile.svg
         qml/icons/sort.svg
         qml/icons/settings.svg
