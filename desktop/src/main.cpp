@@ -1,4 +1,5 @@
 #include "rpcclient.h"
+#include "desktopentry.h"
 #include "traybehavior.h"
 #include "lucideprovider.h"
 #include "uninstall.h"
@@ -306,6 +307,8 @@ int main(int argc, char *argv[])
     parser.addOption(channelPostsTestOption);
     QCommandLineOption voiceSeekTestOption(QStringLiteral("voice-seek-test"), QStringLiteral("Verify moving through a recording that is not playing survives the decoder"));
     parser.addOption(voiceSeekTestOption);
+    QCommandLineOption desktopEntryTestOption(QStringLiteral("desktop-entry-test"), QStringLiteral("Verify the launcher entry and icon this program writes for itself"));
+    parser.addOption(desktopEntryTestOption);
     QCommandLineOption voiceSeekFileOption(QStringLiteral("voice-seek-file"), QStringLiteral("The recording --voice-seek-test moves through"), QStringLiteral("path"));
     parser.addOption(voiceSeekFileOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
@@ -432,6 +435,62 @@ int main(int argc, char *argv[])
             return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
     }
+    if (parser.isSet(desktopEntryTestOption)) {
+        // The entry is written into the directories this run was given, which
+        // the suite points at the build tree: nothing here can reach the menus
+        // of whoever is running the tests.
+        const auto shareRoot = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+        const auto entryPath = QDir(shareRoot).filePath(QStringLiteral("applications/org.whatsappgo.Desktop.desktop"));
+        const auto iconPath = QDir(shareRoot).filePath(QStringLiteral("icons/hicolor/scalable/apps/org.whatsappgo.Desktop.svg"));
+        const auto readAll = [](const QString &path) {
+            QFile file(path);
+            return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+        };
+        // A run of the suite leaves these behind, and the next run has to
+        // begin from a computer that has never seen this program.
+        QFile::remove(entryPath);
+        QFile::remove(iconPath);
+
+        const auto downloaded = QStringLiteral("/home/someone/Downloads/WhatsAppGo-x86_64.AppImage");
+        const auto first = installDesktopEntry(downloaded);
+        if (first.size() != 2)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto entry = readAll(entryPath);
+        // Without a name the shell has nothing to call it, without an icon
+        // nothing to draw, and without the window class nothing to tie the
+        // window it can see to the entry it has.
+        if (!entry.contains(QStringLiteral("\nName=WhatsAppGo\n"))
+                || !entry.contains(QStringLiteral("\nIcon=org.whatsappgo.Desktop\n"))
+                || !entry.contains(QStringLiteral("\nStartupWMClass=WhatsAppGo\n"))
+                || !entry.contains(QStringLiteral("\nExec=\"") + downloaded + QStringLiteral("\"\n"))) {
+            qWarning().noquote() << entry;
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        // The icon has to be the picture itself, not a name pointing at one
+        // the computer has never been given.
+        const auto icon = readAll(iconPath);
+        if (!icon.startsWith(QStringLiteral("<svg")) || !icon.contains(QStringLiteral("</svg>")))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // Startup runs this every time. Writing the same entry again would
+        // have the desktop reread its menus for nothing.
+        if (!installDesktopEntry(downloaded).isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // A file moved elsewhere leaves an entry that starts nothing. Only the
+        // entry is rewritten; the icon has not changed.
+        const auto moved = QStringLiteral("/opt/whatsappgo/WhatsAppGo-x86_64.AppImage");
+        const auto again = installDesktopEntry(moved);
+        if (again.size() != 1 || again.constFirst() != entryPath)
+            return WHATSAPPGO_TEST_FAILURE();
+        if (!readAll(entryPath).contains(QStringLiteral("\nExec=\"") + moved + QStringLiteral("\"\n")))
+            return WHATSAPPGO_TEST_FAILURE();
+
+        // And nothing is written for a program with no path to start.
+        if (!installDesktopEntry(QString()).isEmpty())
+            return WHATSAPPGO_TEST_FAILURE();
+        return EXIT_SUCCESS;
+    }
     const bool smokeTest = parser.isSet(smokeTestOption);
     const bool menuPlacementTest = parser.isSet(menuPlacementTestOption);
     const bool searchNavigationTest = parser.isSet(searchNavigationTestOption);
@@ -482,6 +541,18 @@ int main(int argc, char *argv[])
     // that only exist with monitors running can still be exercised.
     if (automatedRun && !qEnvironmentVariableIsSet("WHATSAPPGO_DISABLE_PROFILE_MONITORS"))
         qputenv("WHATSAPPGO_DISABLE_PROFILE_MONITORS", "1");
+
+    // Tell the desktop what this program is called and what it looks like. A
+    // downloaded single file is not installed anywhere, so nothing else will.
+    // Never during an automated run: the suite must not write into the menus
+    // of whoever happens to be running it.
+    if (!automatedRun) {
+        // The file the program was started from, which for a single
+        // downloaded file is the download itself rather than what it unpacked
+        // into a temporary directory to run.
+        const auto appImage = qEnvironmentVariable("APPIMAGE");
+        installDesktopEntry(appImage.isEmpty() ? QCoreApplication::applicationFilePath() : appImage);
+    }
 
     auto initialProfile = parser.value(profileOption);
     const QRegularExpression validProfile(QStringLiteral("^[a-z0-9][a-z0-9_-]{0,31}$"));

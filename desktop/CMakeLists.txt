@@ -33,6 +33,8 @@ qt_add_executable(whatsappgo
     src/updateinstaller.h
     src/traybehavior.cpp
     src/traybehavior.h
+    src/desktopentry.cpp
+    src/desktopentry.h
 )
 
 qt_add_resources(whatsappgo "desktop-assets"
@@ -614,6 +616,12 @@ if(BUILD_TESTING)
     # own: these directories are the only ones it can reach.
     set_tests_properties(desktop-uninstall PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/un;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/config")
+    add_test(NAME desktop-desktop-entry COMMAND whatsappgo --desktop-entry-test)
+    # Writing a launcher entry puts a file in the applications menu, so the test
+    # is given a menu of its own rather than the one on this computer.
+    set_tests_properties(desktop-desktop-entry PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/de;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/config"
+        TIMEOUT 10)
     add_test(NAME desktop-composer-drafts COMMAND whatsappgo --composer-draft-test)
     # The drafts test adds and switches accounts, so it needs settings of its
     # own and a backend that cannot start: it must never touch the accounts the

@@ -176,6 +176,17 @@ UninstallPlan planUninstall()
     const auto entries = desktopEntriesFor(plan.appImage);
     for (const auto &entry : entries)
         add(plan, entry, QStringLiteral("the launcher entry for this AppImage"));
+    // The entry this program writes for itself, and the icon that entry names.
+    // Both are found by name rather than by what they contain: an entry whose
+    // Exec has since been edited by hand is still ours to take away.
+    const auto shareRoot = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (!shareRoot.isEmpty()) {
+        const auto entry = QDir(shareRoot).filePath(QStringLiteral("applications/org.whatsappgo.Desktop.desktop"));
+        if (!entries.contains(entry))
+            add(plan, entry, QStringLiteral("the launcher entry in the applications menu"));
+        add(plan, QDir(shareRoot).filePath(QStringLiteral("icons/hicolor/scalable/apps/org.whatsappgo.Desktop.svg")),
+            QStringLiteral("the application icon"));
+    }
 
     return plan;
 }
