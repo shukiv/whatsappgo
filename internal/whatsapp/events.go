@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math"
 	"mime"
@@ -1231,36 +1230,50 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 		if raw == nil || !isRefreshableMediaDownload(err) {
 			return model.Message{}, err
 		}
-		requestPath := c.requestMediaRetryPath
-		if requestPath == nil {
-			requestPath = c.awaitMediaRetryPath
-		}
-		freshPath, retryErr := requestPath(ctx, msg, media)
-		if retryErr != nil {
-			return model.Message{}, fmt.Errorf("could not fetch this attachment again: %w", retryErr)
-		}
-		if !setMediaDirectPath(raw, freshPath) {
-			return model.Message{}, errors.New("could not fetch this attachment again: unsupported message type")
-		}
-		payload, marshalErr := proto.Marshal(raw)
-		if marshalErr != nil {
-			return model.Message{}, fmt.Errorf("save refreshed media path: %w", marshalErr)
-		}
-		if saveErr := c.store.SaveMediaPayload(ctx, msg.ChatJID, msg.ID, payload); saveErr != nil {
-			return model.Message{}, fmt.Errorf("save refreshed media path: %w", saveErr)
-		}
-		if resetErr := tmp.Truncate(0); resetErr != nil {
-			return model.Message{}, resetErr
-		}
-		if _, resetErr := tmp.Seek(0, io.SeekStart); resetErr != nil {
-			return model.Message{}, resetErr
-		}
 		downloadFresh := c.downloadWithPathToFile
 		if downloadFresh == nil {
 			downloadFresh = c.downloadFromPath
 		}
-		if retryErr := downloadFresh(ctx, freshPath, media, tmp); retryErr != nil {
-			return model.Message{}, retryErr
+		// The message carries a second address for the same attachment that
+		// nothing has tried yet. It costs one request and it is the only copy
+		// left when a refreshed direct path turned out to be a different
+		// upload from the one this message's key opens.
+		recovered := false
+		if alternate := mediaURLPath(media); alternate != "" {
+			if resetErr := emptyFile(tmp); resetErr != nil {
+				return model.Message{}, resetErr
+			}
+			recovered = downloadFresh(ctx, alternate, media, tmp) == nil
+		}
+		if !recovered {
+			requestPath := c.requestMediaRetryPath
+			if requestPath == nil {
+				requestPath = c.awaitMediaRetryPath
+			}
+			freshPath, retryErr := requestPath(ctx, msg, media)
+			if retryErr != nil {
+				return model.Message{}, fmt.Errorf("could not fetch this attachment again: %w", retryErr)
+			}
+			if resetErr := emptyFile(tmp); resetErr != nil {
+				return model.Message{}, resetErr
+			}
+			if retryErr := downloadFresh(ctx, freshPath, media, tmp); retryErr != nil {
+				return model.Message{}, retryErr
+			}
+			// Only now is the refreshed path known to be the attachment this
+			// message describes. Writing it down before the download proved
+			// it would replace an address that works with one that does not,
+			// and the message carries no third address to fall back to.
+			if !setMediaDirectPath(raw, freshPath) {
+				return model.Message{}, errors.New("could not fetch this attachment again: unsupported message type")
+			}
+			payload, marshalErr := proto.Marshal(raw)
+			if marshalErr != nil {
+				return model.Message{}, fmt.Errorf("save refreshed media path: %w", marshalErr)
+			}
+			if saveErr := c.store.SaveMediaPayload(ctx, msg.ChatJID, msg.ID, payload); saveErr != nil {
+				return model.Message{}, fmt.Errorf("save refreshed media path: %w", saveErr)
+			}
 		}
 	}
 	if err := tmp.Close(); err != nil {

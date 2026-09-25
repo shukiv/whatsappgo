@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+	"net/url"
+	"strings"
 
 	"go.mau.fi/whatsmeow"
 )
@@ -70,6 +72,50 @@ func (c *Client) downloadFromPath(ctx context.Context, directPath string, media 
 	return download(ctx, directPath, encHash, media.GetFileSHA256(), media.GetMediaKey(), mediaType, false, file)
 }
 
+// mediaURLPath reports the path on the media host named by the message's own
+// url, when that is a different upload from the direct path.
+//
+// WhatsApp sends both and the library only ever reads the direct path, so the
+// url is a second address for the same attachment that nothing was using. The
+// two can come apart: a direct path refreshed by the phone points at a fresh
+// upload, while the url still points at the one the message's key opens.
+func mediaURLPath(media whatsmeow.DownloadableMessage) string {
+	addressed, ok := media.(interface{ GetURL() string })
+	if !ok {
+		return ""
+	}
+	parsed, err := url.Parse(addressed.GetURL())
+	if err != nil || parsed.Path == "" {
+		return ""
+	}
+	path := parsed.EscapedPath()
+	// mms3 belongs to the whole url and not to a path on a media host, which
+	// is what the library is about to build a url out of.
+	kept := make([]string, 0, 8)
+	for _, part := range strings.Split(parsed.RawQuery, "&") {
+		if part != "" && !strings.HasPrefix(part, "mms3=") {
+			kept = append(kept, part)
+		}
+	}
+	if len(kept) > 0 {
+		path += "?" + strings.Join(kept, "&")
+	}
+	if path == media.GetDirectPath() {
+		return ""
+	}
+	return path
+}
+
+// emptyFile rewinds an attachment being downloaded, so the next attempt starts
+// on a file holding nothing rather than appending to what failed.
+func emptyFile(file whatsmeow.File) error {
+	if err := file.Truncate(0); err != nil {
+		return err
+	}
+	_, err := file.Seek(0, io.SeekStart)
+	return err
+}
+
 // encryptedMediaHash reports the hash of the encrypted attachment and leaves
 // the file empty, ready for the download that follows.
 func encryptedMediaHash(ctx context.Context, download mediaPathDownloader, directPath string, mediaType whatsmeow.MediaType, file whatsmeow.File) ([]byte, error) {
@@ -83,10 +129,7 @@ func encryptedMediaHash(ctx context.Context, download mediaPathDownloader, direc
 	if _, err := io.Copy(hash, file); err != nil {
 		return nil, err
 	}
-	if err := file.Truncate(0); err != nil {
-		return nil, err
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
+	if err := emptyFile(file); err != nil {
 		return nil, err
 	}
 	return hash.Sum(nil), nil

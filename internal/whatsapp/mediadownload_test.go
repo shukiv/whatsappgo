@@ -288,6 +288,97 @@ func TestBytesThatCannotBeOpenedAreAskedForAgain(t *testing.T) {
 	}
 }
 
+func TestTheOtherAddressInTheMessageIsTriedBeforeThePhone(t *testing.T) {
+	// A message names its attachment twice. The library reads one of the two,
+	// and when that one is the wrong upload the other is the only copy left.
+	plain := []byte("the sticker itself")
+	decrypted := sha256.Sum256(plain)
+	msg := model.Message{ID: "two-addresses", ChatJID: "marta@lid", SenderJID: "marta@lid", Timestamp: 1, Kind: "image", MediaMIME: "image/webp", Status: "received"}
+	raw := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		URL:        proto.String("https://mmg.whatsapp.net/v/t62/first_n.enc?ccb=11-4&oh=abc&oe=def&mms3=true"),
+		DirectPath: proto.String("/v/t62/second_n.enc?ccb=11-4&oh=ghi&oe=jkl"),
+		MediaKey:   []byte("the-key"),
+		FileSHA256: decrypted[:],
+	}}
+	st, ctx := storedMessage(t, msg, raw)
+	host := &fakeMediaHost{
+		t: t, cipher: []byte("scrambled bytes"), plain: plain, key: []byte("the-key"),
+		refuse: map[string]error{"/v/t62/second_n.enc?ccb=11-4&oh=ghi&oe=jkl": whatsmeow.ErrInvalidMediaHMAC},
+	}
+	c := &Client{
+		store: st, mediaDir: t.TempDir(), downloadPathToFile: host.download,
+		requestMediaRetryPath: func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error) {
+			t.Fatal("the phone was asked while the message still had an address to try")
+			return "", nil
+		},
+	}
+
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	if err != nil {
+		t.Fatalf("the second address was never tried: %v", err)
+	}
+	if data, err := os.ReadFile(result.MediaPath); err != nil || !bytes.Equal(data, plain) {
+		t.Fatalf("wrong file on disk: %q err=%v", data, err)
+	}
+	// The url names a path on the media host, which is not the whole url: the
+	// scheme, the host and the parameter that belongs to the url all go.
+	if got := mediaURLPath(raw.GetImageMessage()); got != "/v/t62/first_n.enc?ccb=11-4&oh=abc&oe=def" {
+		t.Fatalf("the url turned into %q", got)
+	}
+	// Both names for one upload is the ordinary case, and there is nothing to
+	// try twice there.
+	same := &waE2E.ImageMessage{
+		URL:        proto.String("https://mmg.whatsapp.net/v/t62/only_n.enc?ccb=11-4&mms3=true"),
+		DirectPath: proto.String("/v/t62/only_n.enc?ccb=11-4"),
+	}
+	if got := mediaURLPath(same); got != "" {
+		t.Fatalf("one upload looked like two: %q", got)
+	}
+}
+
+func TestARefreshedPathIsOnlyWrittenDownOnceItWorks(t *testing.T) {
+	// Writing a refreshed path down before it has worked replaces an address
+	// with one that may be a different upload, and the message is then left
+	// with no way back to the one its key opens.
+	plain := []byte("the sticker itself")
+	decrypted := sha256.Sum256(plain)
+	msg := model.Message{ID: "kept-address", ChatJID: "marta@lid", SenderJID: "marta@lid", Timestamp: 1, Kind: "image", MediaMIME: "image/webp", Status: "received"}
+	raw := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		DirectPath: proto.String("/original"),
+		MediaKey:   []byte("the-key"),
+		FileSHA256: decrypted[:],
+	}}
+	st, ctx := storedMessage(t, msg, raw)
+	host := &fakeMediaHost{
+		t: t, cipher: []byte("scrambled bytes"), plain: plain, key: []byte("the-key"),
+		refuse: map[string]error{
+			"/original": whatsmeow.ErrMediaDownloadFailedWith404,
+			"/wrong":    whatsmeow.ErrInvalidMediaHMAC,
+		},
+	}
+	c := &Client{
+		store: st, mediaDir: t.TempDir(), downloadPathToFile: host.download,
+		requestMediaRetryPath: func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error) {
+			return "/wrong", nil
+		},
+	}
+
+	if _, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw); err == nil {
+		t.Fatal("a refreshed path that does not open the attachment was accepted")
+	}
+	payload, available, err := st.MediaPayload(ctx, msg.ChatJID, msg.ID)
+	if err != nil || !available {
+		t.Fatalf("stored payload missing: available=%v err=%v", available, err)
+	}
+	var stored waE2E.Message
+	if err := proto.Unmarshal(payload, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored.GetImageMessage().GetDirectPath(); got != "/original" {
+		t.Fatalf("the message's own address was overwritten with %q", got)
+	}
+}
+
 func TestTheLibraryCannotDownloadAKeyedAttachmentWithNoHash(t *testing.T) {
 	// The reason any of this exists. Asking for these bytes the ordinary way
 	// fails, whichever way the failure is dressed up.
