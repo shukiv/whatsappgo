@@ -31,6 +31,24 @@ func isExpiredMediaDownload(err error) bool {
 		errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410)
 }
 
+// isUndecryptableMedia reports whether the media host served bytes that the
+// key on the message cannot open. The bytes and the key can drift apart - an
+// attachment re-uploaded under a new key, or a stored message that no longer
+// describes what the host holds - and the phone is the only party that can say
+// where the attachment really is now.
+func isUndecryptableMedia(err error) bool {
+	return errors.Is(err, whatsmeow.ErrInvalidMediaHMAC) ||
+		errors.Is(err, whatsmeow.ErrInvalidMediaSHA256) ||
+		errors.Is(err, whatsmeow.ErrInvalidMediaEncSHA256) ||
+		errors.Is(err, whatsmeow.ErrInvalidUnencryptedMediaSHA256)
+}
+
+// isRefreshableMediaDownload reports whether asking the phone again is worth
+// doing: either the path has expired or the bytes behind it cannot be opened.
+func isRefreshableMediaDownload(err error) bool {
+	return isExpiredMediaDownload(err) || isUndecryptableMedia(err)
+}
+
 func setMediaDirectPath(raw *waE2E.Message, directPath string) bool {
 	switch {
 	case raw.GetImageMessage() != nil:

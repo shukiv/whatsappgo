@@ -72,10 +72,14 @@ type Client struct {
 	downloadToFile         func(context.Context, whatsmeow.DownloadableMessage, whatsmeow.File) error
 	requestMediaRetryPath  func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error)
 	downloadWithPathToFile func(context.Context, string, whatsmeow.DownloadableMessage, whatsmeow.File) error
-	sendReactionMessage    func(context.Context, types.JID, types.JID, types.MessageID, string) (whatsmeow.SendResponse, error)
-	sendPeerMessage        func(context.Context, *waE2E.Message) (whatsmeow.SendResponse, error)
-	fetchAppState          func(context.Context, appstate.WAPatchName, bool, bool) error
-	sendAppState           func(context.Context, appstate.PatchInfo) error
+	// downloadPathToFile is the lowest level of the three: it carries the
+	// hashes and the key, which is what an attachment missing the hash of
+	// its encrypted bytes needs rearranged for it.
+	downloadPathToFile  mediaPathDownloader
+	sendReactionMessage func(context.Context, types.JID, types.JID, types.MessageID, string) (whatsmeow.SendResponse, error)
+	sendPeerMessage     func(context.Context, *waE2E.Message) (whatsmeow.SendResponse, error)
+	fetchAppState       func(context.Context, appstate.WAPatchName, bool, bool) error
+	sendAppState        func(context.Context, appstate.PatchInfo) error
 	// lookupIdentity answers with a user's other address. It stands in for
 	// whatsmeow's mapping table, which a test has no way to populate.
 	lookupIdentity func(context.Context, types.JID) types.JID

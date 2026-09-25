@@ -1227,12 +1227,8 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 			os.Remove(tmpName)
 		}
 	}()
-	download := c.downloadToFile
-	if download == nil {
-		download = c.wa.DownloadToFile
-	}
-	if err := download(ctx, media, tmp); err != nil {
-		if raw == nil || !isExpiredMediaDownload(err) {
+	if err := c.fetchMedia(ctx, media, tmp); err != nil {
+		if raw == nil || !isRefreshableMediaDownload(err) {
 			return model.Message{}, err
 		}
 		requestPath := c.requestMediaRetryPath
@@ -1241,10 +1237,10 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 		}
 		freshPath, retryErr := requestPath(ctx, msg, media)
 		if retryErr != nil {
-			return model.Message{}, fmt.Errorf("refresh expired media: %w", retryErr)
+			return model.Message{}, fmt.Errorf("could not fetch this attachment again: %w", retryErr)
 		}
 		if !setMediaDirectPath(raw, freshPath) {
-			return model.Message{}, errors.New("refresh expired media: unsupported message type")
+			return model.Message{}, errors.New("could not fetch this attachment again: unsupported message type")
 		}
 		payload, marshalErr := proto.Marshal(raw)
 		if marshalErr != nil {
@@ -1261,9 +1257,7 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 		}
 		downloadFresh := c.downloadWithPathToFile
 		if downloadFresh == nil {
-			downloadFresh = func(ctx context.Context, directPath string, media whatsmeow.DownloadableMessage, file whatsmeow.File) error {
-				return c.wa.DownloadMediaWithPathToFile(ctx, directPath, media.GetFileEncSHA256(), media.GetFileSHA256(), media.GetMediaKey(), whatsmeow.GetMediaType(media), "", false, file)
-			}
+			downloadFresh = c.downloadFromPath
 		}
 		if retryErr := downloadFresh(ctx, freshPath, media, tmp); retryErr != nil {
 			return model.Message{}, retryErr

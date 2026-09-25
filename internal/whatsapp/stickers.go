@@ -83,21 +83,23 @@ func (c *Client) sendStoredSticker(ctx context.Context, fromChat, messageID, toC
 		if sticker.GetFileLength() > maxStickerBytes || c.wa == nil || !c.wa.IsConnected() {
 			return model.Message{}, errors.New("cannot download this sticker; check the connection and file size")
 		}
-		data, err := c.wa.Download(ctx, sticker)
-		if err != nil {
-			return model.Message{}, err
-		}
-		if len(data) > maxStickerBytes {
-			return model.Message{}, errors.New("sticker exceeds 1 MiB")
-		}
+		// An earlier attempt can have left bytes behind that turned out to
+		// be too large, so start the download from an empty file.
 		if err := tmp.Truncate(0); err != nil {
 			return model.Message{}, err
 		}
 		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 			return model.Message{}, err
 		}
-		if _, err := tmp.Write(data); err != nil {
+		if err := c.downloadFromPath(ctx, sticker.GetDirectPath(), sticker, tmp); err != nil {
 			return model.Message{}, err
+		}
+		info, err := tmp.Stat()
+		if err != nil {
+			return model.Message{}, err
+		}
+		if info.Size() > maxStickerBytes {
+			return model.Message{}, errors.New("sticker exceeds 1 MiB")
 		}
 	}
 	if err := tmp.Close(); err != nil {
