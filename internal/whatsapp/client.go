@@ -101,7 +101,8 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media 
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	container := sqlstore.NewWithDB(db, "sqlite", nil)
+	logger := libraryLog()
+	container := sqlstore.NewWithDB(db, "sqlite", logger.Sub("Database"))
 	if err := container.Upgrade(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("upgrade device store: %w", err)
@@ -111,7 +112,7 @@ func New(ctx context.Context, deviceDB, mediaDir string, st *store.Store, media 
 		container.Close()
 		return nil, fmt.Errorf("load device: %w", err)
 	}
-	wa := whatsmeow.NewClient(device, nil)
+	wa := whatsmeow.NewClient(device, logger)
 	// Required for the one-time call-history recovery sync. Without this,
 	// whatsmeow intentionally suppresses generic app-state events on snapshots.
 	wa.EmitAppStateEventsOnFullSync = true

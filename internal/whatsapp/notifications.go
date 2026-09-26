@@ -30,7 +30,7 @@ func freshAlert(timestamp time.Time) bool {
 // on the Status page. The caller only passes newly persisted messages.
 func (c *Client) notifyStatusUpdate(evt *waEvents.Message, msg model.Message) {
 	if msg.ChatJID != types.StatusBroadcastJID.String() || msg.FromMe || msg.Revoked || msg.Edited ||
-		evt.Info.IsFromMe || evt.IsEdit || evt.SourceWebMsg != nil || evt.Info.IsNewsletterStatus ||
+		evt.Info.IsFromMe || messageIsEdit(evt) || evt.SourceWebMsg != nil || evt.Info.IsNewsletterStatus ||
 		!freshAlert(evt.Info.Timestamp) || c.isOwnIdentity(evt.Info.Sender) {
 		return
 	}

@@ -100,7 +100,15 @@ func (c *Client) handleEvent(raw any) {
 		// retry. Retain the timeline entry without requesting its contents.
 		if evt.IsUnavailable && evt.UnavailableType == waEvents.UnavailableTypeViewOnce {
 			c.handleMessage(&waEvents.Message{Info: evt.Info, IsViewOnce: true})
+			return
 		}
+		// Every other one leaves a hole. The library asks for the message
+		// again, and until that answer arrives it is simply missing, with
+		// nothing in the conversation to show that anything was lost. A
+		// correction made on another device disappears exactly this quietly,
+		// so record it rather than let it pass without a trace.
+		log.Printf("could not read message %s in %s from %s: unavailable=%v type=%q mode=%q",
+			evt.Info.ID, evt.Info.Chat, evt.Info.Sender, evt.IsUnavailable, evt.UnavailableType, evt.DecryptFailMode)
 	case *waEvents.CallOffer:
 		c.notifyCall(evt.BasicCallMeta)
 	case *waEvents.CallOfferNotice:
@@ -785,7 +793,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		return
 	}
 	previous, previousErr := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID)
-	if evt.IsEdit && previousErr == nil && previous.Body != "" && previous.Body != msg.Body {
+	if messageIsEdit(evt) && previousErr == nil && previous.Body != "" && previous.Body != msg.Body {
 		// Keep the version being replaced before the upsert overwrites it, so
 		// the reader can still see what the message said before.
 		_ = c.store.RecordMessageRevision(context.Background(), msg.ChatJID, msg.ID, msg.Timestamp)
@@ -809,7 +817,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	if errors.Is(previousErr, sql.ErrNoRows) {
 		c.notifyStatusUpdate(evt, msg)
 	}
-	if shouldNotifyMessage(msg) && errors.Is(previousErr, sql.ErrNoRows) && !evt.IsEdit && evt.SourceWebMsg == nil {
+	if shouldNotifyMessage(msg) && errors.Is(previousErr, sql.ErrNoRows) && !messageIsEdit(evt) && evt.SourceWebMsg == nil {
 		chatInfo, _ := c.store.GetChat(context.Background(), msg.ChatJID)
 		notifyTitle := notificationTitle(chatInfo, title, msg.ChatJID)
 		muted := chatInfo.MutedUntil > time.Now().UnixMilli()
@@ -987,7 +995,7 @@ func (c *Client) handleHistorySync(evt *waEvents.HistorySync) {
 				if previous.Kind == "view_once" {
 					msg = model.ViewOncePlaceholder(msg)
 				}
-				if parsed.IsEdit && previous.Body != "" && previous.Body != msg.Body {
+				if messageIsEdit(parsed) && previous.Body != "" && previous.Body != msg.Body {
 					// A correction can also reach us through history, long after
 					// it was made. Keep the version it replaces, exactly as the
 					// live path does.
@@ -1363,8 +1371,28 @@ func (c *Client) withSenderName(ctx context.Context, msg model.Message) model.Me
 	return msg
 }
 
+// messageIsEdit reports whether this message corrects an earlier one.
+//
+// A correction reaches us in more than one shape. Usually it is wrapped in
+// editedMessage, which the library unwraps and marks. It can also arrive as
+// the bare protocol envelope, with nothing to unwrap and so nothing marked;
+// there the stanza's own edit attribute is what says so, and a newsletter
+// carries the new text directly with only that attribute to go by. Missed,
+// the correction is stored as a new and empty message while the reader goes
+// on seeing what was written first.
+func messageIsEdit(evt *waEvents.Message) bool {
+	if evt.IsEdit {
+		return true
+	}
+	if evt.Info.Edit == types.EditAttributeMessageEdit || evt.Info.Edit == types.EditAttributeAdminEdit {
+		return true
+	}
+	return evt.Message.GetProtocolMessage().GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT
+}
+
 func messageFromEvent(evt *waEvents.Message) model.Message {
-	m := model.Message{ID: string(evt.Info.ID), ChatJID: evt.Info.Chat.String(), SenderJID: evt.Info.Sender.String(), SenderName: evt.Info.PushName, Timestamp: evt.Info.Timestamp.UnixMilli(), FromMe: evt.Info.IsFromMe, Status: "received", Edited: evt.IsEdit}
+	isEdit := messageIsEdit(evt)
+	m := model.Message{ID: string(evt.Info.ID), ChatJID: evt.Info.Chat.String(), SenderJID: evt.Info.Sender.String(), SenderName: evt.Info.PushName, Timestamp: evt.Info.Timestamp.UnixMilli(), FromMe: evt.Info.IsFromMe, Status: "received", Edited: isEdit}
 	if m.FromMe {
 		m.Status = "sent"
 	}
@@ -1372,7 +1400,7 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		return model.ViewOncePlaceholder(m)
 	}
 	msg := evt.Message
-	if evt.IsEdit {
+	if isEdit {
 		// An edit arrives wrapped in editedMessage. The library unwraps that
 		// much, which leaves a protocol envelope holding two things: the key of
 		// the message being corrected, and the text that replaces it.
