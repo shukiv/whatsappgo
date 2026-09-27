@@ -114,7 +114,7 @@ func TestAttachmentWithoutTheHashOfItsEncryptedBytesStillArrives(t *testing.T) {
 	host := &fakeMediaHost{t: t, cipher: []byte("scrambled bytes"), plain: plain, key: []byte("the-key")}
 	c := &Client{store: st, mediaDir: t.TempDir(), downloadPathToFile: host.download}
 
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if err != nil {
 		t.Fatalf("an attachment missing the hash of its encrypted bytes did not arrive: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestAnAttachmentThatArrivesDamagedIsStillRefused(t *testing.T) {
 		},
 	}
 
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if !errors.Is(err, gone) {
 		t.Fatalf("a damaged attachment was accepted: %v %#v", err, result)
 	}
@@ -182,7 +182,7 @@ func TestAnOrdinaryAttachmentIsFetchedOnce(t *testing.T) {
 		},
 	}
 
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestARefreshedPathAlsoRecoversTheMissingHash(t *testing.T) {
 		},
 	}
 
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if err != nil {
 		t.Fatalf("a refreshed attachment missing the hash did not arrive: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestBytesThatCannotBeOpenedAreAskedForAgain(t *testing.T) {
 		},
 	}
 
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if err != nil {
 		t.Fatalf("bytes that would not open were never asked for again: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestTheOtherAddressInTheMessageIsTriedBeforeThePhone(t *testing.T) {
 		},
 	}
 
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if err != nil {
 		t.Fatalf("the second address was never tried: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestARefreshedPathIsOnlyWrittenDownOnceItWorks(t *testing.T) {
 		},
 	}
 
-	if _, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw); err == nil {
+	if _, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true); err == nil {
 		t.Fatal("a refreshed path that does not open the attachment was accepted")
 	}
 	payload, available, err := st.MediaPayload(ctx, msg.ChatJID, msg.ID)
@@ -397,5 +397,46 @@ func TestTheLibraryCannotDownloadAKeyedAttachmentWithNoHash(t *testing.T) {
 	err = host.download(context.Background(), "/keyed", nil, decrypted[:], nil, whatsmeow.MediaImage, false, file)
 	if !errors.Is(err, whatsmeow.ErrInvalidUnencryptedMediaSHA256) {
 		t.Fatalf("the served bytes were not hashed as plain ones: %v", err)
+	}
+}
+
+// The background sweep walks every attachment in the history and starts over
+// when it reaches the end, so one WhatsApp no longer serves is met again on
+// every pass. Asking the phone for each came to 7717 requests in eight hours,
+// 1716 of them for a single conversation, which is why the sweep now asks for
+// nothing and leaves the attachment for whoever opens the message.
+func TestTheSweepDoesNotTroubleThePhone(t *testing.T) {
+	wrong := sha256.Sum256([]byte("a different picture"))
+	msg := model.Message{ID: "swept", ChatJID: "marta@lid", SenderJID: "marta@lid", Timestamp: 1, Kind: "image", MediaMIME: "image/jpeg", Status: "received"}
+	raw := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		DirectPath: proto.String("/keyed"),
+		MediaKey:   []byte("the-key"),
+		FileSHA256: wrong[:],
+	}}
+	st, ctx := storedMessage(t, msg, raw)
+	host := &fakeMediaHost{t: t, cipher: []byte("scrambled bytes"), plain: []byte("the picture itself"), key: []byte("the-key")}
+	asked := 0
+	c := &Client{
+		store: st, mediaDir: t.TempDir(), downloadPathToFile: host.download,
+		requestMediaRetryPath: func(context.Context, model.Message, whatsmeow.DownloadableMessage) (string, error) {
+			asked++
+			return "", errors.New("media no longer available on phone")
+		},
+	}
+
+	if _, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, false); err == nil {
+		t.Fatal("a damaged attachment was accepted")
+	}
+	if asked != 0 {
+		t.Fatalf("the sweep asked the phone %d times, want 0", asked)
+	}
+
+	// Somebody opening the message is a different matter: that one ask is the
+	// whole point of the media retry, and it must still happen.
+	if _, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true); err == nil {
+		t.Fatal("a damaged attachment was accepted")
+	}
+	if asked != 1 {
+		t.Fatalf("an attachment somebody is waiting for asked the phone %d times, want 1", asked)
 	}
 }

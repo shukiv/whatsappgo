@@ -1194,7 +1194,7 @@ func (c *Client) cacheMedia(msg model.Message, media whatsmeow.DownloadableMessa
 	if !c.store.AutoDownloadAllowed(ctx, msg.Kind) || msg.MediaSize > mediaSizeCeiling {
 		return
 	}
-	_, _ = c.downloadMedia(ctx, msg, media, raw)
+	_, _ = c.downloadMedia(ctx, msg, media, raw, true)
 }
 
 // cachePath is where a message's file is materialised for the desktop to read.
@@ -1213,7 +1213,7 @@ func (c *Client) withDisplayableSticker(msg model.Message) model.Message {
 	return msg
 }
 
-func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message) (model.Message, error) {
+func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media whatsmeow.DownloadableMessage, raw *waE2E.Message, someoneWaiting bool) (model.Message, error) {
 	if msg.Kind == "view_once" || isViewOnce(raw) {
 		return model.Message{}, errors.New("view-once messages can only be opened on your phone")
 	}
@@ -1254,6 +1254,11 @@ func (c *Client) downloadMedia(ctx context.Context, msg model.Message, media wha
 			recovered = downloadFresh(ctx, alternate, media, tmp) == nil
 		}
 		if !recovered {
+			if !someoneWaiting {
+				// The phone is only worth troubling for an attachment
+				// somebody is looking at.
+				return model.Message{}, err
+			}
 			requestPath := c.requestMediaRetryPath
 			if requestPath == nil {
 				requestPath = c.awaitMediaRetryPath

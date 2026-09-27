@@ -96,7 +96,7 @@ func TestExpiredMediaPathIsRefreshedAndPersisted(t *testing.T) {
 			return err
 		},
 	}
-	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw)
+	result, err := c.downloadMedia(ctx, msg, raw.GetImageMessage(), raw, true)
 	if err != nil {
 		t.Fatal(err)
 	}

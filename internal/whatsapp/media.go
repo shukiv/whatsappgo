@@ -88,7 +88,7 @@ func (c *Client) collectMedia(ctx context.Context) {
 			if item.Size > mediaSizeCeiling || !c.store.AutoDownloadAllowed(ctx, item.Kind) {
 				continue
 			}
-			if _, err := c.DownloadMedia(ctx, item.ChatJID, item.MessageID); err != nil {
+			if _, err := c.collectStoredMedia(ctx, item.ChatJID, item.MessageID); err != nil {
 				// Attachments that WhatsApp no longer serves are common in old
 				// history. That is expected and must not stop the scan.
 				continue

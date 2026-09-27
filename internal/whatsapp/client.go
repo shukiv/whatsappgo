@@ -425,7 +425,26 @@ func (c *Client) requestHistoryFrom(ctx context.Context, anchor model.Message, c
 	return err
 }
 
+// DownloadMedia fetches an attachment somebody is waiting for. That is what
+// entitles it to ask the phone for an attachment WhatsApp no longer serves.
 func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (model.Message, error) {
+	return c.fetchStoredMedia(ctx, chatJID, messageID, true)
+}
+
+// collectStoredMedia fetches an attachment for the background sweep, which
+// asks the phone for nothing.
+//
+// The sweep walks the whole history and begins again once it reaches the end,
+// so an attachment WhatsApp no longer serves is reached on every pass. Asking
+// the phone for each of those came to thousands of requests a day: 7717 in one
+// eight-hour log, 1716 of them for a single conversation. Nobody is waiting
+// for any of them, and the phone answers almost none, so they are left to fail
+// quietly until somebody opens the message.
+func (c *Client) collectStoredMedia(ctx context.Context, chatJID, messageID string) (model.Message, error) {
+	return c.fetchStoredMedia(ctx, chatJID, messageID, false)
+}
+
+func (c *Client) fetchStoredMedia(ctx context.Context, chatJID, messageID string, someoneWaiting bool) (model.Message, error) {
 	msg, err := c.store.GetMessage(ctx, chatJID, messageID)
 	if err != nil {
 		return model.Message{}, err
@@ -484,7 +503,13 @@ func (c *Client) DownloadMedia(ctx context.Context, chatJID, messageID string) (
 		if downloadable == nil {
 			return model.Message{}, errors.New("stored message does not contain downloadable media")
 		}
-		return c.downloadMedia(ctx, msg, downloadable, &raw)
+		return c.downloadMedia(ctx, msg, downloadable, &raw, someoneWaiting)
+	}
+	if !someoneWaiting {
+		// Nothing is stored for this message and nobody is waiting for it.
+		// Asking the phone to send it again belongs to an explicit request,
+		// not to a sweep that reaches this message again on its next pass.
+		return model.Message{}, errors.New("this attachment is not stored on this computer")
 	}
 	chat, err := types.ParseJID(chatJID)
 	if err != nil {
