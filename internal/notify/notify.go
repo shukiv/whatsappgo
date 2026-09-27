@@ -70,6 +70,15 @@ type Desktop struct {
 	// another. Both are guarded by mu.
 	liveNotifications []uint32
 	chatNotifications map[string]uint32
+
+	// post serialises making room and posting, which have to happen together.
+	//
+	// Messages are delivered from a goroutine each, so without this every one
+	// of a burst reads the same count, every one decides there is room, and
+	// every one posts. The bound above was then applied to what had already
+	// been sent, which is not a bound at all. It is a separate lock from mu
+	// because it is held across D-Bus calls, and mu is not.
+	post sync.Mutex
 }
 
 func NewDesktop(profile string) (*Desktop, error) {
@@ -204,7 +213,13 @@ const maxTrackedNotifications = 256
 // the user silently stops receiving messages. A notification carrying actions
 // does not always expire on its own, so without a bound of our own the queue
 // fills over a day of use and never drains. Closing the oldest keeps room.
-const maxLiveNotifications = 8
+//
+// The queue belongs to the session rather than to this program: every other
+// application shares it, and a second WhatsApp account runs a second daemon of
+// its own against the same server. The bound is therefore a small share of
+// what a server allows rather than most of it. At eight, two accounts between
+// them asked for sixteen, and one busy hour produced forty refusals.
+const maxLiveNotifications = 4
 
 // maxNotificationsExceeded is the error a full server queue returns.
 const maxNotificationsExceeded = "org.freedesktop.Notifications.MaxNotificationsExceeded"
@@ -222,16 +237,22 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	// A chat's previous notification is replaced rather than stacked on, which
 	// is what WhatsApp itself does and what keeps one busy group from filling
 	// the server's queue on its own.
+	// Making room and posting are one action. Anything between them lets a
+	// second message take the room this one just made.
+	d.post.Lock()
+	defer d.post.Unlock()
+
+	d.makeRoom(ctx)
 	d.mu.Lock()
 	replaces := d.chatNotifications[message.ChatJID]
 	d.mu.Unlock()
 
 	id, err := d.postNotification(ctx, replaces, appIcon, message, actions, hints)
 	if isMaxNotificationsExceeded(err) {
-		// The server is full, and it stays full until something closes: an
-		// unattended session would never see another notification. Clear what
-		// this daemon put there and post again as a new notification, since
-		// the id being replaced may be one that was just closed.
+		// The server is full of somebody else's notifications, since our own
+		// are already within their bound, and it stays full until something
+		// closes. Give back everything this daemon still holds and post again
+		// as a new notification, since the id being replaced is now closed.
 		d.closeLiveNotifications(ctx)
 		id, err = d.postNotification(ctx, 0, appIcon, message, actions, hints)
 	}
@@ -242,11 +263,7 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	d.mu.Lock()
 	d.trackActionLocked(id, message.ChatJID)
 	d.trackLiveLocked(id, message.ChatJID)
-	stale := d.overflowingLiveLocked()
 	d.mu.Unlock()
-	for _, old := range stale {
-		d.closeNotification(ctx, old)
-	}
 	if !message.Silent && !d.serverPlaysSound && d.playSound != nil {
 		go d.playSound()
 	}
@@ -307,10 +324,33 @@ func (d *Desktop) closeNotification(ctx context.Context, id uint32) {
 // the recovery path for a server that has stopped accepting new notifications.
 func (d *Desktop) closeLiveNotifications(ctx context.Context) {
 	d.mu.Lock()
-	open := append([]uint32(nil), d.liveNotifications...)
+	open := d.takeLiveLocked()
 	d.mu.Unlock()
 	for _, id := range open {
 		d.closeNotification(ctx, id)
+	}
+}
+
+// takeLiveLocked hands over everything this daemon still has open and forgets
+// it. Keeping the ids would mean closing the same already-closed notifications
+// on the next refusal while the ones actually holding the queue stay put.
+func (d *Desktop) takeLiveLocked() []uint32 {
+	open := d.liveNotifications
+	d.liveNotifications = nil
+	// Those ids are closed, so naming one as a chat's live notification would
+	// ask the server to replace something that is no longer there.
+	d.chatNotifications = make(map[string]uint32)
+	return open
+}
+
+// makeRoom closes this daemon's oldest notifications until one more fits
+// inside the bound.
+func (d *Desktop) makeRoom(ctx context.Context) {
+	d.mu.Lock()
+	stale := d.reserveLiveSlotLocked()
+	d.mu.Unlock()
+	for _, old := range stale {
+		d.closeNotification(ctx, old)
 	}
 }
 
@@ -328,13 +368,22 @@ func (d *Desktop) trackLiveLocked(id uint32, chatJID string) {
 	d.liveNotifications = append(d.liveNotifications, id)
 }
 
-// overflowingLiveLocked drops the oldest ids past the bound and returns them
-// so the caller can close them without holding the lock across D-Bus calls.
-func (d *Desktop) overflowingLiveLocked() []uint32 {
+// reserveLiveSlotLocked drops the oldest ids until one more notification fits
+// inside the bound, and returns them so the caller can close them without
+// holding the lock across D-Bus calls.
+//
+// Room is made before posting rather than after. Trimming afterwards meant the
+// server had already been handed the notification that went over, and during a
+// burst it was handed several at once.
+func (d *Desktop) reserveLiveSlotLocked() []uint32 {
 	var stale []uint32
-	for len(d.liveNotifications) > maxLiveNotifications {
-		stale = append(stale, d.liveNotifications[0])
-		d.liveNotifications = d.liveNotifications[1:]
+	for len(d.liveNotifications) >= maxLiveNotifications {
+		oldest := d.liveNotifications[0]
+		stale = append(stale, oldest)
+		// Forgotten rather than dropped from the list alone: a chat still
+		// naming this one would have the server asked to replace a
+		// notification that is no longer there.
+		d.forgetLiveLocked(oldest)
 	}
 	return stale
 }

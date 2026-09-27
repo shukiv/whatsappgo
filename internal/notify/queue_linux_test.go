@@ -27,8 +27,12 @@ func TestLiveNotificationsAreBounded(t *testing.T) {
 	var closed []uint32
 	for i := 1; i <= maxLiveNotifications+3; i++ {
 		id := uint32(i)
+		// Room first, then post: the order the daemon itself uses.
+		closed = append(closed, d.reserveLiveSlotLocked()...)
 		d.trackLiveLocked(id, "chat-"+string(rune('a'+i)))
-		closed = append(closed, d.overflowingLiveLocked()...)
+		if len(d.liveNotifications) > maxLiveNotifications {
+			t.Fatalf("the server was handed %d notifications at once, past the bound of %d", len(d.liveNotifications), maxLiveNotifications)
+		}
 	}
 	if len(d.liveNotifications) != maxLiveNotifications {
 		t.Fatalf("kept %d notifications open, want %d", len(d.liveNotifications), maxLiveNotifications)
@@ -40,6 +44,23 @@ func TestLiveNotificationsAreBounded(t *testing.T) {
 	for i, id := range closed {
 		if id != uint32(i+1) {
 			t.Fatalf("closed[%d]=%d, want %d - not oldest first", i, id, i+1)
+		}
+	}
+	// None of the chats whose notification was closed may still name it, or
+	// the server would be asked to replace a notification that is gone.
+	if len(d.chatNotifications) != len(d.liveNotifications) {
+		t.Fatalf("%d chats name a live notification, but %d are open", len(d.chatNotifications), len(d.liveNotifications))
+	}
+	for chatJID, id := range d.chatNotifications {
+		open := false
+		for _, tracked := range d.liveNotifications {
+			if tracked == id {
+				open = true
+				break
+			}
+		}
+		if !open {
+			t.Fatalf("%s still names notification %d, which was closed", chatJID, id)
 		}
 	}
 }
@@ -67,6 +88,31 @@ func TestClosedNotificationLeavesTheQueue(t *testing.T) {
 	}
 	if _, ok := d.chatNotifications["bob@s.whatsapp.net"]; ok {
 		t.Fatal("a closed notification is still named as a chat's live one")
+	}
+}
+
+// A refusal means the queue is full of something this daemon cannot see, so
+// recovery gives back everything it holds and forgets all of it. Holding on
+// would mean closing the same already-closed ids at the next refusal while
+// whatever is actually filling the queue stays where it is.
+func TestARefusedQueueIsGivenBackWhole(t *testing.T) {
+	d := newTestDesktop()
+	d.trackLiveLocked(1, "alice@s.whatsapp.net")
+	d.trackLiveLocked(2, "bob@s.whatsapp.net")
+
+	open := d.takeLiveLocked()
+	if len(open) != 2 || open[0] != 1 || open[1] != 2 {
+		t.Fatalf("handed back %v, want every open notification oldest first", open)
+	}
+	if len(d.liveNotifications) != 0 {
+		t.Fatalf("%d notifications are still counted against the queue", len(d.liveNotifications))
+	}
+	if len(d.chatNotifications) != 0 {
+		t.Fatalf("%d chats still name a closed notification to replace", len(d.chatNotifications))
+	}
+	// Nothing is held, so the next message needs no room made for it.
+	if stale := d.reserveLiveSlotLocked(); len(stale) != 0 {
+		t.Fatalf("closed %v after giving the queue back", stale)
 	}
 }
 
