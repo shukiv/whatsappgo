@@ -92,6 +92,7 @@ int main(int argc, char **argv)
     QJsonArray readIds;
     int messageGetRequests = 0;
     int listRequests = 0;
+    int historyRequests = 0;
     int biggestLimit = 0;
     QList<int> chatLimits;
     int presenceRequests = 0;
@@ -135,6 +136,21 @@ int main(int argc, char **argv)
                 if (method == QStringLiteral("message.send")) {
                     ++sendRequests;
                     heldSendId = id.toString();
+                    continue;
+                }
+                if (method == QStringLiteral("history.request")) {
+                    // Refused the way the daemon refuses a page it is already
+                    // fetching for somebody else.
+                    ++historyRequests;
+                    if (connection) {
+                        connection->write(QJsonDocument(QJsonObject{
+                            {QStringLiteral("version"), 1},
+                            {QStringLiteral("id"), id},
+                            {QStringLiteral("error"), QJsonObject{
+                                {QStringLiteral("code"), QStringLiteral("invalid_request")},
+                                {QStringLiteral("message"), QStringLiteral("a history page for this anchor was already requested")}}},
+                        }).toJson(QJsonDocument::Compact) + '\n');
+                    }
                     continue;
                 }
                 if (method == QStringLiteral("message.send_media"))
@@ -311,6 +327,27 @@ int main(int argc, char **argv)
     if (biggestLimit > 200)
         return testFatal("the daemon was asked for a page larger than it serves",
                          QString::number(biggestLimit));
+
+    // 5b. Scrolling past the oldest message stored here asks the daemon for
+    // more history. The daemon refuses a page it is already fetching, which is
+    // two askers agreeing rather than anything going wrong, and it used to
+    // reach the reader as a red warning laid across the conversation.
+    QStringList shouted;
+    QObject::connect(&client, &RpcClient::errorOccurred, &app,
+                     [&shouted](const QString &text) { shouted.append(text); });
+    historyRequests = 0;
+    for (int attempt = 0; attempt < 60 && historyRequests == 0; ++attempt) {
+        const int before = client.messageList()->count();
+        client.loadOlderMessages();
+        waitFor([&] { return historyRequests > 0 || client.messageList()->count() > before; }, 2000);
+    }
+    if (historyRequests == 0)
+        return testFatal("the daemon was never asked for history beyond what is stored");
+    settle(200);
+    if (!shouted.isEmpty())
+        return testFatal("a refused history page was shouted at the reader",
+                         shouted.join(QStringLiteral(" | ")));
+    QObject::disconnect(&client, &RpcClient::errorOccurred, &app, nullptr);
 
     // 6. The sidebar asks for the conversations after its first page, and a
     // refresh keeps them: a message arriving used to scroll the reader back to

@@ -3017,7 +3017,12 @@ void RpcClient::requestRemoteHistory()
 				m_requestedHistoryBoundaries.remove(boundary);
 				m_waitingRemoteHistory = false;
 			}
-		});
+		},
+		// Nobody asked for this page: scrolling did. The daemon refuses one
+		// that is already on its way, which is coordination rather than a
+		// failure, and it reached the reader as a red warning laid across the
+		// conversation they were reading.
+		OnFailure::StayQuiet);
 }
 
 void RpcClient::loadRemoteHistoryPage()
