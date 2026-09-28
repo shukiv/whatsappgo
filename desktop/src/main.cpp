@@ -2424,6 +2424,49 @@ QtObject {
         require(rtlBubble->width() - rtlRight >= 8.0,
                 QStringLiteral("RTL right padding %1 is below 8").arg(rtlBubble->width() - rtlRight));
 
+        // A message that is nothing but emoji is drawn at twice body size, the
+        // way WhatsApp Web draws one. Sent on its own an emoji is the message
+        // rather than punctuation in it.
+        const auto bodyPixelSize = [](QObject *delegate) {
+            auto *body = delegate->findChild<QObject *>(QStringLiteral("messageBody"));
+            return body ? qvariant_cast<QFont>(body->property("font")).pixelSize() : -1;
+        };
+        QVariantMap emojiMessage{
+            {QStringLiteral("id"), QStringLiteral("emoji-only")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("\U0001F60D")},
+            {QStringLiteral("timestamp"), 0},
+        };
+        std::unique_ptr<QObject> emojiDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), emojiMessage},
+        }));
+        if (!emojiDelegate)
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        const int ordinarySize = longDelegate->property("bodyFontSize").toInt();
+        require(emojiDelegate->property("emojiOnlyBody").toBool(),
+                QStringLiteral("a message holding only an emoji was not recognised as one"));
+        require(bodyPixelSize(emojiDelegate.get()) == ordinarySize * 2,
+                QStringLiteral("an emoji on its own is drawn at %1 px, want %2")
+                    .arg(bodyPixelSize(emojiDelegate.get())).arg(ordinarySize * 2));
+
+        // An emoji among words is punctuation, and enlarging the sentence
+        // around it would be worse than leaving the emoji small.
+        QVariantMap emojiWithWords = emojiMessage;
+        emojiWithWords[QStringLiteral("id")] = QStringLiteral("emoji-and-words");
+        emojiWithWords[QStringLiteral("body")] = QStringLiteral("\U0001F60D lovely");
+        std::unique_ptr<QObject> mixedDelegate(component.createWithInitialProperties({
+            {QStringLiteral("width"), paneWidth},
+            {QStringLiteral("modelData"), emojiWithWords},
+        }));
+        if (!mixedDelegate)
+            return WHATSAPPGO_TEST_FAILURE();
+        QCoreApplication::processEvents();
+        require(!mixedDelegate->property("emojiOnlyBody").toBool()
+                    && bodyPixelSize(mixedDelegate.get()) == ordinarySize,
+                QStringLiteral("a sentence containing an emoji was enlarged too"));
+
         // Bubbles must hug their text. Emoji, links, and quoted replies are
         // the shapes that previously stretched to the full conversation width.
         struct Shape {

@@ -231,6 +231,14 @@ Item {
     readonly property int captionFontSize: 14
     readonly property int metaFontSize: 11
 
+    // A message that is nothing but emoji is drawn at twice the size, the way
+    // WhatsApp Web draws one: sent on its own an emoji is the message rather
+    // than punctuation in it, and at body size it reads as a typo. Theme has
+    // been able to recognise one since it was written and nothing ever asked.
+    readonly property bool emojiOnlyBody: !modelData.revoked && !viewOnceKind
+        && Theme.isEmojiOnly(modelData.body || "")
+    readonly property int emojiBodyFontSize: bodyFontSize * 2
+
     readonly property bool playingThis: Playback.isCurrent(modelData.id)
     readonly property bool contactKind: modelData.kind === "contact"
     readonly property bool locationKind: modelData.kind === "location"
@@ -1531,7 +1539,7 @@ Item {
                 mentionNavigationEnabled: root.actionsEnabled && !root.selectionActive
                 onMentionActivated: (jid, name) => root.mentionRequested(jid, name)
                 color: root.modelData.revoked ? Theme.textMuted : Theme.text
-                font.pixelSize: root.bodyFontSize
+                font.pixelSize: root.emojiOnlyBody ? root.emojiBodyFontSize : root.bodyFontSize
                 font.italic: Boolean(root.modelData.revoked)
             }
 
