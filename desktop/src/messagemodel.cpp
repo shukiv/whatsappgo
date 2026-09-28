@@ -283,18 +283,45 @@ void MessageListModel::upsert(const QVariantMap &message)
             refreshDayStarts(row, row + 1);
         return;
     }
-    const int row = count();
-    if (prepared.value(QStringLiteral("from_me")).toBool()
-        && (isEmpty() || prepared.value(QStringLiteral("timestamp")).toLongLong()
-            >= m_messages.constLast().toMap().value(QStringLiteral("timestamp")).toLongLong()))
+    // A message the daemon sends is not always newer than everything loaded.
+    // History sync backfills a conversation while it is open, and an old one
+    // put at the end is drawn below today's messages, under a date separator
+    // from months ago, with the view dragged down to meet it.
+    const int row = insertionRowFor(prepared.value(QStringLiteral("timestamp")).toLongLong(), id);
+    const bool newest = row == count();
+    if (prepared.value(QStringLiteral("from_me")).toBool() && newest)
         setUnreadBoundary({}, 0);
-    beginInsertRows(QModelIndex(), 0, 0);
-    m_messages.append(prepared);
-    m_rowById.insert(id, row);
+    // The view runs newest first, so the last stored message is its first row.
+    const int viewRow = count() - row;
+    beginInsertRows(QModelIndex(), viewRow, viewRow);
+    m_messages.insert(row, prepared);
+    if (newest)
+        m_rowById.insert(id, row);
+    else
+        rebuildIndex(); // Everything after the new row moved down one.
     endInsertRows();
     refreshDayStarts(row);
     emit countChanged();
-    emit appended();
+    // Only a message that really is the newest brings the reader to the end of
+    // the conversation. One that arrived late belongs where it happened.
+    if (newest)
+        emit appended();
+}
+
+// insertionRowFor reports where a message belongs in a list held oldest first,
+// ordered the way the daemon orders a page of them: by the moment it was sent,
+// and by its id where two share one.
+int MessageListModel::insertionRowFor(qint64 timestamp, const QString &id) const
+{
+    int row = count();
+    while (row > 0) {
+        const auto earlier = m_messages.at(row - 1).toMap();
+        const auto when = earlier.value(QStringLiteral("timestamp")).toLongLong();
+        if (when < timestamp || (when == timestamp && messageId(earlier) <= id))
+            break;
+        --row;
+    }
+    return row;
 }
 
 void MessageListModel::setUnreadBoundary(const QString &id, int count)

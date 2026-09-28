@@ -110,6 +110,7 @@ private:
     // Only the changed interval and its next dated neighbour need updating.
     // Invalid timestamps do not interrupt the previous valid calendar day.
     void refreshDayStarts(int first = 0, int end = -1);
+    int insertionRowFor(qint64 timestamp, const QString &id) const;
 
     QVariantList m_messages;
     QHash<QString, int> m_rowById;

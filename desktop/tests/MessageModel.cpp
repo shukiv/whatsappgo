@@ -256,5 +256,42 @@ int main(int argc, char **argv)
     require(days.byId(QStringLiteral("d2")).value(QStringLiteral("starts_day")).toBool(),
             QStringLiteral("replacing a message took its date away"));
 
+    // History sync backfills a conversation that is already open, so a message
+    // arriving is not always newer than what is on screen. One from May put at
+    // the end is drawn below today's, under a date separator from months ago.
+    MessageListModel late;
+    int lateAppends = 0;
+    QObject::connect(&late, &MessageListModel::appended, &app, [&lateAppends] { ++lateAppends; });
+    const qint64 may = QDateTime(QDate(2026, 5, 17), QTime(20, 27)).toMSecsSinceEpoch();
+    const qint64 todayMorning = QDateTime(QDate(2026, 9, 28), QTime(16, 21)).toMSecsSinceEpoch();
+    const qint64 todayEvening = QDateTime(QDate(2026, 9, 28), QTime(18, 35)).toMSecsSinceEpoch();
+    late.reset(QVariantList{onDay(QStringLiteral("morning"), todayMorning),
+                            onDay(QStringLiteral("evening"), todayEvening)});
+    lateAppends = 0;
+    late.upsert(onDay(QStringLiteral("may"), may));
+    require(late.count() == 3, QStringLiteral("the backfilled message never reached the model"));
+    // at() counts from the oldest message, which is the end the reader scrolls
+    // back to.
+    require(late.at(2).value(QStringLiteral("id")).toString() == QStringLiteral("evening"),
+            QStringLiteral("a message from May was drawn at the end of the conversation"));
+    require(late.at(0).value(QStringLiteral("id")).toString() == QStringLiteral("may"),
+            QStringLiteral("the backfilled message did not land in its own place"));
+    require(lateAppends == 0,
+            QStringLiteral("a message that arrived late dragged the reader to the end"));
+    require(late.byId(QStringLiteral("evening")).value(QStringLiteral("body")).toString()
+                == QStringLiteral("evening"),
+            QStringLiteral("inserting in the middle left the id index pointing at the wrong row"));
+    require(late.byId(QStringLiteral("may")).value(QStringLiteral("starts_day")).toBool()
+                && late.byId(QStringLiteral("morning")).value(QStringLiteral("starts_day")).toBool(),
+            QStringLiteral("the date separators were not recomputed around the new message"));
+
+    // A message that really is the newest still goes to the end, and still
+    // brings the reader with it.
+    late.upsert(onDay(QStringLiteral("newest"),
+                      QDateTime(QDate(2026, 9, 28), QTime(19, 0)).toMSecsSinceEpoch()));
+    require(late.at(3).value(QStringLiteral("id")).toString() == QStringLiteral("newest"),
+            QStringLiteral("a new message did not arrive at the end of the conversation"));
+    require(lateAppends == 1, QStringLiteral("a new message did not bring the reader to it"));
+
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }
