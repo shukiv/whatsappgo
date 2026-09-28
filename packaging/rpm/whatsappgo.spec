@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.10
+Version:        0.1.12
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -44,6 +44,14 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Sun Sep 27 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.12-1
+- Remove the app and everything it put on the computer, on request
+- Write a message now and send it at a chosen moment
+- Read a channel you follow, and list a community joined through its group
+- Move through a voice note, and see when one was listened to
+- Stop a freshly linked account inventing unread badges and splitting a contact
+- Keep message notifications from going missing during a busy spell
+
 * Sat Sep 12 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.10-1
 - Bound photo panning by the photo instead of the viewer around it
 - Start a right-to-left contact name beside the avatar, as a Latin one does

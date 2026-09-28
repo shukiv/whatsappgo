@@ -15,6 +15,16 @@
   <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
+    <release version="0.1.12" date="2026-09-27">
+      <description>
+        <p>The app can remove itself, and everything it put on this computer, listing every path with its size and waiting for the word yes.</p>
+        <p>A message can be written now and sent at a chosen moment, held on this computer and cancellable until it goes.</p>
+        <p>A channel you follow opens and reads its posts, and a community you are in through one of its groups is listed at last.</p>
+        <p>Voice notes can be moved through with a handle, which turns blue once the recording has been listened to.</p>
+        <p>A freshly linked account no longer shows unread badges on conversations the phone has already read, nor one person as two conversations.</p>
+        <p>Message notifications stop going missing during a busy spell, and the background collector stops asking the phone for attachments nobody is waiting for.</p>
+      </description>
+    </release>
     <release version="0.1.10" date="2026-09-12">
       <description>
         <p>Bound the panning of a zoomed photo by the picture rather than by the viewer around it, so a drag can no longer pull it off its own edge into empty space.</p>
