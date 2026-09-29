@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.12
+Version:        0.1.13
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -46,6 +46,12 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Tue Sep 29 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.13-1
+- Build with libwebp, so animated stickers play instead of reporting themselves unavailable
+- Draw a message that arrives late where it happened rather than at the end
+- Draw a message that is nothing but emoji at twice the size
+- Say how long there is to wait for a scheduled message
+
 * Sun Sep 27 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.12-1
 - Remove the app and everything it put on the computer, on request
 - Write a message now and send it at a chosen moment

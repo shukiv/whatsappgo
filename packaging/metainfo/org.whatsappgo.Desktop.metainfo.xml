@@ -15,6 +15,14 @@
   <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
+    <release version="0.1.13" date="2026-09-29">
+      <description>
+        <p>Animated stickers play. Every build published until now was made without the library that decodes them, so one always said it was unavailable.</p>
+        <p>A message that reaches the window late is drawn where it happened rather than under today's messages.</p>
+        <p>A message that is nothing but emoji is drawn at twice the size, the way WhatsApp Web draws one.</p>
+        <p>The strip above the composer says how long there is to wait for a scheduled message, and keeps counting.</p>
+      </description>
+    </release>
     <release version="0.1.12" date="2026-09-27">
       <description>
         <p>The app can remove itself, and everything it put on this computer, listing every path with its size and waiting for the word yes.</p>
