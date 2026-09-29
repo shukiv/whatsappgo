@@ -60,7 +60,10 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           modules: 'qtmultimedia'
-      - run: sudo apt-get update && sudo apt-get install -y libfuse2 libxcb-cursor0
+      # libwebp decodes animated stickers. Without it every AppImage this
+      # workflow published told the reader they were unavailable, and the
+      # build said so only in a warning nobody reads.
+      - run: sudo apt-get update && sudo apt-get install -y libfuse2 libxcb-cursor0 libwebp-dev
       - run: packaging/appimage/build.sh
       - run: gh release upload "${{ needs.draft.outputs.tag }}" build/WhatsAppGo-*.AppImage --clobber
         env:
@@ -103,6 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: command -v ninja >/dev/null || brew install ninja
+      # libwebp decodes animated stickers; the bundle refuses them without it.
+      - run: brew list webp >/dev/null 2>&1 || brew install webp
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'

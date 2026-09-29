@@ -16,8 +16,10 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version}" -o 
 # configures with an install prefix of /usr and without the tests, neither of
 # which belongs in the tree a developer builds in.
 build_dir="${project_root}/desktop/build-appimage"
+# Animated stickers are decoded by libwebp, and a build without it tells the
+# reader they are unavailable. A published AppImage must not be that build.
 cmake -S "${project_root}/desktop" -B "${build_dir}" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF
+      -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=OFF -DWHATSAPPGO_REQUIRE_WEBP=ON
 # Bounded by memory as well as cores: an unbounded -j starts one compiler
 # per ready target and takes a 16 GB machine into swap.
 cmake --build "${build_dir}" --parallel "$("${project_root}/scripts/build-jobs.sh")"

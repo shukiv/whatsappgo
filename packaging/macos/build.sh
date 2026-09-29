@@ -33,8 +33,10 @@ version="$("${project_root}/scripts/version.sh")"
 CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappd" ./cmd/whatsappd
 CGO_ENABLED=0 GOOS=darwin GOARCH="${goarch}" go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappctl" ./cmd/whatsappctl
 
+# Animated stickers are decoded by libwebp, and a build without it tells the
+# reader they are unavailable. A published bundle must not be that build.
 cmake -S "${project_root}/desktop" -B "${build_dir}" -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX="${stage_dir}" -DBUILD_TESTING=OFF
+      -DCMAKE_INSTALL_PREFIX="${stage_dir}" -DBUILD_TESTING=OFF -DWHATSAPPGO_REQUIRE_WEBP=ON
 # Bounded by memory as well as cores; see scripts/build-jobs.sh.
 cmake --build "${build_dir}" --parallel "$("${project_root}/scripts/build-jobs.sh")"
 rm -rf "${app}"

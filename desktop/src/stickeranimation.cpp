@@ -87,8 +87,14 @@ void StickerAnimation::setPlaying(bool playing)
 void StickerAnimation::nextFrame()
 {
     if (m_pending || !m_playing || !isVisible() || m_source.isEmpty() || !m_error.isEmpty()) return;
-    if (!supported() || !m_source.isLocalFile()) {
+    // Two different faults used to share one sentence, and the one that has
+    // nothing to do with the build sent somebody hunting a missing library.
+    if (!supported()) {
         m_error = tr("Animated stickers are unavailable in this build."); emit errorChanged(); return;
+    }
+    if (!m_source.isLocalFile()) {
+        qWarning("a sticker was asked for from somewhere that is not a file on this computer");
+        m_error = tr("This sticker is not stored on this computer."); emit errorChanged(); return;
     }
     if (!m_decoder) m_decoder = std::make_shared<Decoder>();
     m_pending = true;

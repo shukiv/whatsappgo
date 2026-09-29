@@ -57,7 +57,10 @@ jobs:
     steps:
       # fontconfig on a bare container has no fonts to hand Qt, and the tests
       # that measure text are the ones that fail.
-      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtsvg-devel qt6-qtquickcontrols2 fontconfig google-noto-sans-fonts dejavu-sans-fonts
+      # libwebp-devel is what decodes an animated sticker: without it the
+      # build falls back to saying they are unavailable, which is what every
+      # published build did.
+      - run: dnf -y install git cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtmultimedia-devel qt6-qtsvg-devel qt6-qtquickcontrols2 libwebp-devel fontconfig google-noto-sans-fonts dejavu-sans-fonts
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
         with:
@@ -134,6 +137,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: command -v ninja >/dev/null || brew install ninja
+      # libwebp decodes animated stickers; without it the sticker animation
+      # test only proves the client says they are unavailable.
+      - run: brew list webp >/dev/null 2>&1 || brew install webp
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.x'

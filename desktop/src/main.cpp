@@ -311,6 +311,10 @@ int main(int argc, char *argv[])
     parser.addOption(desktopEntryTestOption);
     QCommandLineOption voiceSeekFileOption(QStringLiteral("voice-seek-file"), QStringLiteral("The recording --voice-seek-test moves through"), QStringLiteral("path"));
     parser.addOption(voiceSeekFileOption);
+    QCommandLineOption stickerAnimationTestOption(QStringLiteral("sticker-animation-test"), QStringLiteral("Verify an animated sticker decodes and draws a frame"));
+    parser.addOption(stickerAnimationTestOption);
+    QCommandLineOption stickerAnimationFileOption(QStringLiteral("sticker-animation-file"), QStringLiteral("The animated sticker --sticker-animation-test plays"), QStringLiteral("path"));
+    parser.addOption(stickerAnimationFileOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
     parser.addOption(bundledFontTestOption);
     QCommandLineOption clipboardImageTestOption(QStringLiteral("clipboard-image-test"), QStringLiteral("Verify native image copy and paste preparation"));
@@ -520,6 +524,7 @@ int main(int argc, char *argv[])
     const bool statusStoriesTest = parser.isSet(statusStoriesTestOption);
     const bool channelPostsTest = parser.isSet(channelPostsTestOption);
     const bool voiceSeekTest = parser.isSet(voiceSeekTestOption);
+    const bool stickerAnimationTest = parser.isSet(stickerAnimationTestOption);
     const bool presenceDisplayTest = parser.isSet(presenceDisplayTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const auto openDialogName = parser.value(openDialogOption);
@@ -531,7 +536,7 @@ int main(int argc, char *argv[])
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
-        || channelPostsTest || voiceSeekTest
+        || channelPostsTest || voiceSeekTest || stickerAnimationTest
         || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
         || styleDetectionTest || fileUrlTest || menuPlacementTest || composerDraftTest
         || !screenshotPath.isEmpty();
@@ -1059,6 +1064,122 @@ int main(int argc, char *argv[])
         }
         QMetaObject::invokeMethod(playback, "stop");
         settlePlayback(100);
+        return EXIT_SUCCESS;
+    }
+
+    if (stickerAnimationTest) {
+        // An animated sticker is decoded here rather than by an optional Qt
+        // image plugin, so nothing outside this program proves it works.
+        // A real sticker if one was named, otherwise one written here: the
+        // suite cannot carry an account's stickers, and libwebp can decode an
+        // animation without being able to build one - that needs libwebpmux,
+        // which is not linked. These are the bytes of a two-frame lossless
+        // animation, a VP8X canvas followed by ANIM and two ANMF frames.
+        QTemporaryDir madeSticker;
+        auto sticker = parser.value(stickerAnimationFileOption);
+        if (sticker.isEmpty()) {
+            if (!madeSticker.isValid())
+                return WHATSAPPGO_TEST_FAILURE();
+            static const unsigned char animation[] = {
+                0x52, 0x49, 0x46, 0x46, 0x80, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50,
+                0x38, 0x58, 0x0A, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x41, 0x4E, 0x49, 0x4D, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x41, 0x4E, 0x4D, 0x46, 0x26, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x56, 0x50,
+                0x38, 0x4C, 0x0D, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x10, 0x07, 0x10, 0x11,
+                0x11, 0x88, 0x88, 0xFE, 0x07, 0x00, 0x41, 0x4E, 0x4D, 0x46, 0x26, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x96, 0x00,
+                0x00, 0x00, 0x56, 0x50, 0x38, 0x4C, 0x0D, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00,
+                0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xFE, 0x07, 0x00,
+            };
+            sticker = madeSticker.filePath(QStringLiteral("sticker.webp"));
+            QFile file(sticker);
+            if (!file.open(QIODevice::WriteOnly)
+                || file.write(reinterpret_cast<const char *>(animation), sizeof(animation))
+                    != qint64(sizeof(animation)))
+                return WHATSAPPGO_TEST_FAILURE();
+            file.close();
+        }
+        if (!QFileInfo::exists(sticker)) {
+            qWarning().noquote() << QStringLiteral("no sticker at ") + sticker;
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QQmlComponent component(&engine);
+        component.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            ApplicationWindow {
+                id: harness
+                width: 256
+                height: 256
+                visible: true
+                property url file
+                property string failure: ""
+                InlineAnimation {
+                    id: animation
+                    objectName: "stickerAnimationHarness"
+                    anchors.fill: parent
+                    sticker: true
+                    source: harness.file
+                    onFailed: message => harness.failure = message
+                }
+                // The same item the conversation builds, asked on its own
+                // whether this program was built with a decoder at all.
+                StickerAnimation { id: probe; visible: false }
+                function play(path) { harness.failure = ""; harness.file = path; return true }
+                function drawn() { return animation.hasFrame }
+                function failureText() { return harness.failure }
+                function decoderPresent() { return probe.supported }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/sticker-animation-test.qml")));
+        std::unique_ptr<QObject> harness(component.create());
+        if (!harness) {
+            qWarning().noquote() << component.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        const auto ask = [&harness](const char *name) {
+            QVariant answer;
+            if (!QMetaObject::invokeMethod(harness.get(), name, Q_RETURN_ARG(QVariant, answer)))
+                return QVariant();
+            return answer;
+        };
+        QVariant started;
+        if (!QMetaObject::invokeMethod(harness.get(), "play", Q_RETURN_ARG(QVariant, started),
+                                       Q_ARG(QVariant, QVariant(QUrl::fromLocalFile(sticker).toString())))
+            || !started.toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        // Decoding happens off the interface thread and reports back through
+        // the event loop, so the answer is waited for rather than read.
+        for (int elapsed = 0; elapsed < 5000; elapsed += 50) {
+            if (ask("drawn").toBool() || !ask("failureText").toString().isEmpty())
+                break;
+            QEventLoop loop;
+            QTimer::singleShot(50, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        const auto decoder = ask("decoderPresent").toBool();
+        const auto drawn = ask("drawn").toBool();
+        const auto failure = ask("failureText").toString();
+        qInfo().noquote() << QStringLiteral("sticker=%1 decoder=%2 drawn=%3 failure=%4")
+                                 .arg(sticker).arg(decoder).arg(drawn).arg(failure);
+        if (!decoder) {
+            // A build without libwebp cannot play one, and must say so rather
+            // than sit on a still frame with no explanation.
+            if (failure.isEmpty()) {
+                qWarning().noquote() << QStringLiteral("a build with no decoder said nothing");
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+            return EXIT_SUCCESS;
+        }
+        if (!failure.isEmpty()) {
+            qWarning().noquote() << QStringLiteral("an animated sticker was refused: ") + failure;
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        if (!drawn) {
+            qWarning().noquote() << QStringLiteral("an animated sticker never drew a frame");
+            return WHATSAPPGO_TEST_FAILURE();
+        }
         return EXIT_SUCCESS;
     }
 

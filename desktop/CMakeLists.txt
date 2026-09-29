@@ -7,9 +7,42 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 Network Multimedia Svg)
+# WhatsApp sends an animated sticker as an animated WebP, which no Qt image
+# plugin decodes: the client decodes it itself through libwebp, and without
+# the library it can only show a still frame and say animated stickers are
+# unavailable. That is exactly what every published build said, because this
+# was found quietly and nothing ever installed the library. A packaged build
+# now insists on it rather than shipping that message to a reader.
+option(WHATSAPPGO_REQUIRE_WEBP "Fail configuration when libwebp is missing" OFF)
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(WEBP QUIET IMPORTED_TARGET libwebp libwebpdemux)
+endif()
+if(TARGET PkgConfig::WEBP)
+    set(WHATSAPPGO_WEBP PkgConfig::WEBP)
+else()
+    # Homebrew and vcpkg install the library without a pkg-config file this
+    # can always reach, so it is looked for by name as well.
+    find_path(WEBP_DEMUX_INCLUDE_DIR webp/demux.h)
+    find_library(WEBP_LIBRARY NAMES webp libwebp)
+    find_library(WEBP_DEMUX_LIBRARY NAMES webpdemux libwebpdemux)
+    if(WEBP_DEMUX_INCLUDE_DIR AND WEBP_LIBRARY AND WEBP_DEMUX_LIBRARY)
+        add_library(WhatsAppGo::WebP INTERFACE IMPORTED)
+        target_include_directories(WhatsAppGo::WebP INTERFACE ${WEBP_DEMUX_INCLUDE_DIR})
+        target_link_libraries(WhatsAppGo::WebP INTERFACE ${WEBP_DEMUX_LIBRARY} ${WEBP_LIBRARY})
+        set(WHATSAPPGO_WEBP WhatsAppGo::WebP)
+    endif()
+endif()
+if(WHATSAPPGO_WEBP)
+    message(STATUS "Animated stickers: decoding through ${WHATSAPPGO_WEBP}")
+else()
+    if(WHATSAPPGO_REQUIRE_WEBP)
+        message(FATAL_ERROR
+            "libwebp was not found, so animated stickers would not play in this build. "
+            "Install libwebp-dev (Debian and Ubuntu), libwebp-devel (Fedora), webp (Homebrew) "
+            "or libwebp (vcpkg), or configure with -DWHATSAPPGO_REQUIRE_WEBP=OFF to build without them.")
+    endif()
+    message(WARNING "libwebp was not found: animated stickers will not play in this build.")
 endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -271,8 +304,8 @@ target_include_directories(whatsappgo PRIVATE src)
 target_link_libraries(whatsappgo PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Multimedia Qt6::Svg
 )
-if(TARGET PkgConfig::WEBP)
-    target_link_libraries(whatsappgo PRIVATE PkgConfig::WEBP)
+if(WHATSAPPGO_WEBP)
+    target_link_libraries(whatsappgo PRIVATE ${WHATSAPPGO_WEBP})
     target_compile_definitions(whatsappgo PRIVATE WHATSAPPGO_WEBP=1)
 endif()
 
@@ -577,6 +610,8 @@ if(BUILD_TESTING)
     add_test(NAME desktop-schedule-send COMMAND whatsappgo --schedule-send-test)
     add_test(NAME desktop-channel-posts COMMAND whatsappgo --channel-posts-test)
     add_test(NAME desktop-voice-seek COMMAND whatsappgo --voice-seek-test)
+    add_test(NAME desktop-sticker-animation COMMAND whatsappgo --sticker-animation-test)
+    set_tests_properties(desktop-sticker-animation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-message-history COMMAND whatsappgo --message-history-test)
     add_test(NAME desktop-clipboard-images COMMAND whatsappgo --clipboard-image-test)
     add_test(NAME desktop-layout-regressions COMMAND whatsappgo --layout-regression-test)
