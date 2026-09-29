@@ -1651,6 +1651,10 @@ QtObject {
                 // A list inside a closed popup has no rows: nothing is built
                 // until it is on screen.
                 function openList() { scheduledList.open(); return true }
+                // The wait shown beside a scheduled message, asked for at a
+                // fixed moment so the answer does not depend on when the
+                // test runs.
+                function waitLabel(sendAt, now) { return RowTime.untilLabel(sendAt, now) }
             }
         )QML", QUrl(QStringLiteral("qrc:/schedule-send-test.qml")));
         std::unique_ptr<QObject> harness(component.create());
@@ -1668,6 +1672,45 @@ QtObject {
         if (!call("openDialog").toBool())
             return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
+
+        // How long there is still to wait, which is what somebody looking at
+        // the strip above the composer actually wants to know.
+        const auto waitLabel = [&harness](qint64 sendAt, qint64 now) {
+            QVariant answer;
+            if (!QMetaObject::invokeMethod(harness.get(), "waitLabel", Q_RETURN_ARG(QVariant, answer),
+                                           Q_ARG(QVariant, double(sendAt)), Q_ARG(QVariant, double(now))))
+                return QString();
+            return answer.toString();
+        };
+        const qint64 minute = 60 * 1000;
+        const qint64 hour = 60 * minute;
+        const qint64 day = 24 * hour;
+        const qint64 noon = QDateTime(QDate(2026, 9, 25), QTime(12, 0, 0)).toMSecsSinceEpoch();
+        struct Wait {
+            qint64 sendAt;
+            const char *expected;
+        };
+        const QList<Wait> waits{
+            {0, ""},
+            {noon - minute, "any moment now"},
+            {noon + 30 * 1000, "in under a minute"},
+            {noon + 5 * minute, "in 5 minutes"},
+            {noon + minute, "in 1 minute"},
+            // Rounding picks the unit, so just under an hour is an hour rather
+            // than sixty minutes, and just under a day is a day.
+            {noon + 59 * minute + 40 * 1000, "in about 1 hour"},
+            {noon + 8 * hour, "in about 8 hours"},
+            {noon + 23 * hour + 40 * minute, "in about 1 day"},
+            {noon + 3 * day, "in about 3 days"},
+        };
+        for (const auto &wait : waits) {
+            const auto got = waitLabel(wait.sendAt, noon);
+            if (got != QString::fromUtf8(wait.expected)) {
+                qWarning().noquote() << QStringLiteral("wait label for %1 is \"%2\", want \"%3\"")
+                                            .arg(wait.sendAt).arg(got).arg(QString::fromUtf8(wait.expected));
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+        }
 
         // The dialog opens on an hour from now, to the minute.
         const QDateTime expectedDefault(QDate(2026, 9, 25), QTime(22, 30, 0));

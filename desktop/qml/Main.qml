@@ -2773,6 +2773,7 @@ ApplicationWindow {
                         // conversation yet - so the only place it can be seen
                         // or taken back is here.
                         Rectangle {
+                            id: scheduledStrip
                             objectName: "scheduledStrip"
                             Layout.fillWidth: true
                             visible: backend.scheduledMessages.length > 0
@@ -2780,6 +2781,16 @@ ApplicationWindow {
                             radius: 10
                             color: Theme.composer
                             border.color: Theme.border
+                            // The wait has to keep counting down. Read once, it
+                            // would still say "in about 8 hours" the following
+                            // morning, which is worse than not saying it.
+                            property double nowMillis: Date.now()
+                            Timer {
+                                running: scheduledStrip.visible
+                                interval: 30000
+                                repeat: true
+                                onTriggered: scheduledStrip.nowMillis = Date.now()
+                            }
                             RowLayout {
                                 id: scheduledRow
                                 anchors.fill: parent
@@ -2796,10 +2807,16 @@ ApplicationWindow {
                                     objectName: "scheduledStripLabel"
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
+                                    // The daemon hands these back soonest
+                                    // first, so the first one is the next to
+                                    // go and the one worth counting down to.
+                                    readonly property double nextSendAt: backend.scheduledMessages.length > 0
+                                        ? Number(backend.scheduledMessages[0].send_at || 0) : 0
+                                    readonly property string wait: RowTime.untilLabel(nextSendAt, scheduledStrip.nowMillis)
                                     text: backend.scheduledMessages.length === 1
-                                        ? qsTr("1 message scheduled for %1").arg(
-                                            Qt.formatDateTime(new Date(Number(backend.scheduledMessages[0].send_at || 0)), "d MMM, HH:mm"))
-                                        : qsTr("%1 messages scheduled").arg(backend.scheduledMessages.length)
+                                        ? qsTr("1 message scheduled for %1 — %2").arg(
+                                            Qt.formatDateTime(new Date(nextSendAt), "d MMM, HH:mm")).arg(wait)
+                                        : qsTr("%1 messages scheduled — the next %2").arg(backend.scheduledMessages.length).arg(wait)
                                     color: Theme.textMuted
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
