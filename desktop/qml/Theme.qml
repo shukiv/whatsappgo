@@ -177,6 +177,34 @@ QtObject {
         return richTextSegment(value)
     }
 
+    // A quoted message is an excerpt, not a copy. Someone answering a long list
+    // should see enough of it to know what they replied to, and the reply
+    // itself should stay the size of a reply.
+    //
+    // The cap is applied to the text before it becomes rich text, because Qt
+    // honours neither maximumLineCount nor elide once textFormat is RichText.
+    readonly property int quotedExcerptLines: 5
+    readonly property int quotedExcerptCharacters: 320
+    function quotedExcerpt(value) {
+        const source = String(value === undefined || value === null ? "" : value)
+        const lines = source.split("\n")
+        let kept = lines.slice(0, quotedExcerptLines).join("\n")
+        let trimmed = lines.length > quotedExcerptLines
+        if (kept.length > quotedExcerptCharacters) {
+            kept = kept.slice(0, quotedExcerptCharacters)
+            trimmed = true
+        }
+        // A cut that lands mid-word reads as a typo, so step back to the last
+        // break when one is close enough to the end to be the same word.
+        if (trimmed) {
+            const lastBreak = Math.max(kept.lastIndexOf(" "), kept.lastIndexOf("\n"))
+            if (lastBreak > kept.length - 16 && lastBreak > 0)
+                kept = kept.slice(0, lastBreak)
+            kept = kept.replace(/\s+$/, "") + "\u2026"
+        }
+        return kept
+    }
+
     // linkColor and underlined let a surface that is not the chat background
     // ask for readable links: a status is drawn on solid teal, where the chat
     // link green is close to invisible.
@@ -270,13 +298,26 @@ QtObject {
         }).join("")
     }
 
+    function emojiClusterPattern() {
+        const atom = "(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF])(?:\\uFE0F|\\uFE0E)?(?:\\uD83C[\\uDFFB-\\uDFFF])?"
+        const flags = "(?:\\uD83C[\\uDDE6-\\uDDFF]){2}"
+        return new RegExp("(" + flags + "|" + atom + "(?:\\u200D" + atom + ")*)", "g")
+    }
+
     function isEmojiOnly(value) {
         const compact = String(value || "").replace(/\s/g, "")
         if (!compact)
             return false
-        const atom = "(?:[\\uD83C-\\uDBFF][\\uDC00-\\uDFFF]|[\\u2600-\\u27BF])(?:\\uFE0F|\\uFE0E)?(?:\\uD83C[\\uDFFB-\\uDFFF])?"
-        const flags = "(?:\\uD83C[\\uDDE6-\\uDDFF]){2}"
-        const cluster = new RegExp("(" + flags + "|" + atom + "(?:\\u200D" + atom + ")*)", "g")
-        return compact.replace(cluster, "").length === 0
+        return compact.replace(emojiClusterPattern(), "").length === 0
+    }
+
+    // How many emoji the message is, counting a flag or a joined sequence such
+    // as a family as the single character a reader sees.
+    function emojiCount(value) {
+        const compact = String(value || "").replace(/\s/g, "")
+        if (!compact)
+            return 0
+        const matches = compact.match(emojiClusterPattern())
+        return matches ? matches.length : 0
     }
 }

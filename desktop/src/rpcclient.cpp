@@ -4143,6 +4143,49 @@ void RpcClient::openFile(const QString &path)
         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
+// Opens a link that came from a message, a status, or a link preview.
+//
+// Two things separate this from handing the address to QDesktopServices.
+//
+// The address was written by somebody else, so only the schemes a
+// conversation legitimately carries are followed. xdg-open dispatches by
+// scheme, and a desktop can register a handler for almost anything, so a
+// message could otherwise ask this computer to launch a program of the
+// sender's choosing. A local file is not in the list either: nothing in a
+// conversation should be able to open a path on this machine.
+//
+// The browser is also started without this application's terminal. It
+// inherits the standard streams otherwise, and everything the browser and
+// its extensions print then lands in the output of whoever launched
+// WhatsAppGo, burying the application's own diagnostics.
+bool RpcClient::openExternally(const QString &url)
+{
+    static const QStringList followable{
+        QStringLiteral("http"), QStringLiteral("https"), QStringLiteral("mailto"),
+        QStringLiteral("tel"), QStringLiteral("geo"),
+    };
+    const QUrl target(url.trimmed(), QUrl::StrictMode);
+    if (!target.isValid() || target.isRelative() || !followable.contains(target.scheme().toLower())) {
+        qWarning().noquote() << QStringLiteral("refusing to open a link that is not a web address: %1")
+                                    .arg(target.scheme());
+        return false;
+    }
+#ifdef Q_OS_LINUX
+    QProcess opener;
+    opener.setProgram(QStringLiteral("xdg-open"));
+    // The address is passed as an argument, never through a shell.
+    opener.setArguments({target.toString(QUrl::FullyEncoded)});
+    opener.setStandardOutputFile(QProcess::nullDevice());
+    opener.setStandardErrorFile(QProcess::nullDevice());
+    opener.setStandardInputFile(QProcess::nullDevice());
+    if (opener.startDetached())
+        return true;
+    // No xdg-open, or it could not be started: Qt knows other ways, and a
+    // portal is the one that works inside a sandbox.
+#endif
+    return QDesktopServices::openUrl(target);
+}
+
 // ensureMedia fetches media that arrived without a preview. History
 // synchronisation strips the small picture WhatsApp normally embeds in a
 // message, so old photos can only be shown by downloading them. Requests are

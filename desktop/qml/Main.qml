@@ -37,7 +37,7 @@ ApplicationWindow {
     }
     property string transientNotice: ""
     readonly property string bugReportUrl: "https://github.com/shukiv/whatsappgo/issues"
-    property var openBugReportUrl: function(url) { return Qt.openUrlExternally(url) }
+    property var openBugReportUrl: function(url) { return backend.openExternally(url) }
     function reportBug() {
         if (!openBugReportUrl(bugReportUrl)) {
             window.transientError = qsTr("Could not open your browser. Visit %1").arg(bugReportUrl)
@@ -2746,9 +2746,14 @@ ApplicationWindow {
                                 Label {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    text: qsTr("Replying to: %1").arg(window.replyPreview)
+                                    text: qsTr("Replying to: %1").arg(
+                                        Theme.quotedExcerpt(window.replyPreview))
                                     color: Theme.textMuted
                                     font.pixelSize: 12
+                                    // Answering a long message must not push the
+                                    // composer off the bottom of the window.
+                                    maximumLineCount: Theme.quotedExcerptLines
+                                    wrapMode: Text.Wrap
                                     elide: Text.ElideRight
                                 }
                                 ThemedToolButton {
@@ -3243,6 +3248,7 @@ ApplicationWindow {
                 }
                 onImagePreviewRequested: message => window.openChatImage(message)
                 onVideoPreviewRequested: message => Playback.start(String(message.id), String(message.media_path || ""), true)
+                onFullAvatarRequested: jid => backend.refreshChatAvatar(jid)
                 onAvatarPreviewRequested: (path, title) => {
                     chatMediaViewer.openImage(window.localMediaUrl(path), title,
                                               window.localMediaUrl(path), "", "", "")
@@ -3250,7 +3256,7 @@ ApplicationWindow {
                 onDownloadRequested: messageId => backend.downloadMedia(messageId)
                 onOpenLinkRequested: url => {
                     if (url)
-                        Qt.openUrlExternally(url)
+                        backend.openExternally(url)
                 }
             }
 

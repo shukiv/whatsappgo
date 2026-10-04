@@ -228,16 +228,18 @@ Item {
     // Keep compact chat density while giving short bubbles a little more
     // presence and a comfortably readable baseline.
     readonly property int bodyFontSize: 15
-    readonly property int captionFontSize: 14
-    readonly property int metaFontSize: 11
-
     // A message that is nothing but emoji is drawn at twice the size, the way
     // WhatsApp Web draws one: sent on its own an emoji is the message rather
-    // than punctuation in it, and at body size it reads as a typo. Theme has
-    // been able to recognise one since it was written and nothing ever asked.
-    readonly property bool emojiOnlyBody: !modelData.revoked && !viewOnceKind
+    // than punctuation in it, and at body size it reads as a typo.
+    //
+    // A caption under a photo, a deleted-message notice and a view-once notice
+    // stay at the body size: those are labels about the message, not the
+    // message itself.
+    readonly property bool emojiOnlyBody: !modelData.revoked && !viewOnceKind && !mediaKind
         && Theme.isEmojiOnly(modelData.body || "")
     readonly property int emojiBodyFontSize: bodyFontSize * 2
+    readonly property int captionFontSize: 14
+    readonly property int metaFontSize: 11
 
     readonly property bool playingThis: Playback.isCurrent(modelData.id)
     readonly property bool contactKind: modelData.kind === "contact"
@@ -897,11 +899,15 @@ Item {
                             id: replyLabel
                             width: parent.width - (root.modelData.reply_view_once ? 21 : 0)
                             text: root.modelData.reply_view_once ? qsTr("View once message")
-                                : Theme.emojiRichText(root.modelData.reply_preview || qsTr("Replied message"))
+                                : Theme.emojiRichText(Theme.quotedExcerpt(
+                                    root.modelData.reply_preview || qsTr("Replied message")))
                             color: Theme.textMuted
                             font.pixelSize: 12
                             elide: Text.ElideRight
-                            maximumLineCount: 2
+                            // The text is already cut to an excerpt: RichText
+                            // honours neither of these, and a quote of a long
+                            // list would otherwise fill the whole bubble.
+                            maximumLineCount: Theme.quotedExcerptLines
                             wrapMode: Text.Wrap
                             textFormat: Text.RichText
                         }
@@ -1339,7 +1345,7 @@ Item {
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     // There is no map inside the application, so the place is
                     // handed to whatever the desktop uses to show maps.
-                    onClicked: Qt.openUrlExternally("https://www.openstreetmap.org/?mlat="
+                    onClicked: backend.openExternally("https://www.openstreetmap.org/?mlat="
                         + Number(root.modelData.latitude || 0) + "&mlon=" + Number(root.modelData.longitude || 0)
                         + "#map=17/" + Number(root.modelData.latitude || 0) + "/" + Number(root.modelData.longitude || 0))
                 }
@@ -1498,7 +1504,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.openUrlExternally(root.modelData.link_url)
+                    onClicked: backend.openExternally(root.modelData.link_url)
                 }
             }
 

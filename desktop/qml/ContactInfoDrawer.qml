@@ -42,7 +42,10 @@ Rectangle {
     onSharedChatJidChanged: endSharedSelection()
     onProfileChanged: endSharedSelection()
     onActiveCategoryChanged: endSharedSelection()
-    onOpenedChanged: if (!opened) endSharedSelection()
+    onOpenedChanged: {
+        if (!opened) endSharedSelection()
+        else root.requestFullAvatar()
+    }
     onSharedViewChanged: if (!sharedView) endSharedSelection()
     property var groupInfo: ({})
     property bool groupLoading: false
@@ -70,6 +73,9 @@ Rectangle {
     signal imagePreviewRequested(var message)
     signal videoPreviewRequested(var message)
     signal avatarPreviewRequested(string path, string title)
+    // The drawer and the viewer both draw the picture far larger than a row
+    // does, and what is cached may be WhatsApp's 96 px preview.
+    signal fullAvatarRequested(string jid)
     signal downloadRequested(string messageId)
     signal openLinkRequested(string url)
     signal forwardSharedRequested(var items)
@@ -107,6 +113,12 @@ Rectangle {
             return String(message.link_url)
         const match = String(message && message.body || "").match(/https?:\/\/[^\s<>"']+/i)
         return match ? match[0] : ""
+    }
+
+    function requestFullAvatar() {
+        const jid = chat ? String(chat.jid || "") : ""
+        if (jid.length > 0)
+            root.fullAvatarRequested(jid)
     }
 
     function originalAvatarPath(path) {
@@ -268,7 +280,12 @@ Rectangle {
                         enabled: Boolean(root.avatarPath)
                         Accessible.name: enabled ? qsTr("Open profile picture for %1").arg(root.title)
                                                  : qsTr("No profile picture for %1").arg(root.title)
-                        onClicked: root.avatarPreviewRequested(root.originalAvatarPath(root.avatarPath), root.title)
+                        onClicked: {
+                            // Ask again on the way to the viewer: the drawer may
+                            // have been opened before this contact had a picture.
+                            root.requestFullAvatar()
+                            root.avatarPreviewRequested(root.originalAvatarPath(root.avatarPath), root.title)
+                        }
                         background: Rectangle {
                             radius: width / 2
                             color: parent.down ? Theme.pressedRow : parent.hovered ? Theme.hoverRow : "transparent"

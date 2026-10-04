@@ -376,6 +376,7 @@ public:
     Q_INVOKABLE void searchMessages(const QString &query);
     Q_INVOKABLE void loadStarredMessages(const QString &chatJid = {});
     Q_INVOKABLE void openFile(const QString &path);
+    Q_INVOKABLE bool openExternally(const QString &url);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
     // Save a document to Downloads without launching an external application.
     Q_INVOKABLE void downloadDocument(const QVariantMap &message);

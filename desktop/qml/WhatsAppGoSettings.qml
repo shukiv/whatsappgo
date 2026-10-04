@@ -148,7 +148,7 @@ Drawer {
                                     flat: true
                                     text: modelData.value === "tenor" ? qsTr("Retirement notice") : qsTr("Get a key")
                                     palette.buttonText: Theme.link
-                                    onClicked: Qt.openUrlExternally(modelData.url)
+                                    onClicked: backend.openExternally(modelData.url)
                                     Accessible.name: text + " — " + modelData.name
                                 }
                             }
