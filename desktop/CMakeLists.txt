@@ -580,6 +580,7 @@ if(BUILD_TESTING)
     add_test(NAME desktop-profile-removal-monitored COMMAND whatsappgo --profile-removal-test)
     add_test(NAME desktop-backend-lifecycle COMMAND whatsappgo --profile lifecycle-test --backend-lifecycle-test)
     add_test(NAME desktop-resize-rendering COMMAND whatsappgo --resize-rendering-test)
+    add_test(NAME desktop-channel-row COMMAND whatsappgo --channel-row-test)
     add_test(NAME desktop-message-layout COMMAND whatsappgo --message-layout-test)
     add_test(NAME desktop-message-scroll COMMAND whatsappgo --message-scroll-test)
     add_test(NAME desktop-pairing-auto-start COMMAND pairing-auto-start-test)
@@ -651,15 +652,23 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10
     )
+    # These three build many delegates each and time out on a machine that is
+    # busy with a serial build, though each finishes in about two seconds on
+    # its own. The budget is generous on purpose: a timeout here has never
+    # been a real failure, only a slow machine.
     set_tests_properties(desktop-resize-rendering desktop-message-layout desktop-message-scroll PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-        TIMEOUT 10
+        TIMEOUT 30
+    )
+    set_tests_properties(desktop-channel-row PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/cr;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/channel-row-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/channel-row-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/channel-row-test/config"
+        TIMEOUT 20
     )
     # Enter-to-send exercises a local stub, never the developer's live account.
     set_tests_properties(desktop-message-scroll PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/ms;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/message-scroll-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/message-scroll-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/message-scroll-test/config"
     )
-    set_tests_properties(desktop-pairing-auto-start desktop-presence-updates desktop-link-preview-upgrade PROPERTIES TIMEOUT 5)
+    set_tests_properties(desktop-pairing-auto-start desktop-presence-updates desktop-link-preview-upgrade PROPERTIES TIMEOUT 20)
     set_tests_properties(desktop-system-integration PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 10

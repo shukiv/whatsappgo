@@ -433,7 +433,7 @@ Item {
             onClicked: mouse => {
                 const link = linkUnder(mouse.x, mouse.y)
                 if (link) {
-                    Qt.openUrlExternally(link)
+                    backend.openExternally(link)
                     return
                 }
                 mouse.x < width / 3 ? root.previous() : root.advance()

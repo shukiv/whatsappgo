@@ -83,7 +83,7 @@ Item {
             return
         }
         if (/^https?:\/\//i.test(value))
-            Qt.openUrlExternally(value)
+            backend.openExternally(value)
     }
 
     TextEdit {
@@ -114,11 +114,17 @@ Item {
         }
     }
 
+    // The width the editor needs, measured the way the editor draws: same rich
+    // text, same renderer. Measuring plain text in the default renderer was a
+    // few pixels short of what native rendering actually painted, which stayed
+    // invisible until an emoji-only message enlarged the font and those few
+    // pixels became a wrapped line.
     Text {
         id: naturalMeasure
         visible: false
-        text: root.mentions.length ? Theme.mentionRichText(root.plainText, root.mentions) : root.displayText
-        textFormat: root.mentions.length ? Text.RichText : Text.PlainText
+        text: Theme.mentionRichText(root.plainText, root.mentions)
+        textFormat: Text.RichText
+        renderType: Text.NativeRendering
         wrapMode: Text.NoWrap
         font: root.font
     }

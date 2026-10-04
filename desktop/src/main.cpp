@@ -25,6 +25,7 @@
 #include <QWindow>
 #include <QQuickWindow>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -39,6 +40,7 @@
 #include <QMenu>
 #include <QQmlProperty>
 #include <QQuickItem>
+#include <QQuickView>
 #include <QStyleHints>
 #include <QProcess>
 #include <QSystemTrayIcon>
@@ -332,6 +334,8 @@ int main(int argc, char *argv[])
     parser.addOption(backendLifecycleTestOption);
     QCommandLineOption resizeRenderingTestOption(QStringLiteral("resize-rendering-test"), QStringLiteral("Verify that resizing schedules a complete scene repaint"));
     parser.addOption(resizeRenderingTestOption);
+    QCommandLineOption channelRowTestOption(QStringLiteral("channel-row-test"), QStringLiteral("Verify that a channel row keeps its name and description inside the panel"));
+    parser.addOption(channelRowTestOption);
     QCommandLineOption messageLayoutTestOption(QStringLiteral("message-layout-test"), QStringLiteral("Verify message bubble width limits, padding, and media previews"));
     parser.addOption(messageLayoutTestOption);
     QCommandLineOption messageScrollTestOption(QStringLiteral("message-scroll-test"), QStringLiteral("Verify conversations open and remain anchored at the newest message"));
@@ -377,6 +381,7 @@ int main(int argc, char *argv[])
     const bool profileRemovalTest = parser.isSet(profileRemovalTestOption);
     const bool backendLifecycleTest = parser.isSet(backendLifecycleTestOption);
     const bool resizeRenderingTest = parser.isSet(resizeRenderingTestOption);
+    const bool channelRowTest = parser.isSet(channelRowTestOption);
     const bool messageLayoutTest = parser.isSet(messageLayoutTestOption);
     const bool messageScrollTest = parser.isSet(messageScrollTestOption);
     const bool desktopIntegrationTest = parser.isSet(desktopIntegrationTestOption);
@@ -392,7 +397,7 @@ int main(int argc, char *argv[])
     const auto screenshotChat = parser.value(screenshotChatOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
-        || backendLifecycleTest || resizeRenderingTest
+        || backendLifecycleTest || resizeRenderingTest || channelRowTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
         || presenceDisplayTest || bundledFontTest || fileDropTest || bugReportTest || updateSettingsTest
         || styleDetectionTest || fileUrlTest || menuPlacementTest || composerDraftTest
@@ -446,7 +451,7 @@ int main(int argc, char *argv[])
     // stub answers just enough for the window to come up.
     QLocalServer stubDaemon;
     int rejectedDraftSends = 0;
-    if (searchResultsTest || composerDraftTest || messageScrollTest || bugReportTest) {
+    if (searchResultsTest || composerDraftTest || messageScrollTest || bugReportTest || channelRowTest) {
         const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
 #ifndef Q_OS_WIN
         QDir().mkpath(QFileInfo(stubPath).absolutePath());
@@ -457,9 +462,9 @@ int main(int argc, char *argv[])
                                         .arg(stubPath, stubDaemon.errorString());
             return WHATSAPPGO_TEST_FAILURE();
         }
-        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, &rejectedDraftSends] {
+        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, channelRowTest, &rejectedDraftSends] {
             auto *socket = stubDaemon.nextPendingConnection();
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, &rejectedDraftSends] {
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, channelRowTest, &rejectedDraftSends] {
                 while (socket->canReadLine()) {
                     const auto request = QJsonDocument::fromJson(socket->readLine()).object();
                     const auto method = request.value(QStringLiteral("method")).toString();
@@ -469,6 +474,22 @@ int main(int argc, char *argv[])
                     if (messageScrollTest && method == QStringLiteral("messages.list"))
                         continue;
                     QJsonValue result = QJsonObject{};
+                    // One followed channel whose name and description are both
+                    // far wider than the panel, and written right to left.
+                    if (channelRowTest && method == QStringLiteral("channels.list")) {
+                        const QJsonObject channel{
+                            {QStringLiteral("jid"), QStringLiteral("123@newsletter")},
+                            {QStringLiteral("name"), QStringLiteral("\u05E2\u05D3\u05DB\u05D5\u05E0\u05D9 \u05D8\u05DB\u05E0\u05D5\u05DC\u05D5\u05D2\u05D9\u05D4 - Labtop \u05D5\u05DE\u05D7\u05E9\u05D1\u05D9\u05DD \u05E0\u05D9\u05D9\u05D3\u05D9\u05DD")},
+                            {QStringLiteral("description"), QStringLiteral("\u05D1\u05E8\u05D5\u05DB\u05D9\u05DD \u05D4\u05D1\u05D0\u05D9\u05DD \u05DC\u05E2\u05E8\u05D5\u05E5 \u05D7\u05D5\u05D1\u05D1\u05D9 \u05D4\u05D8\u05DB\u05E0\u05D5\u05DC\u05D5\u05D2\u05D9\u05D4 \u05D4\u05D2\u05D3\u05D5\u05DC \u05D1\u05D9\u05E9\u05E8\u05D0\u05DC \u05E2\u05DD \u05DB\u05DC \u05D4\u05D7\u05D3\u05E9\u05D5\u05EA")},
+                            {QStringLiteral("subscriber_count"), 1200},
+                            {QStringLiteral("muted"), false},
+                        };
+                        const QJsonObject response{{QStringLiteral("version"), 1},
+                                                   {QStringLiteral("id"), request.value(QStringLiteral("id"))},
+                                                   {QStringLiteral("result"), QJsonArray{channel}}};
+                        socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+                        continue;
+                    }
                     if (request.value(QStringLiteral("method")).toString() == QStringLiteral("status.get")) {
                         result = QJsonObject{{QStringLiteral("logged_in"), true},
                                              {QStringLiteral("state"), QStringLiteral("connected")}};
@@ -858,6 +879,108 @@ int main(int argc, char *argv[])
                 && statusLinkIsClickable && resumedWithoutReset
             ? EXIT_SUCCESS : EXIT_FAILURE;
     }
+    if (channelRowTest) {
+        // A followed channel's name and description must stay inside the
+        // panel. Each label fills the row, and a label that does not also
+        // allow itself to shrink makes its own text the layout's minimum
+        // width, so a long name pushes the row past the edge of the list
+        // instead of eliding inside it.
+        backend.refreshChannels();
+        QEventLoop channelLoop;
+        QTimer::singleShot(400, &channelLoop, &QEventLoop::quit);
+        channelLoop.exec();
+        QQmlComponent component(&engine,
+            QUrl(QStringLiteral("qrc:/qt/qml/org/whatsappgo/qml/FeatureSection.qml")));
+        std::unique_ptr<QObject> panel(component.createWithInitialProperties({
+            {QStringLiteral("width"), 456},
+            {QStringLiteral("height"), 700},
+            {QStringLiteral("section"), QStringLiteral("channels")},
+        }));
+        if (!panel) {
+            qWarning().noquote() << component.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QCoreApplication::processEvents();
+        auto *panelItem = qobject_cast<QQuickItem *>(panel.get());
+        if (panelItem == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        // The list only builds rows once the panel belongs to a scene that
+        // lays it out, so give it a window rather than measuring an item that
+        // was never arranged.
+        QQuickView panelView(&engine, nullptr);
+        panelView.resize(456, 700);
+        panelItem->setParentItem(panelView.contentItem());
+        panelView.show();
+        for (int pass = 0; pass < 5; ++pass) {
+            QCoreApplication::processEvents();
+            QEventLoop settle;
+            QTimer::singleShot(60, &settle, &QEventLoop::quit);
+            settle.exec();
+        }
+        auto *list = qobject_cast<QQuickItem *>(
+            panel->findChild<QObject *>(QStringLiteral("featureSectionList")));
+        // A list that has never been rendered has no delegates to measure.
+        if (list != nullptr)
+            QMetaObject::invokeMethod(list, "forceLayout");
+        panelView.grabWindow();
+        QCoreApplication::processEvents();
+        // A list delegate is not a QObject child of the view, so findChild does
+        // not reach it. Walk the visual tree instead.
+        const std::function<QQuickItem *(QQuickItem *, const QString &)> findVisual =
+            [&findVisual](QQuickItem *from, const QString &name) -> QQuickItem * {
+                if (from == nullptr)
+                    return nullptr;
+                if (from->objectName() == name)
+                    return from;
+                for (auto *child : from->childItems()) {
+                    if (auto *found = findVisual(child, name))
+                        return found;
+                }
+                return nullptr;
+            };
+        auto *title = findVisual(panelItem, QStringLiteral("featureRowTitle"));
+        auto *subtitle = findVisual(panelItem, QStringLiteral("featureRowSubtitle"));
+        auto *leaveButton = findVisual(panelItem, QStringLiteral("channelLeaveButton"));
+        if (title == nullptr || subtitle == nullptr || leaveButton == nullptr) {
+            qWarning() << "channel row was not built: title" << title
+                       << "subtitle" << subtitle << "leave" << leaveButton;
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        const auto edgeOf = [panelItem](QQuickItem *item) {
+            return item->mapToItem(panelItem, QPointF(item->width(), 0)).x();
+        };
+        const auto startOf = [panelItem](QQuickItem *item) {
+            return item->mapToItem(panelItem, QPointF(0, 0)).x();
+        };
+        bool passed = true;
+        const auto require = [&passed](bool condition, const QString &description) {
+            if (!condition) {
+                passed = false;
+                qInfo().noquote() << QStringLiteral("FAIL: ") + description;
+            }
+        };
+        qInfo().noquote() << QStringLiteral("channel row: panel=%1 title=[%2,%3] subtitle=[%4,%5] leave ends at %6")
+                             .arg(panelItem->width()).arg(startOf(title)).arg(edgeOf(title))
+                             .arg(startOf(subtitle)).arg(edgeOf(subtitle)).arg(edgeOf(leaveButton));
+        require(startOf(title) >= 0.0 && edgeOf(title) <= panelItem->width(),
+                QStringLiteral("the channel name leaves the panel"));
+        require(startOf(subtitle) >= 0.0 && edgeOf(subtitle) <= panelItem->width(),
+                QStringLiteral("the channel description leaves the panel"));
+        // The text column stops before the actions rather than running under
+        // them, and the Leave button itself stays inside the panel.
+        require(edgeOf(title) <= startOf(leaveButton) && edgeOf(subtitle) <= startOf(leaveButton),
+                QStringLiteral("the channel text runs under the row's actions"));
+        require(edgeOf(leaveButton) <= panelItem->width(),
+                QStringLiteral("the Leave button leaves the panel"));
+        // The fixture has to be too long to fit, or the checks above would pass
+        // on text that never needed constraining. implicitWidth is the width
+        // the label would take if nothing stopped it.
+        require(title->implicitWidth() > title->width(),
+                QStringLiteral("the fixture channel name is not wider than its label"));
+        require(subtitle->implicitWidth() > subtitle->width(),
+                QStringLiteral("the fixture channel description is not wider than its label"));
+        return passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
     if (resizeRenderingTest) {
         if (engine.rootObjects().isEmpty())
             return WHATSAPPGO_TEST_FAILURE();
@@ -928,6 +1051,43 @@ QtObject {
             // Qt has to agree that the URL names the path it was built from.
             if (expectation.second.startsWith(QLatin1String("file://"))
                 && QUrl(expectation.second).toLocalFile().isEmpty()) {
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+        }
+
+        // A link in a message was written by somebody else. xdg-open dispatches
+        // by scheme and a desktop can register a handler for almost anything,
+        // so only the schemes a conversation legitimately carries are followed.
+        // A refused address must not reach the desktop at all.
+        for (const auto &refused : {
+                 QStringLiteral("file:///etc/passwd"),
+                 QStringLiteral("ssh://someone@example.com"),
+                 QStringLiteral("javascript:alert(1)"),
+                 QStringLiteral("smb://example.com/share"),
+                 QStringLiteral("steam://run/1"),
+                 QStringLiteral("/etc/passwd"),
+                 QStringLiteral("example.com"),
+                 QString(),
+             }) {
+            if (backend.openExternally(refused)) {
+                qWarning().noquote() << QStringLiteral("a link with a scheme this client does not follow was opened: %1")
+                                            .arg(refused);
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+        }
+        // Whether the browser actually starts depends on the desktop, so the
+        // addresses a conversation does carry are only checked for acceptance.
+        for (const auto &accepted : {
+                 QStringLiteral("https://example.com/path?q=1"),
+                 QStringLiteral("http://example.com"),
+                 QStringLiteral("mailto:someone@example.com"),
+                 QStringLiteral("tel:+15551234567"),
+                 QStringLiteral("geo:32.08,34.78"),
+             }) {
+            const QUrl parsed(accepted, QUrl::StrictMode);
+            if (!parsed.isValid() || parsed.isRelative()) {
+                qWarning().noquote() << QStringLiteral("a web address was rejected before it reached the desktop: %1")
+                                            .arg(accepted);
                 return WHATSAPPGO_TEST_FAILURE();
             }
         }
@@ -1033,6 +1193,8 @@ QtObject {
                 property var selfReactedMessage
                 property var imageMessage
                 property var forwardedMessage
+                property var longQuoteMessage
+                property var wallQuoteMessage
                 property string previewedMessageId: ""
                 property string previewedMediaPath: ""
                 property string quotedMessageId: ""
@@ -1070,6 +1232,18 @@ QtObject {
                     modelData: harness.forwardedMessage
                 }
                 MessageDelegate {
+                    // Answering a long message must quote an excerpt of it.
+                    objectName: "longQuoteInteractionDelegate"
+                    width: 800
+                    modelData: harness.longQuoteMessage
+                }
+                MessageDelegate {
+                    // The same, for a wall of text with no line breaks at all.
+                    objectName: "wallQuoteInteractionDelegate"
+                    width: 800
+                    modelData: harness.wallQuoteMessage
+                }
+                MessageDelegate {
                     objectName: "imageInteractionDelegate"
                     width: 800
                     modelData: harness.imageMessage
@@ -1080,6 +1254,11 @@ QtObject {
                 }
             }
         )QML", QUrl(QStringLiteral("qrc:/message-interaction-test.qml")));
+        QStringList quotedMenu;
+        for (int i = 0; i < 40; ++i)
+            quotedMenu << QStringLiteral("Chorizos de la Casa %1").arg(i);
+        const auto longQuotedText = quotedMenu.join(QLatin1Char('\n'));
+        const auto wallQuotedText = QStringList(120, QStringLiteral("chorizo")).join(QLatin1Char(' '));
         const QVariantMap message{
             {QStringLiteral("id"), QStringLiteral("message-test")},
             {QStringLiteral("body"), QStringLiteral("Copy this https://example.com/path?q=1")},
@@ -1118,6 +1297,28 @@ QtObject {
                 {QStringLiteral("starred"), true},
                 {QStringLiteral("forwarding_score"), 6},
             }},
+            {QStringLiteral("longQuoteMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("long-quote-test")},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("nada de eso?")},
+                {QStringLiteral("from_me"), true},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("sent")},
+                {QStringLiteral("reply_to"), QStringLiteral("quoted-message-test")},
+                {QStringLiteral("reply_sender"), QStringLiteral("Alice")},
+                {QStringLiteral("reply_preview"), longQuotedText},
+            }},
+            {QStringLiteral("wallQuoteMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("wall-quote-test")},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), QStringLiteral("nada de eso?")},
+                {QStringLiteral("from_me"), true},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("sent")},
+                {QStringLiteral("reply_to"), QStringLiteral("quoted-message-test")},
+                {QStringLiteral("reply_sender"), QStringLiteral("Alice")},
+                {QStringLiteral("reply_preview"), wallQuotedText},
+            }},
             {QStringLiteral("imageMessage"), QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("image-test")},
                 {QStringLiteral("kind"), QStringLiteral("image")},
@@ -1148,6 +1349,31 @@ QtObject {
 		auto *infoDrawer = qobject_cast<QQuickItem *>(harness->findChild<QObject *>(QStringLiteral("messageInfoDrawerHarness")));
         auto *quotedMessagePreview = qobject_cast<QQuickItem *>(
             delegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview")));
+        // A quoted message is an excerpt. The label is rich text, where Qt
+        // honours neither elide nor maximumLineCount, so the cut has to happen
+        // before the markup or a quoted list fills the whole conversation.
+        auto *longQuoteDelegate = qobject_cast<QQuickItem *>(
+            harness->findChild<QObject *>(QStringLiteral("longQuoteInteractionDelegate")));
+        auto *longQuoteBox = longQuoteDelegate ? qobject_cast<QQuickItem *>(
+            longQuoteDelegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview"))) : nullptr;
+        const qreal longQuoteHeight = longQuoteBox ? longQuoteBox->height() : 0.0;
+        const qreal shortQuoteHeight = quotedMessagePreview ? quotedMessagePreview->height() : 0.0;
+        // Room for the sender's name and five lines of excerpt, no more. Forty
+        // lines would be several hundred pixels taller than this.
+        auto *wallQuoteDelegate = qobject_cast<QQuickItem *>(
+            harness->findChild<QObject *>(QStringLiteral("wallQuoteInteractionDelegate")));
+        auto *wallQuoteBox = wallQuoteDelegate ? qobject_cast<QQuickItem *>(
+            wallQuoteDelegate->findChild<QObject *>(QStringLiteral("quotedMessagePreview"))) : nullptr;
+        const qreal wallQuoteHeight = wallQuoteBox ? wallQuoteBox->height() : 0.0;
+        const bool quoteStaysAnExcerpt = longQuoteBox != nullptr && quotedMessagePreview != nullptr
+            && wallQuoteBox != nullptr
+            && longQuoteHeight > shortQuoteHeight
+            && longQuoteHeight <= shortQuoteHeight + 6.0 * 18.0
+            && wallQuoteHeight <= shortQuoteHeight + 6.0 * 18.0;
+        if (!quoteStaysAnExcerpt)
+            qWarning() << "A quoted long message was not cut to an excerpt:"
+                       << "lines" << longQuoteHeight << "wall" << wallQuoteHeight
+                       << "short" << shortQuoteHeight;
         auto *forwardedDelegate = harness->findChild<QObject *>(QStringLiteral("forwardedInteractionDelegate"));
         auto *forwardedMark = qobject_cast<QQuickItem *>(
             forwardedDelegate ? forwardedDelegate->findChild<QObject *>(QStringLiteral("forwardedMark")) : nullptr);
@@ -1298,6 +1524,7 @@ QtObject {
 				&& infoClicked && harness->property("infoMessageId").toString() == QStringLiteral("message-test")
 				&& infoDrawer && infoDrawer->isVisible() && infoDrawer->width() <= 540 && infoPreview
                 && reactionsShown
+                && quoteStaysAnExcerpt
                 && quotedMessagePreview && quotedMessagePreview->isVisible()
                 && quotedMessagePreview->height() >= 44 && quoteClicked
                 && harness->property("quotedMessageId").toString() == QStringLiteral("quoted-message-test")
@@ -1799,6 +2026,83 @@ QtObject {
                     group ? QStringLiteral("a group message does not name its sender")
                           : QStringLiteral("a one-to-one message repeats the other person's name"));
         }
+
+        // A message that is only emoji is drawn large, the way WhatsApp draws
+        // it. The size steps down as the count grows and returns to the body
+        // size once a run of them reads as text rather than as a reaction.
+        const auto bodySizeFor = [&](const QString &body, const QString &kind) {
+            QVariantMap emojiMessage{
+                {QStringLiteral("id"), QStringLiteral("emoji-") + body},
+                {QStringLiteral("kind"), kind},
+                {QStringLiteral("body"), body},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            };
+            std::unique_ptr<QObject> emojiDelegate(component.createWithInitialProperties({
+                {QStringLiteral("width"), paneWidth},
+                {QStringLiteral("modelData"), emojiMessage},
+            }));
+            if (!emojiDelegate)
+                return -1;
+            QCoreApplication::processEvents();
+            auto *emojiBody = emojiDelegate->findChild<QObject *>(QStringLiteral("messageBody"));
+            return emojiBody ? qvariant_cast<QFont>(emojiBody->property("font")).pixelSize() : -1;
+        };
+        // An enlarged emoji message still sits on one line. The bubble is
+        // sized from a hidden measurer, and if that measures the text
+        // differently from the way the editor draws it, the message wraps.
+        const auto lineCountFor = [&](const QString &body) {
+            QVariantMap emojiMessage{
+                {QStringLiteral("id"), QStringLiteral("emoji-lines-") + body},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), body},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            };
+            std::unique_ptr<QObject> emojiDelegate(component.createWithInitialProperties({
+                {QStringLiteral("width"), paneWidth},
+                {QStringLiteral("modelData"), emojiMessage},
+            }));
+            if (!emojiDelegate)
+                return -1;
+            QCoreApplication::processEvents();
+            auto *emojiBody = emojiDelegate->findChild<QObject *>(QStringLiteral("messageBody"));
+            return emojiBody ? emojiBody->property("lineCount").toInt() : -1;
+        };
+        const int twoEmojiLines = lineCountFor(QStringLiteral("\U0001F641\U0001F641"));
+        const int fourEmojiLines = lineCountFor(QStringLiteral("\U0001F642\U0001F642\U0001F642\U0001F642"));
+        const int sentenceLines = lineCountFor(QStringLiteral("Bueno, kangaloni"));
+        qInfo().noquote() << QStringLiteral("emoji lines two=%1 four=%2 sentence=%3")
+                             .arg(twoEmojiLines).arg(fourEmojiLines).arg(sentenceLines);
+        require(twoEmojiLines == 1, QStringLiteral("two enlarged emoji wrap onto a second line"));
+        require(fourEmojiLines == 1, QStringLiteral("four enlarged emoji wrap onto a second line"));
+        require(sentenceLines == 1, QStringLiteral("a short sentence wraps onto a second line"));
+
+        const int plainSize = bodySizeFor(QStringLiteral("Bueno, kangaloni"), QStringLiteral("text"));
+        const int twoEmoji = bodySizeFor(QStringLiteral("\U0001F641\U0001F641"), QStringLiteral("text"));
+        const int fiveEmoji = bodySizeFor(QStringLiteral("\U0001F600\U0001F600\U0001F600\U0001F600\U0001F600"),
+                                          QStringLiteral("text"));
+        const int manyEmoji = bodySizeFor(QStringLiteral("\U0001F600\U0001F600\U0001F600\U0001F600"
+                                                         "\U0001F600\U0001F600\U0001F600\U0001F600"),
+                                          QStringLiteral("text"));
+        const int mixedText = bodySizeFor(QStringLiteral("nada de eso? \U0001F641"), QStringLiteral("text"));
+        const int photoCaption = bodySizeFor(QStringLiteral("\U0001F641\U0001F641"), QStringLiteral("image"));
+        qInfo().noquote() << QStringLiteral("emoji sizes plain=%1 two=%2 five=%3 many=%4 mixed=%5 caption=%6")
+                             .arg(plainSize).arg(twoEmoji).arg(fiveEmoji)
+                             .arg(manyEmoji).arg(mixedText).arg(photoCaption);
+        require(plainSize > 0, QStringLiteral("the message body has no font size"));
+        require(twoEmoji > plainSize * 2,
+                QStringLiteral("a message of two emoji is not drawn large"));
+        require(fiveEmoji > plainSize && fiveEmoji < twoEmoji,
+                QStringLiteral("five emoji are not drawn between the two sizes"));
+        require(manyEmoji == plainSize,
+                QStringLiteral("a long run of emoji is not drawn at the body size"));
+        require(mixedText == plainSize,
+                QStringLiteral("emoji alongside words are drawn large"));
+        require(photoCaption == plainSize,
+                QStringLiteral("a photo caption of emoji is drawn large"));
 
         // A shared contact and a shared place get cards, not bare rows.
         const QVariantMap sharedContact{

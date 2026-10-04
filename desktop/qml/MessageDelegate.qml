@@ -209,6 +209,11 @@ Item {
     // Keep compact chat density while giving short bubbles a little more
     // presence and a comfortably readable baseline.
     readonly property int bodyFontSize: 15
+    // A message that is only emoji is drawn large. A caption under a photo, a
+    // deleted-message notice and a view-once notice stay at the body size:
+    // those are labels about the message, not the message itself.
+    readonly property int emojiFontSize: root.modelData.revoked || root.viewOnceKind || root.mediaKind
+        ? bodyFontSize : Theme.emojiOnlyFontSize(root.modelData.body || "", bodyFontSize)
     readonly property int captionFontSize: 14
     readonly property int metaFontSize: 11
 
@@ -839,11 +844,15 @@ Item {
                             id: replyLabel
                             width: parent.width - (root.modelData.reply_view_once ? 21 : 0)
                             text: root.modelData.reply_view_once ? qsTr("View once message")
-                                : Theme.emojiRichText(root.modelData.reply_preview || qsTr("Replied message"))
+                                : Theme.emojiRichText(Theme.quotedExcerpt(
+                                    root.modelData.reply_preview || qsTr("Replied message")))
                             color: Theme.textMuted
                             font.pixelSize: 12
                             elide: Text.ElideRight
-                            maximumLineCount: 2
+                            // The text is already cut to an excerpt: RichText
+                            // honours neither of these, and a quote of a long
+                            // list would otherwise fill the whole bubble.
+                            maximumLineCount: Theme.quotedExcerptLines
                             wrapMode: Text.Wrap
                             textFormat: Text.RichText
                         }
@@ -1246,7 +1255,7 @@ Item {
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                     // There is no map inside the application, so the place is
                     // handed to whatever the desktop uses to show maps.
-                    onClicked: Qt.openUrlExternally("https://www.openstreetmap.org/?mlat="
+                    onClicked: backend.openExternally("https://www.openstreetmap.org/?mlat="
                         + Number(root.modelData.latitude || 0) + "&mlon=" + Number(root.modelData.longitude || 0)
                         + "#map=17/" + Number(root.modelData.latitude || 0) + "/" + Number(root.modelData.longitude || 0))
                 }
@@ -1405,7 +1414,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.openUrlExternally(root.modelData.link_url)
+                    onClicked: backend.openExternally(root.modelData.link_url)
                 }
             }
 
@@ -1446,7 +1455,7 @@ Item {
                 mentionNavigationEnabled: root.actionsEnabled && !root.selectionActive
                 onMentionActivated: (jid, name) => root.mentionRequested(jid, name)
                 color: root.modelData.revoked ? Theme.textMuted : Theme.text
-                font.pixelSize: root.bodyFontSize
+                font.pixelSize: root.emojiFontSize
                 font.italic: Boolean(root.modelData.revoked)
             }
 

@@ -211,7 +211,16 @@ RowLayout {
                             Layout.minimumWidth: 0
                             spacing: 3
                             Label {
+                                objectName: "featureRowTitle"
                                 Layout.fillWidth: true
+                                // Without this the label's own width becomes the
+                                // column's minimum, so a long name pushes the row
+                                // past the edge of the panel instead of eliding.
+                                Layout.minimumWidth: 0
+                                // The row reads left to right - avatar, then the
+                                // actions - so the name starts in the same place
+                                // whatever script it is written in.
+                                horizontalAlignment: Text.AlignLeft
                                 text: {
                                     if (root.section === "status") return modelData.sender_name || root.jidLabel(modelData.sender_jid)
 									if (root.section === "calls") return modelData.peer_name || root.jidLabel(modelData.peer_jid)
@@ -223,7 +232,10 @@ RowLayout {
                                 elide: Text.ElideRight
                             }
                             Label {
+                                objectName: "featureRowSubtitle"
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                horizontalAlignment: Text.AlignLeft
                                 text: Theme.emojiRichText(
                                     root.section === "status"
                                         ? modelData.body || (modelData.kind === "image" ? qsTr("Photo") : modelData.kind)
