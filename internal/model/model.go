@@ -55,6 +55,11 @@ type Chat struct {
 	DisappearingSeconds int64    `json:"disappearing_seconds"`
 	Archived            bool     `json:"archived"`
 	IsGroup             bool     `json:"is_group"`
+	// ScheduledCount is how many messages are written and waiting to go in
+	// this conversation. A chat holding one belongs in the list even when
+	// nothing has been said in it yet, because the reader has work pending
+	// there that only this computer knows about.
+	ScheduledCount int `json:"scheduled_count,omitempty"`
 }
 
 // ScheduledMessage is a message written now and meant to go later. It is kept

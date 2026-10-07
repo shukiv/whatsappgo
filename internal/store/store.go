@@ -738,9 +738,12 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 		offset = 0
 	}
 	args := []any{}
+	// A conversation with a message waiting to go belongs in the list even
+	// when nothing has been said in it yet: the reader left work there, and
+	// this computer is the only place that knows about it.
 	where := `WHERE c.jid NOT LIKE '%@broadcast'
 	AND c.jid NOT LIKE '%@newsletter'
-	AND (m.id IS NOT NULL OR c.pinned=1 OR c.favorite=1)`
+	AND (m.id IS NOT NULL OR c.pinned=1 OR c.favorite=1 OR pending.count>0)`
 	if archived != nil {
 		where += " AND c.archived=?"
 		args = append(args, *archived)
@@ -773,14 +776,17 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
  COALESCE(m.kind,''),COALESCE(m.from_me,0),COALESCE(m.status,''),COALESCE(m.media_duration,0),
  COALESCE((SELECT GROUP_CONCAT(cl.label_id) FROM chat_labels cl WHERE cl.chat_jid=c.jid),''),
  c.unread_count,c.muted_until,c.pinned,c.pinned_at,c.favorite,c.archived,c.is_group,c.disappearing_seconds,COALESCE(m.mentions,''),
- COALESCE(m.sender_jid,''),COALESCE(m.sender_name,'')
+ COALESCE(m.sender_jid,''),COALESCE(m.sender_name,''),pending.count
 	FROM chats c
+	LEFT JOIN (SELECT chat_jid,COUNT(*) AS count,MAX(created_at) AS created FROM scheduled_messages
+	           WHERE sent_at=0 GROUP BY chat_jid) pending ON pending.chat_jid=c.jid
 	LEFT JOIN messages m ON m.chat_jid=c.jid AND m.id=(
   SELECT latest.id FROM messages latest
   WHERE latest.chat_jid=c.jid AND latest.kind NOT IN ('unknown','system','')
   ORDER BY latest.timestamp DESC,latest.id DESC LIMIT 1
  ) `+where+`
-	ORDER BY c.pinned DESC,c.pinned_at DESC,COALESCE(m.timestamp,c.last_message_at) DESC LIMIT ? OFFSET ?`, args...)
+	ORDER BY c.pinned DESC,c.pinned_at DESC,
+	 MAX(COALESCE(m.timestamp,c.last_message_at),COALESCE(pending.created,0)) DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -790,15 +796,18 @@ func (s *Store) listChats(ctx context.Context, limit, offset int, query string, 
 	for rows.Next() {
 		var c model.Chat
 		var labelIDs, mentions string
+		var pendingCount sql.NullInt64
 		if err := rows.Scan(&c.JID, &c.Title, &c.AvatarPath, &c.LastMessageID, &c.LastMessageAt, &c.LastMessagePreview,
 			&c.LastMessageKind, &c.LastMessageFromMe, &c.LastMessageStatus, &c.LastMessageDuration, &labelIDs,
 			&c.UnreadCount, &c.MutedUntil, &c.Pinned, &c.PinnedAt, &c.Favorite, &c.Archived, &c.IsGroup,
-			&c.DisappearingSeconds, &mentions, &c.LastMessageSenderJID, &c.LastMessageSenderName); err != nil {
+			&c.DisappearingSeconds, &mentions, &c.LastMessageSenderJID, &c.LastMessageSenderName,
+			&pendingCount); err != nil {
 			return nil, err
 		}
 		if labelIDs != "" {
 			c.LabelIDs = strings.Split(labelIDs, ",")
 		}
+		c.ScheduledCount = int(pendingCount.Int64)
 		result = append(result, c)
 		mentionRows = append(mentionRows, mentions)
 	}
@@ -1514,10 +1523,20 @@ func (s *Store) ScheduleMessage(ctx context.Context, msg model.ScheduledMessage)
 	if msg.CreatedAt == 0 {
 		msg.CreatedAt = time.Now().UnixMilli()
 	}
+	chatJID := s.canonicalChatJID(ctx, msg.ChatJID)
+	// The chat list is built from the chats table, so a message scheduled to
+	// somebody who has never been written to needs a row to hang off. Nothing
+	// but the identifier is known yet; the title is derived from it until the
+	// contact or a message supplies a better one.
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO chats(jid,title)
+	 VALUES(?,substr(?,1,instr(?,'@')-1)) ON CONFLICT(jid) DO NOTHING`,
+		chatJID, chatJID, chatJID); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduled_messages
 	 (id,chat_jid,text,send_at,created_at) VALUES(?,?,?,?,?)
 	 ON CONFLICT(id) DO UPDATE SET chat_jid=excluded.chat_jid,text=excluded.text,send_at=excluded.send_at`,
-		msg.ID, s.canonicalChatJID(ctx, msg.ChatJID), msg.Text, msg.SendAt, msg.CreatedAt)
+		msg.ID, chatJID, msg.Text, msg.SendAt, msg.CreatedAt)
 	return err
 }
 

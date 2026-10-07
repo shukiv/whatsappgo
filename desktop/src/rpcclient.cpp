@@ -1056,6 +1056,10 @@ void RpcClient::processEvent(const QString &name, const QJsonValue &data)
 			loadRemoteHistoryPage();
     } else if (name == QStringLiteral("schedule.updated")) {
         refreshScheduledMessages();
+        // The chat list says which conversations hold a message waiting to go,
+        // and a conversation with nothing else in it appears only because of
+        // one, so the sidebar has to hear about this too.
+        refreshChats();
     } else if (name == QStringLiteral("call.upsert") || name == QStringLiteral("calls.synced")) {
 		refreshCalls();
     } else if (name == QStringLiteral("preferences.updated")) {

@@ -15,6 +15,10 @@ ItemDelegate {
     property string highlightQuery: ""
     property string draftText: ""
     readonly property bool hasDraft: draftText.trim().length > 0
+    // A message written here and waiting to go. Nothing about it exists for
+    // the other person, so the row is the only place it is visible from.
+    readonly property int scheduledCount: Number(modelData.scheduled_count || 0)
+    readonly property bool hasScheduled: scheduledCount > 0
     property double muteClock: Date.now()
     readonly property bool muted: Number(modelData.muted_until || 0) > muteClock
     signal chosen(string jid, string title)
@@ -303,6 +307,28 @@ ItemDelegate {
                     objectName: "chatDraftLabel"
                     visible: root.hasDraft
                     text: qsTr("Draft:")
+                    textFormat: Text.PlainText
+                    color: Theme.primary
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
+                }
+
+                TintedIcon {
+                    objectName: "chatScheduledIcon"
+                    visible: root.hasScheduled && !root.hasDraft
+                    width: visible ? 14 : 0
+                    height: 14
+                    Layout.alignment: Qt.AlignVCenter
+                    source: Qt.resolvedUrl("icons/calendar.svg")
+                    tint: Theme.primary
+                }
+
+                Label {
+                    objectName: "chatScheduledLabel"
+                    visible: root.hasScheduled && !root.hasDraft
+                    text: root.scheduledCount > 1
+                        ? qsTr("%1 scheduled").arg(root.scheduledCount)
+                        : qsTr("Scheduled")
                     textFormat: Text.PlainText
                     color: Theme.primary
                     font.pixelSize: 14
