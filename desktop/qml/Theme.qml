@@ -186,12 +186,28 @@ QtObject {
     readonly property int quotedExcerptLines: 5
     readonly property int quotedExcerptCharacters: 320
     function quotedExcerpt(value) {
+        return excerpt(value, quotedExcerptLines, quotedExcerptCharacters)
+    }
+
+    // A message long enough to fill the window is shown as an excerpt with a
+    // way to open it, so one wall of text cannot push the conversation around
+    // it off the screen. The reader asks for the rest; nothing is hidden from
+    // them, and the same cap is used whichever way the text runs.
+    readonly property int bodyExcerptLines: 12
+    readonly property int bodyExcerptCharacters: 700
+    function bodyExcerpt(value) {
+        return excerpt(value, bodyExcerptLines, bodyExcerptCharacters)
+    }
+
+    // Returns value unchanged when it already fits, so a caller can tell that
+    // it was shortened by comparing the two.
+    function excerpt(value, maximumLines, maximumCharacters) {
         const source = String(value === undefined || value === null ? "" : value)
         const lines = source.split("\n")
-        let kept = lines.slice(0, quotedExcerptLines).join("\n")
-        let trimmed = lines.length > quotedExcerptLines
-        if (kept.length > quotedExcerptCharacters) {
-            kept = kept.slice(0, quotedExcerptCharacters)
+        let kept = lines.slice(0, maximumLines).join("\n")
+        let trimmed = lines.length > maximumLines
+        if (kept.length > maximumCharacters) {
+            kept = kept.slice(0, maximumCharacters)
             trimmed = true
         }
         // A cut that lands mid-word reads as a typo, so step back to the last

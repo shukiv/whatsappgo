@@ -144,6 +144,37 @@ bool styleModuleInstalled(const QString &module, const QStringList &roots)
     return false;
 }
 
+// Which platform theme to force on Linux, or an empty value to leave Qt's own
+// detection alone. Separated from main so the choice can be tested: get it
+// wrong and the program draws its own file dialog instead of the desktop's.
+QByteArray linuxPlatformTheme(const std::function<QByteArray(const char *)> &env)
+{
+    // An explicit choice is the reader's, and outranks anything decided here.
+    if (!env("QT_QPA_PLATFORMTHEME").isEmpty())
+        return {};
+    // An AppImage carries its own Qt and its own plugin path, so the host's
+    // platform theme is invisible to it. Only the portal theme is bundled: it
+    // reaches the desktop's own file chooser over D-Bus, where the GTK theme
+    // would mean carrying the whole of GTK to do the same job. Left to itself
+    // Qt would detect the desktop, ask for that GTK theme and find nothing,
+    // which is how a GNOME session ended up with Qt's own file dialog.
+    if (!env("APPDIR").isEmpty())
+        return QByteArrayLiteral("xdgdesktopportal");
+    // Service/terminal launchers can omit the desktop identity. Qt then uses
+    // its generic Unix theme, which has no native file dialog, even when the
+    // GTK integration is installed. Use it in that otherwise-unidentified
+    // graphical session. Normal desktop detection and explicit theme choices
+    // (including KDE/portals) still win; headless runs stay independent of GTK.
+    const QByteArray platform = env("QT_QPA_PLATFORM");
+    if (env("XDG_CURRENT_DESKTOP").isEmpty()
+        && env("DESKTOP_SESSION").isEmpty()
+        && env("KDE_FULL_SESSION").isEmpty()
+        && (platform.isEmpty() || platform.startsWith("xcb") || platform.startsWith("wayland"))
+        && (!env("DISPLAY").isEmpty() || !env("WAYLAND_DISPLAY").isEmpty()))
+        return QByteArrayLiteral("gtk3");
+    return {};
+}
+
 } // namespace
 
 // A --*-test run that returns EXIT_FAILURE without saying anything leaves a red
@@ -161,20 +192,10 @@ static int testFailure(const char *file, int line)
 int main(int argc, char *argv[])
 {
 #ifdef Q_OS_LINUX
-    // Service/terminal launchers can omit the desktop identity. Qt then uses
-    // its generic Unix theme, which has no native file dialog, even when the
-    // GTK integration is installed. Use it in that otherwise-unidentified
-    // graphical session. Normal desktop detection and explicit theme choices
-    // (including KDE/portals) still win; headless runs stay independent of GTK.
-    const QByteArray platform = qgetenv("QT_QPA_PLATFORM");
-    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORMTHEME")
-        && qEnvironmentVariableIsEmpty("XDG_CURRENT_DESKTOP")
-        && qEnvironmentVariableIsEmpty("DESKTOP_SESSION")
-        && qEnvironmentVariableIsEmpty("KDE_FULL_SESSION")
-        && (platform.isEmpty() || platform.startsWith("xcb") || platform.startsWith("wayland"))
-        && (!qEnvironmentVariableIsEmpty("DISPLAY") || !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY"))) {
-        qputenv("QT_QPA_PLATFORMTHEME", QByteArrayLiteral("gtk3"));
-    }
+    const QByteArray forcedTheme = linuxPlatformTheme(
+        [](const char *name) { return qgetenv(name); });
+    if (!forcedTheme.isEmpty())
+        qputenv("QT_QPA_PLATFORMTHEME", forcedTheme);
 #endif
 
     // The client is a mostly static, low-memory UI. Qt's software scene graph
@@ -310,6 +331,8 @@ int main(int argc, char *argv[])
     parser.addOption(voiceSeekTestOption);
     QCommandLineOption desktopEntryTestOption(QStringLiteral("desktop-entry-test"), QStringLiteral("Verify the launcher entry and icon this program writes for itself"));
     parser.addOption(desktopEntryTestOption);
+    QCommandLineOption platformThemeTestOption(QStringLiteral("platform-theme-test"), QStringLiteral("Verify which platform theme each kind of session is given"));
+    parser.addOption(platformThemeTestOption);
     QCommandLineOption voiceSeekFileOption(QStringLiteral("voice-seek-file"), QStringLiteral("The recording --voice-seek-test moves through"), QStringLiteral("path"));
     parser.addOption(voiceSeekFileOption);
     QCommandLineOption stickerAnimationTestOption(QStringLiteral("sticker-animation-test"), QStringLiteral("Verify an animated sticker decodes and draws a frame"));
@@ -441,6 +464,51 @@ int main(int argc, char *argv[])
         if (runUninstall(planUninstall(), true, false) != 0)
             return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
+    }
+    if (parser.isSet(platformThemeTestOption)) {
+        // Qt draws its own file dialog unless a platform theme offers a native
+        // one. Which theme is asked for is the whole of that decision.
+        const auto chosen = [](const QVariantMap &environment) {
+            return QString::fromUtf8(linuxPlatformTheme([&](const char *name) {
+                return environment.value(QString::fromUtf8(name)).toString().toUtf8();
+            }));
+        };
+        const QVariantMap appImageOnGnome{
+            {QStringLiteral("APPDIR"), QStringLiteral("/tmp/.mount_WhatsAppGo")},
+            {QStringLiteral("XDG_CURRENT_DESKTOP"), QStringLiteral("GNOME")},
+            {QStringLiteral("DISPLAY"), QStringLiteral(":0")},
+        };
+        QVariantMap appImageWithOwnChoice = appImageOnGnome;
+        appImageWithOwnChoice.insert(QStringLiteral("QT_QPA_PLATFORMTHEME"), QStringLiteral("qt6ct"));
+        const QVariantMap installedOnGnome{
+            {QStringLiteral("XDG_CURRENT_DESKTOP"), QStringLiteral("GNOME")},
+            {QStringLiteral("DISPLAY"), QStringLiteral(":0")},
+        };
+        const QVariantMap unnamedGraphicalSession{
+            {QStringLiteral("DISPLAY"), QStringLiteral(":0")},
+        };
+        const QVariantMap headless{};
+        const auto note = [](const char *what, const QString &value) {
+            qInfo().noquote() << what << (value.isEmpty() ? QStringLiteral("<Qt decides>") : value);
+        };
+        note("appimage on gnome:", chosen(appImageOnGnome));
+        note("appimage, own choice:", chosen(appImageWithOwnChoice));
+        note("installed on gnome:", chosen(installedOnGnome));
+        note("unnamed graphical session:", chosen(unnamedGraphicalSession));
+        note("headless:", chosen(headless));
+        return
+            // The reported bug: a GNOME session showed Qt's own file dialog
+            // because the AppImage cannot see the host's GTK theme.
+            chosen(appImageOnGnome) == QStringLiteral("xdgdesktopportal")
+            // Whatever the reader asked for outranks all of this.
+            && chosen(appImageWithOwnChoice).isEmpty()
+            // Installed next to the host's Qt, Qt's own detection is right.
+            && chosen(installedOnGnome).isEmpty()
+            && chosen(unnamedGraphicalSession) == QStringLiteral("gtk3")
+            // A run with no screen must not pull in a desktop toolkit.
+            && chosen(headless).isEmpty()
+            ? EXIT_SUCCESS
+            : EXIT_FAILURE;
     }
     if (parser.isSet(desktopEntryTestOption)) {
         // The entry is written into the directories this run was given, which
@@ -2106,6 +2174,9 @@ QtObject {
                 property var forwardedMessage
                 property var longQuoteMessage
                 property var wallQuoteMessage
+                property var longBodyMessage
+                property bool longBodyExpanded: false
+                property string toggledMessageId: ""
                 property string previewedMessageId: ""
                 property string previewedMediaPath: ""
                 property string quotedMessageId: ""
@@ -2174,6 +2245,26 @@ QtObject {
                     objectName: "wallQuoteInteractionDelegate"
                     width: 800
                     modelData: harness.wallQuoteMessage
+                }
+                MessageDelegate {
+                    // A message long enough to fill the window is collapsed
+                    // until the reader asks for the rest of it.
+                    objectName: "longBodyDelegate"
+                    width: 800
+                    modelData: harness.longBodyMessage
+                    bodyExpanded: harness.longBodyExpanded
+                    onReadMoreToggled: messageId => {
+                        harness.toggledMessageId = messageId
+                        harness.longBodyExpanded = !harness.longBodyExpanded
+                    }
+                }
+                MessageDelegate {
+                    // Nothing sets bodyExpanded here. A long message has to
+                    // arrive collapsed on its own, without a window telling it
+                    // to: being shown whole is what the reader asks for.
+                    objectName: "untouchedBodyDelegate"
+                    width: 800
+                    modelData: harness.longBodyMessage
                 }
                 MessageDelegate {
                     objectName: "imageInteractionDelegate"
@@ -2273,6 +2364,14 @@ QtObject {
                 {QStringLiteral("reply_sender"), QStringLiteral("Alice")},
                 {QStringLiteral("reply_preview"), wallQuotedText},
             }},
+            {QStringLiteral("longBodyMessage"), QVariantMap{
+                {QStringLiteral("id"), QStringLiteral("long-body-test")},
+                {QStringLiteral("kind"), QStringLiteral("text")},
+                {QStringLiteral("body"), longQuotedText},
+                {QStringLiteral("from_me"), false},
+                {QStringLiteral("timestamp"), 0},
+                {QStringLiteral("status"), QStringLiteral("received")},
+            }},
             {QStringLiteral("imageMessage"), QVariantMap{
                 {QStringLiteral("id"), QStringLiteral("image-test")},
                 {QStringLiteral("kind"), QStringLiteral("image")},
@@ -2370,6 +2469,51 @@ QtObject {
             forwardedDelegate ? forwardedDelegate->findChild<QObject *>(QStringLiteral("forwardedLabel")) : nullptr;
         auto *starredMark = qobject_cast<QQuickItem *>(
             forwardedDelegate ? forwardedDelegate->findChild<QObject *>(QStringLiteral("starredMark")) : nullptr);
+        // A message long enough to fill the window opens behind "Read more",
+        // and closes again behind "Read less". Collapsed is the default: the
+        // reader has to ask before one message takes over the conversation.
+        auto *longBodyDelegate = harness->findChild<QObject *>(QStringLiteral("longBodyDelegate"));
+        auto *longBodyText = longBodyDelegate
+            ? longBodyDelegate->findChild<QObject *>(QStringLiteral("messageBodyText")) : nullptr;
+        auto *readMoreLink = qobject_cast<QQuickItem *>(
+            longBodyDelegate ? longBodyDelegate->findChild<QObject *>(QStringLiteral("readMoreLink")) : nullptr);
+        auto *readMoreArea = qobject_cast<QQuickItem *>(
+            longBodyDelegate ? longBodyDelegate->findChild<QObject *>(QStringLiteral("readMoreArea")) : nullptr);
+        const auto collapsedBody = longBodyText ? longBodyText->property("plainText").toString() : QString();
+        const bool startsCollapsed = longBodyDelegate
+            && longBodyDelegate->property("bodyTruncatable").toBool()
+            && !longBodyDelegate->property("bodyExpanded").toBool()
+            && collapsedBody.length() < longQuotedText.length()
+            && collapsedBody.endsWith(QChar(0x2026))
+            && collapsedBody.count(QLatin1Char('\n')) < 12
+            && readMoreLink && readMoreLink->isVisible()
+            && readMoreLink->property("text").toString() == QStringLiteral("Read more")
+            // A label nobody can hit is the same as not offering one.
+            && readMoreArea && readMoreArea->width() > 0 && readMoreArea->height() > 0;
+        auto *untouchedDelegate = harness->findChild<QObject *>(QStringLiteral("untouchedBodyDelegate"));
+        auto *untouchedLink = untouchedDelegate
+            ? untouchedDelegate->findChild<QObject *>(QStringLiteral("readMoreLink")) : nullptr;
+        const bool collapsedByDefault = untouchedDelegate
+            && !untouchedDelegate->property("bodyExpanded").toBool()
+            && untouchedLink
+            && untouchedLink->property("text").toString() == QStringLiteral("Read more");
+        const bool expandRequested = longBodyDelegate
+            && QMetaObject::invokeMethod(longBodyDelegate, "readMoreToggled",
+                                         Q_ARG(QString, QStringLiteral("long-body-test")));
+        QCoreApplication::processEvents();
+        const bool opensInFull = expandRequested
+            && harness->property("toggledMessageId").toString() == QStringLiteral("long-body-test")
+            && longBodyDelegate->property("bodyExpanded").toBool()
+            && longBodyText->property("plainText").toString() == longQuotedText
+            && readMoreLink->property("text").toString() == QStringLiteral("Read less");
+        // A message that already fits is not given a control it does not need.
+        auto *shortReadMore = qobject_cast<QQuickItem *>(
+            delegate ? delegate->findChild<QObject *>(QStringLiteral("readMoreLink")) : nullptr);
+        const bool shortMessageHasNoLink = shortReadMore && !shortReadMore->isVisible();
+        if (!startsCollapsed || !opensInFull || !shortMessageHasNoLink || !collapsedByDefault)
+            qWarning() << "read more:" << startsCollapsed << opensInFull << shortMessageHasNoLink
+                       << collapsedByDefault
+                       << "collapsed length" << collapsedBody.length();
         auto *imageDelegate = harness->findChild<QObject *>(QStringLiteral("imageInteractionDelegate"));
         const bool imagePreviewInvoked = imageDelegate
             && QMetaObject::invokeMethod(imageDelegate, "openVisualMedia");
@@ -2527,6 +2671,7 @@ QtObject {
                 && forwardedMark && forwardedMark->isVisible() && forwardedLabel
                 && forwardedLabel->property("text").toString() == QStringLiteral("Forwarded many times")
                 && starredMark && starredMark->isVisible()
+                && startsCollapsed && opensInFull && shortMessageHasNoLink && collapsedByDefault
                 && imagePreviewInvoked
                 && harness->property("previewedMessageId").toString() == QStringLiteral("image-test")
                 && harness->property("previewedMediaPath").toString() == imageFixturePath
@@ -2619,6 +2764,42 @@ QtObject {
         if (!chatDelegate)
             return WHATSAPPGO_TEST_FAILURE();
         QCoreApplication::processEvents();
+        // A conversation holding a message that has not gone yet says so, and a
+        // conversation with nothing waiting says nothing. Only this computer
+        // knows about a scheduled message, so the row is the one place it
+        // shows outside the conversation itself.
+        const auto scheduledRow = [&](int waiting, const QString &draft) {
+            QVariantMap scheduledChat = chat;
+            scheduledChat[QStringLiteral("scheduled_count")] = waiting;
+            std::unique_ptr<QObject> row(chatComponent.createWithInitialProperties({
+                {QStringLiteral("width"), 436},
+                {QStringLiteral("modelData"), scheduledChat},
+                {QStringLiteral("current"), false},
+                {QStringLiteral("draftText"), draft},
+            }));
+            QCoreApplication::processEvents();
+            QString label;
+            bool iconShown = false;
+            if (row) {
+                if (auto *mark = qobject_cast<QQuickItem *>(
+                        row->findChild<QObject *>(QStringLiteral("chatScheduledLabel"))))
+                    label = mark->isVisible() ? mark->property("text").toString() : QString();
+                if (auto *icon = qobject_cast<QQuickItem *>(
+                        row->findChild<QObject *>(QStringLiteral("chatScheduledIcon"))))
+                    iconShown = icon->isVisible();
+            }
+            return QPair<QString, bool>{label, iconShown};
+        };
+        const auto noneWaiting = scheduledRow(0, QString());
+        const auto oneWaiting = scheduledRow(1, QString());
+        const auto threeWaiting = scheduledRow(3, QString());
+        // An unsent draft is the more immediate thing to say about a row, and
+        // WhatsApp shows one line, not two.
+        const auto waitingBehindADraft = scheduledRow(1, QStringLiteral("half a thought"));
+        qInfo().noquote() << QStringLiteral("scheduled row: none=%1 one=%2 three=%3 draft=%4")
+                             .arg(noneWaiting.first, oneWaiting.first, threeWaiting.first,
+                                  waitingBehindADraft.first);
+
         auto *timestamp = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatTimestamp")));
         auto *badge = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("unreadBadge")));
         auto *preview = qobject_cast<QQuickItem *>(chatDelegate->findChild<QObject *>(QStringLiteral("chatPreview")));
@@ -2720,6 +2901,14 @@ QtObject {
                 && note(chatListItem->width() + chatScrollBar->width() <= chatViewport->width(), "sidebar list width")
                 && note(chatScrollBar->width() <= 8.0, "sidebar scrollbar width")
                 && note(sidebarUsesStableModel, "sidebar model")
+                && note(noneWaiting.first.isEmpty() && !noneWaiting.second,
+                        "a chat with nothing waiting claims a scheduled message")
+                && note(oneWaiting.first == QStringLiteral("Scheduled") && oneWaiting.second,
+                        "a chat with one message waiting does not say so")
+                && note(threeWaiting.first == QStringLiteral("3 scheduled"),
+                        "a chat with several waiting does not say how many")
+                && note(waitingBehindADraft.first.isEmpty() && !waitingBehindADraft.second,
+                        "a draft and a scheduled message are claimed at once")
                 && note((previewTop - titleBottom) <= 8.0, "name/preview gap")
                 && note(preview->implicitHeight() <= 22.0, "preview height")
                 && note(!preview->property("text").toString().contains(QStringLiteral("<br>")), "preview line break")

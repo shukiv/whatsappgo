@@ -337,6 +337,8 @@ ApplicationWindow {
         // chat.
         if (window.messageSelectionActive)
             window.endMessageSelection()
+        // Nor is a message opened in another conversation still open here.
+        window.expandedMessages = []
         return true
     }
 
@@ -541,6 +543,33 @@ ApplicationWindow {
             next.push({ id: id, sender_jid: String(message.sender_jid || ""),
                         from_me: Boolean(message.from_me), starred: Boolean(message.starred) })
         selectedMessages = next
+    }
+
+    // Which long messages the reader has opened. They are held here rather
+    // than in the delegate because the message list reuses delegates: state
+    // kept in one would show against a different message after a scroll, and
+    // would be forgotten every time the message left the viewport.
+    property var expandedMessages: []
+
+    function isMessageExpanded(messageId) {
+        return expandedMessages.indexOf(String(messageId || "")) >= 0
+    }
+
+    function toggleMessageExpanded(messageId) {
+        const id = String(messageId || "")
+        if (id === "")
+            return
+        const next = []
+        let found = false
+        for (let i = 0; i < expandedMessages.length; ++i) {
+            if (expandedMessages[i] === id)
+                found = true
+            else
+                next.push(expandedMessages[i])
+        }
+        if (!found)
+            next.push(id)
+        expandedMessages = next
     }
 
     function starSelectedMessages(starred) {
@@ -2375,6 +2404,8 @@ ApplicationWindow {
                                 window.transientError = message
                                 errorTimer.restart()
                             }
+                            bodyExpanded: window.isMessageExpanded(modelData.id)
+                            onReadMoreToggled: messageId => window.toggleMessageExpanded(messageId)
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
                             selectionActive: window.messageSelectionActive
                             selected: window.messageSelectionActive && window.isMessageSelected(modelData.id)

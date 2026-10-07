@@ -303,7 +303,7 @@ The sticker fields are display metadata, not upload paths accepted from a peer.
 | `pairing.phone` | `phone` | Return a phone-pairing code. The daemon keeps watching for the phone to accept it, and reports `pairing.success` when it does |
 | `account.logout` | `{}` | Unlink the profile; destructive |
 | `profile.export` | `path`, `include_media` | Write the account to a portable archive; see [moving an account](#moving-an-account-to-another-machine). The archive carries the device credentials |
-| `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array; optional `last_message_sender_jid` and `last_message_sender_name` identify the preview's sender. Group sender names prefer locally saved contact names (including PN/LID aliases), then the message's push name. |
+| `chats.list` | `limit`, `offset`, `query`, `archived` | Chat array; optional `last_message_sender_jid` and `last_message_sender_name` identify the preview's sender. Group sender names prefer locally saved contact names (including PN/LID aliases), then the message's push name. `scheduled_count` is how many messages are written and waiting to go in that chat; a conversation with one is listed even when nothing has been said in it yet, and sorts by whichever is later, its last message or its most recent scheduling. |
 | `chats.archived_count` | `{}` | Archived count |
 | `chats.unread_count` | `{}` | Exact unread-message total for the profile's visible chats |
 | `chat.info` | `chat_jid` | Contact/chat metadata, phone alias, exact shared-content counts, and a six-item preview |

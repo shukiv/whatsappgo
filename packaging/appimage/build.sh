@@ -44,6 +44,25 @@ if [[ ! -x "${qt_plugin}" ]]; then
   chmod +x "${qt_plugin}"
 fi
 
+# Without a platform theme Qt has no native file chooser and falls back to
+# drawing its own, which is not the dialog the rest of the desktop uses. The
+# portal theme reaches the desktop's own chooser over D-Bus; the GTK theme
+# would mean bundling GTK itself. Copy it in rather than hoping the Qt plugin
+# notices it: shipping an image without one is the bug this guards against.
+portal_theme=""
+for candidate in \
+  "$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null)/platformthemes/libqxdgdesktopportal.so" \
+  "/usr/lib/${arch}-linux-gnu/qt6/plugins/platformthemes/libqxdgdesktopportal.so" \
+  "/usr/lib/qt6/plugins/platformthemes/libqxdgdesktopportal.so"; do
+  if [[ -f "${candidate}" ]]; then portal_theme="${candidate}"; break; fi
+done
+if [[ -z "${portal_theme}" ]]; then
+  echo "libqxdgdesktopportal.so not found: install qt6-xdgdesktopportal-platformtheme" >&2
+  echo "(without it the app draws its own file dialog instead of the desktop's)" >&2
+  exit 1
+fi
+install -Dm644 "${portal_theme}" "${appdir}/usr/plugins/platformthemes/libqxdgdesktopportal.so"
+
 export QML_SOURCES_PATHS="${project_root}/desktop/qml"
 export EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so"
 export LDAI_OUTPUT="${project_root}/build/WhatsAppGo-${tool_arch}.AppImage"
