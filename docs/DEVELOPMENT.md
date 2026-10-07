@@ -12,6 +12,7 @@ sudo apt-get update
 sudo apt-get install -y build-essential cmake ninja-build pkg-config \
   qt6-base-dev qt6-declarative-dev qt6-multimedia-dev libqt6svg6-dev \
   qml6-module-org-kde-desktop qt6-gtk-platformtheme \
+  qt6-xdgdesktopportal-platformtheme \
   qml6-module-qtquick-controls qml6-module-qtmultimedia
 ```
 
@@ -24,6 +25,20 @@ launcher omits desktop identification, startup selects `gtk3` before creating
 `QApplication`. Existing desktop identification and `QT_QPA_PLATFORMTHEME`
 overrides are preserved; offscreen/minimal runs do not select GTK. Qt retains
 its built-in picker as a fallback when native integration is unavailable.
+
+An AppImage carries its own Qt and its own plugin path, so none of the host's
+platform themes are visible to it. It bundles `libqxdgdesktopportal.so`, which
+reaches the desktop's own file chooser over D-Bus; the GTK theme is not
+bundled, because that would mean carrying GTK itself to do the same job.
+Startup therefore asks for `xdgdesktopportal` whenever `APPDIR` is set and no
+theme was chosen, since Qt's own detection would ask for the GTK theme and
+find nothing. `packaging/appimage/build.sh` copies the plugin in and fails the
+build if it is missing — an image shipped without one draws Qt's own file
+dialog on every desktop, which is the bug this guards against. Install
+`qt6-xdgdesktopportal-platformtheme` before building one.
+
+`whatsappgo --platform-theme-test` prints and checks the theme chosen for an
+AppImage, an installed build, an unnamed graphical session and a headless run.
 
 ### Document cards and jump-to-latest
 
