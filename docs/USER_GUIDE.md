@@ -335,6 +335,12 @@ Your own messages sit on the right with a tail on their top-right corner;
 messages you received sit on the left. A tick beside your own time is one mark
 for sent, two for delivered, and two blue for read.
 
+A message long enough to fill the window is shown as its first twelve lines,
+or its first 700 characters, whichever comes first, with **Read more** under
+it. Opening one shows the whole message and offers **Read less** to close it
+again. Nothing is hidden: a message you open stays open until you close it or
+leave the conversation.
+
 ## Images and media
 
 Chat search shows who sent each result, its date, and a useful filename or media

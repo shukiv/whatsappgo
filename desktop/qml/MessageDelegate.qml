@@ -33,6 +33,7 @@ Item {
     signal interactiveRequested(var message)
     signal infoRequested(var message)
     signal historyRequested(var message)
+    signal readMoreToggled(string messageId)
 
     // Clicking who said something opens the conversation with them. The name
     // above a group bubble is often the only place somebody outside the
@@ -239,6 +240,16 @@ Item {
         && Theme.isEmojiOnly(modelData.body || "")
     readonly property int emojiBodyFontSize: bodyFontSize * 2
     readonly property int captionFontSize: 14
+
+    // A long message starts collapsed and opens when the reader asks. Whether
+    // this one is open is decided outside the delegate: the message list
+    // reuses delegates, so state kept here would follow the delegate onto a
+    // different message after a scroll.
+    property bool bodyExpanded: false
+    readonly property string fullBodyText: modelData.revoked ? qsTr("This message was deleted")
+        : viewOnceKind ? "" : modelData.body || ""
+    readonly property string bodyExcerptText: Theme.bodyExcerpt(fullBodyText)
+    readonly property bool bodyTruncatable: bodyExcerptText !== fullBodyText
     readonly property int metaFontSize: 11
 
     readonly property bool playingThis: Playback.isCurrent(modelData.id)
@@ -1535,18 +1546,37 @@ Item {
 
             SelectableMessageText {
                 id: bodyText
+                objectName: "messageBodyText"
                 visible: (Boolean(root.modelData.body) || (root.viewOnceKind && Boolean(root.modelData.revoked)))
                     && !root.contactKind && !root.locationKind && (!root.viewOnceKind || Boolean(root.modelData.revoked))
                 width: root.metaBeside ? implicitWidth : root.contentWidth
                 maximumWidth: root.contentMaxWidth
-                plainText: root.modelData.revoked ? qsTr("This message was deleted")
-                    : root.viewOnceKind ? "" : root.modelData.body || ""
+                plainText: root.bodyExpanded || !root.bodyTruncatable
+                    ? root.fullBodyText : root.bodyExcerptText
                 mentions: root.modelData.revoked || root.viewOnceKind ? [] : root.modelData.mentions || []
                 mentionNavigationEnabled: root.actionsEnabled && !root.selectionActive
                 onMentionActivated: (jid, name) => root.mentionRequested(jid, name)
                 color: root.modelData.revoked ? Theme.textMuted : Theme.text
                 font.pixelSize: root.emojiOnlyBody ? root.emojiBodyFontSize : root.bodyFontSize
                 font.italic: Boolean(root.modelData.revoked)
+            }
+
+            Label {
+                id: readMoreLink
+                objectName: "readMoreLink"
+                visible: root.bodyTruncatable && bodyText.visible
+                text: root.bodyExpanded ? qsTr("Read less") : qsTr("Read more")
+                color: Theme.link
+                font.pixelSize: root.bodyFontSize
+                Accessible.role: Accessible.Button
+                Accessible.name: text
+                Accessible.onPressAction: root.readMoreToggled(String(root.modelData.id || ""))
+                MouseArea {
+                    objectName: "readMoreArea"
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.readMoreToggled(String(root.modelData.id || ""))
+                }
             }
 
             Label {

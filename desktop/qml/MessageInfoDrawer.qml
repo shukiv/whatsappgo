@@ -137,6 +137,9 @@ Rectangle {
                         anchors.rightMargin: 16
                         modelData: root.message
                         actionsEnabled: false
+                        // One message on its own page: there is nothing for it
+                        // to crowd out, so it is shown whole.
+                        bodyExpanded: true
                     }
                 }
 
