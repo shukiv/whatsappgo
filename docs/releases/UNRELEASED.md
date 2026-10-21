@@ -6,6 +6,19 @@ use them; a rebuild does not replace an already running process.
 
 ## Fixed
 
+- **The AppImage carries the daemon it was built with.** It shipped only the
+  interface, and the interface looks for `whatsappd` beside itself and then on
+  `PATH`, so an image installed on a machine that already had a `whatsappd`
+  went on using that one. On the machine this was found on that binary was five
+  weeks older than the image, which meant every daemon-side change arrived
+  dead: a received question with tappable answers was drawn by an interface
+  that knew how to draw it and stored by a daemon that did not know how to read
+  it, so nothing appeared. The two are built from one tree and now travel
+  together.
+
+- **A question's answers are marked with the reply arrow**, as WhatsApp Web
+  marks them, on the side the answer's own writing direction calls for.
+
 - **Quitting no longer ends in a crash.** When the chat list went, it left one
   of the rows it had been showing parented to the application object rather
   than to the engine, so the row outlived the whole interface, and Qt deletes

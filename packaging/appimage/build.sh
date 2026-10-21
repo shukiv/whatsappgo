@@ -24,6 +24,15 @@ cmake -S "${project_root}/desktop" -B "${build_dir}" -G Ninja -DCMAKE_BUILD_TYPE
 # per ready target and takes a 16 GB machine into swap.
 cmake --build "${build_dir}" --parallel "$("${project_root}/scripts/build-jobs.sh")"
 DESTDIR="${appdir}" cmake --install "${build_dir}"
+# The daemon goes in beside the client, which is where the client looks for it
+# before it looks on PATH. An image without it falls through to whatever
+# whatsappd the machine happens to have: on the machine this was found on, a
+# binary five weeks older than the client, so every daemon-side change shipped
+# in an AppImage arrived dead - the client drew what an old daemon had stored,
+# and a question with tappable answers was not stored at all. The two are built
+# from one tree and must travel together.
+install -Dm755 "${project_root}/bin/whatsappd" "${appdir}/usr/bin/whatsappd"
+install -Dm755 "${project_root}/bin/whatsappctl" "${appdir}/usr/bin/whatsappctl"
 install -Dm644 "${project_root}/packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml" "${appdir}/usr/share/metainfo/org.whatsappgo.Desktop.metainfo.xml"
 
 arch="$(uname -m)"
