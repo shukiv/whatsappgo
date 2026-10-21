@@ -84,17 +84,30 @@ void StickerAnimation::setPlaying(bool playing)
     else m_timer.stop();
 }
 
+void StickerAnimation::refuse(const QString &reason)
+{
+    m_error = reason;
+    // Reported through the event loop rather than from here. A refusal that
+    // needs no decoding is decided the moment the source is set, which for a
+    // grid tile is inside the Loader binding that is building this item: the
+    // handler that falls back to the still picture writes the property that
+    // binding is reading, Qt sees a binding loop, and the tile was left with a
+    // dead decoder and no picture. By the next turn of the loop there is no
+    // binding half-evaluated to disturb.
+    QTimer::singleShot(0, this, [this] { emit errorChanged(); });
+}
+
 void StickerAnimation::nextFrame()
 {
     if (m_pending || !m_playing || !isVisible() || m_source.isEmpty() || !m_error.isEmpty()) return;
     // Two different faults used to share one sentence, and the one that has
     // nothing to do with the build sent somebody hunting a missing library.
     if (!supported()) {
-        m_error = tr("Animated stickers are unavailable in this build."); emit errorChanged(); return;
+        refuse(tr("Animated stickers are unavailable in this build.")); return;
     }
     if (!m_source.isLocalFile()) {
         qWarning("a sticker was asked for from somewhere that is not a file on this computer");
-        m_error = tr("This sticker is not stored on this computer."); emit errorChanged(); return;
+        refuse(tr("This sticker is not stored on this computer.")); return;
     }
     if (!m_decoder) m_decoder = std::make_shared<Decoder>();
     m_pending = true;
@@ -109,7 +122,7 @@ void StickerAnimation::nextFrame()
         if (generation != m_generation) return;
         m_pending = false;
         if (!frame.error.isEmpty()) {
-            m_error = frame.error; emit errorChanged(); return;
+            refuse(frame.error); return;
         }
         if (!frame.image.isNull()) {
             m_image = frame.image; m_delay = frame.delay;

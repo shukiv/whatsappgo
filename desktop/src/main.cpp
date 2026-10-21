@@ -1220,7 +1220,17 @@ int main(int argc, char *argv[])
                           sticker_animated: true, sticker_source: harness.movingSource },
                         { id: "still", chat_jid: "1@s.whatsapp.net", chat_title: "Still",
                           kind: "sticker", media_path: harness.stillSource,
-                          sticker_animated: false, sticker_source: "" }
+                          sticker_animated: false, sticker_source: "" },
+                        // Marked animated, but the file is not on this
+                        // computer. The decoder refuses it the instant the
+                        // source is set, which is while the grid is still
+                        // deciding whether to build the item, and the tile has
+                        // to give up rather than hold a decoder that will
+                        // never draw. It prints a warning saying so.
+                        { id: "remote", chat_jid: "1@s.whatsapp.net", chat_title: "Remote",
+                          kind: "sticker", media_path: harness.stillSource,
+                          sticker_animated: true,
+                          sticker_source: "https://example.invalid/sticker.webp" }
                     ]
                     property bool stickersLoading: false
                     property string stickersError: ""
@@ -1278,7 +1288,18 @@ int main(int argc, char *argv[])
                 if (auto *item = loader->property("item").value<QQuickItem *>())
                     movingDrew = movingDrew || item->property("hasFrame").toBool();
             }
-            if (movingDrew)
+            // All three present, a frame drawn, and exactly one tile still
+            // animating: the refused one let go. The refusal arrives on the
+            // next turn of the loop, which may be after the first frame, and
+            // the grid may not have built every tile by then either.
+            //
+            // This does not prove the refusal is reported through the event
+            // loop. Reported from inside the item's construction instead, the
+            // tile still gives up here, because something else re-evaluates
+            // the binding soon afterwards. What catches that is this same test
+            // on a build configured with WHATSAPPGO_DISABLE_WEBP=ON, where no
+            // frame ever arrives to race it; CI builds that variant too.
+            if (gather(QStringLiteral("stickerTileImage")).size() == 3 && movingDrew && active == 1)
                 break;
             QEventLoop loop;
             QTimer::singleShot(50, &loop, &QEventLoop::quit);
@@ -1305,14 +1326,15 @@ int main(int argc, char *argv[])
             return EXIT_SUCCESS;
         }
         return
-            tiles.size() == 2
+            tiles.size() == 3
             // Exactly the animated sticker animates. Animating the still one
             // would mean a decoder per tile for nothing.
             && active == 1
             && movingDrew
-            // The still sticker keeps its picture, and the moving one hands
-            // its tile over to the animation once there is a frame to show.
-            && stillImagesShown == 1
+            // The still sticker and the refused one keep their picture, and
+            // the moving one hands its tile over to the animation once there
+            // is a frame to show.
+            && stillImagesShown == 2
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }

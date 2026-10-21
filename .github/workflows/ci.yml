@@ -76,12 +76,20 @@ jobs:
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
       - run: ./scripts/build-jobs-test.sh
       - run: ./scripts/version-test.sh
-      - run: cmake -S desktop -B desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake -S desktop -B desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWHATSAPPGO_REQUIRE_WEBP=ON
       - run: cmake --build desktop/build --parallel "$(./scripts/build-jobs.sh)"
       # This job built the desktop application for months without ever running
       # its tests, which is how a Linux-only assumption reached the Windows and
       # macOS jobs unnoticed.
       - run: ctest --test-dir desktop/build --output-on-failure
+      # A build without libwebp has to show a still sticker and start no
+      # decoder. That path was only ever reached by a machine that happened to
+      # lack the library - the Windows job, where it had been wrong for as long
+      # as it existed and nobody was running the test. It is built here on
+      # purpose instead.
+      - run: cmake -S desktop -B desktop/build-nowebp -G Ninja -DCMAKE_BUILD_TYPE=Release -DWHATSAPPGO_DISABLE_WEBP=ON
+      - run: cmake --build desktop/build-nowebp --parallel "$(./scripts/build-jobs.sh)"
+      - run: ctest --test-dir desktop/build-nowebp -R desktop-sticker --output-on-failure
 
   desktop-windows:
     runs-on: windows-latest
@@ -108,7 +116,24 @@ jobs:
       - run: go build -trimpath -o bin/whatsappctl.exe ./cmd/whatsappctl
         env:
           CGO_ENABLED: '0'
-      - run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+      # The Linux and macOS jobs install libwebp; this one never did, so every
+      # Windows build shipped with animated stickers switched off and the
+      # sticker grid test failed here alone. The triplet is the static one
+      # built against the shared runtime, which is the runtime Qt uses: it
+      # leaves no DLL to deploy beside the application. It is a community
+      # triplet, which vcpkg does not test, so a port update could break it;
+      # the alternative ships three DLLs the packaging script would have to
+      # carry itself. Called by path: the runner sets the variable but is not
+      # documented to put vcpkg on PATH.
+      - run: '& "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install libwebp:x64-windows-static-md'
+      # REQUIRE_WEBP so a job that cannot find the library stops at
+      # configuration with a sentence about it, rather than building a client
+      # that quietly refuses animated stickers.
+      - run: >
+          cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+          -DWHATSAPPGO_REQUIRE_WEBP=ON
+          -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
       - run: cmake --build desktop/build --config Release --parallel
       - run: ctest --test-dir desktop/build -C Release --output-on-failure
       # The packaging script is the only thing that runs windeployqt, so it is
@@ -153,7 +178,7 @@ jobs:
           modules: 'qtmultimedia'
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappd ./cmd/whatsappd
       - run: CGO_ENABLED=0 go build -trimpath -o bin/whatsappctl ./cmd/whatsappctl
-      - run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake -S desktop -B desktop/build -DCMAKE_BUILD_TYPE=Release -DWHATSAPPGO_REQUIRE_WEBP=ON
       - run: cmake --build desktop/build --parallel
       - run: ctest --test-dir desktop/build --output-on-failure
       # Same reasoning as the Windows job: macdeployqt runs nowhere else, so

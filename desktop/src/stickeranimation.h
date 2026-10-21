@@ -36,6 +36,7 @@ signals:
 private:
     struct Decoder;
     void nextFrame();
+    void refuse(const QString &reason);
     QUrl m_source;
     QImage m_image;
     QString m_error;

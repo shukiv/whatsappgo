@@ -14,15 +14,31 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Quick QuickControls2 N
 # was found quietly and nothing ever installed the library. A packaged build
 # now insists on it rather than shipping that message to a reader.
 option(WHATSAPPGO_REQUIRE_WEBP "Fail configuration when libwebp is missing" OFF)
+# What a build without the library does is a code path of its own: it must show
+# the still frame and start no decoder. It could only be reached on a machine
+# that happened to lack libwebp, which is why it shipped unexercised; this
+# switch lets the suite build it deliberately.
+option(WHATSAPPGO_DISABLE_WEBP "Build without libwebp even when it is installed" OFF)
 find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
+if(PkgConfig_FOUND AND NOT WHATSAPPGO_DISABLE_WEBP)
     pkg_check_modules(WEBP QUIET IMPORTED_TARGET libwebp libwebpdemux)
 endif()
-if(TARGET PkgConfig::WEBP)
+if(WHATSAPPGO_DISABLE_WEBP)
+    set(WHATSAPPGO_WEBP "")
+elseif(TARGET PkgConfig::WEBP)
     set(WHATSAPPGO_WEBP PkgConfig::WEBP)
 else()
     # Homebrew and vcpkg install the library without a pkg-config file this
-    # can always reach, so it is looked for by name as well.
+    # can always reach. Its own CMake package is tried first, because that is
+    # what carries the libraries libwebp itself needs: a static build of it
+    # does not link without sharpyuv, which naming the two files by hand
+    # leaves out.
+    find_package(WebP CONFIG QUIET)
+    if(TARGET WebP::webpdemux)
+        set(WHATSAPPGO_WEBP WebP::webp WebP::webpdemux)
+    endif()
+endif()
+if(NOT WHATSAPPGO_WEBP AND NOT WHATSAPPGO_DISABLE_WEBP)
     find_path(WEBP_DEMUX_INCLUDE_DIR webp/demux.h)
     find_library(WEBP_LIBRARY NAMES webp libwebp)
     find_library(WEBP_DEMUX_LIBRARY NAMES webpdemux libwebpdemux)
@@ -36,13 +52,22 @@ endif()
 if(WHATSAPPGO_WEBP)
     message(STATUS "Animated stickers: decoding through ${WHATSAPPGO_WEBP}")
 else()
+    if(WHATSAPPGO_REQUIRE_WEBP AND WHATSAPPGO_DISABLE_WEBP)
+        message(FATAL_ERROR
+            "WHATSAPPGO_REQUIRE_WEBP and WHATSAPPGO_DISABLE_WEBP are both on, "
+            "which asks for libwebp to be required and left out at the same time.")
+    endif()
     if(WHATSAPPGO_REQUIRE_WEBP)
         message(FATAL_ERROR
             "libwebp was not found, so animated stickers would not play in this build. "
             "Install libwebp-dev (Debian and Ubuntu), libwebp-devel (Fedora), webp (Homebrew) "
             "or libwebp (vcpkg), or configure with -DWHATSAPPGO_REQUIRE_WEBP=OFF to build without them.")
     endif()
-    message(WARNING "libwebp was not found: animated stickers will not play in this build.")
+    if(WHATSAPPGO_DISABLE_WEBP)
+        message(STATUS "Animated stickers: left out of this build deliberately, so the client shows a still frame.")
+    else()
+        message(WARNING "libwebp was not found: animated stickers will not play in this build.")
+    endif()
 endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -610,6 +635,11 @@ if(BUILD_TESTING)
     add_test(NAME desktop-schedule-send COMMAND whatsappgo --schedule-send-test)
     add_test(NAME desktop-channel-posts COMMAND whatsappgo --channel-posts-test)
     add_test(NAME desktop-voice-seek COMMAND whatsappgo --voice-seek-test)
+    # These three never named the platform plugin, so they aborted on every
+    # machine without a display and had been failing in CI since the day it
+    # started running this suite.
+    set_tests_properties(desktop-schedule-send desktop-channel-posts desktop-voice-seek
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-sticker-grid COMMAND whatsappgo --sticker-grid-test)
     add_test(NAME desktop-sticker-animation COMMAND whatsappgo --sticker-animation-test)
     set_tests_properties(desktop-sticker-animation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
@@ -657,12 +687,24 @@ if(BUILD_TESTING)
     set_tests_properties(desktop-uninstall PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/un;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/uninstall-test/config")
     add_test(NAME desktop-platform-theme COMMAND whatsappgo --platform-theme-test)
-    add_test(NAME desktop-desktop-entry COMMAND whatsappgo --desktop-entry-test)
-    # Writing a launcher entry puts a file in the applications menu, so the test
-    # is given a menu of its own rather than the one on this computer.
-    set_tests_properties(desktop-desktop-entry PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/de;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/config"
-        TIMEOUT 10)
+    # The program builds its QApplication before it reads which test to run, so
+    # every test needs a platform plugin whatever it goes on to do. Without
+    # this one it tried to reach a display and aborted on any machine with
+    # none, which is every machine the suite runs on in CI.
+    set_tests_properties(desktop-platform-theme PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # A launcher entry is a freedesktop file, and installDesktopEntry writes
+    # none anywhere else: on macOS and Windows this test asked for two files
+    # and was handed none, which is how it failed on both for as long as it
+    # ran there. The XDG directories below do not redirect anything on those
+    # systems either, so it would write into the real one if it ever could.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME desktop-desktop-entry COMMAND whatsappgo --desktop-entry-test)
+        # Writing a launcher entry puts a file in the applications menu, so the
+        # test is given a menu of its own rather than the one on this computer.
+        set_tests_properties(desktop-desktop-entry PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/de;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/desktop-entry-test/config"
+            TIMEOUT 10)
+    endif()
     add_test(NAME desktop-composer-drafts COMMAND whatsappgo --composer-draft-test)
     # The drafts test adds and switches accounts, so it needs settings of its
     # own and a backend that cannot start: it must never touch the accounts the

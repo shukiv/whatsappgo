@@ -85,7 +85,17 @@ jobs:
           version: ${{ env.QT_VERSION }}
           modules: 'qtmultimedia'
       - run: choco install innosetup --no-progress -y
-      - run: powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
+      # libwebp decodes animated stickers, and Windows has no system copy of
+      # it: without this the published Windows client was the only one that
+      # told the reader they were unavailable. The triplet is the static one
+      # built against the shared runtime Qt uses, so there is no DLL to ship.
+      # Called by path: the runner sets the variable but is not documented to
+      # put vcpkg on PATH.
+      - run: '& "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install libwebp:x64-windows-static-md'
+      - run: >
+          powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
+          -ToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -Triplet x64-windows-static-md
       - run: gh release upload "${{ needs.draft.outputs.tag }}" build/WhatsAppGo-windows-x64.zip build/WhatsAppGo-Setup.exe --clobber
         env:
           GH_TOKEN: ${{ github.token }}

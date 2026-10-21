@@ -7,11 +7,21 @@
 #
 # Signing is skipped unless -SignThumbprint names a certificate in the
 # certificate store. Unsigned builds run, but SmartScreen warns about them.
+#
+# Animated stickers are decoded by libwebp, which Windows has no system copy
+# of; install it with vcpkg and point this at that installation, or the build
+# stops rather than producing a client that refuses them:
+#   vcpkg install libwebp:x64-windows-static-md
+#   powershell -File packaging\windows\build.ps1 `
+#       -ToolchainFile C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+#       -Triplet x64-windows-static-md
 [CmdletBinding()]
 param(
     [string]$QtDir = "",
     [string]$SignThumbprint = "",
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$ToolchainFile = "",
+    [string]$Triplet = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,11 +47,17 @@ try {
     & go build -trimpath -ldflags $ldflags -o (Join-Path $projectRoot "bin\whatsappctl.exe") ./cmd/whatsappctl
     if ($LASTEXITCODE -ne 0) { throw "building whatsappctl failed" }
 
+    # REQUIRE_WEBP because every other packaged build insists on libwebp; this
+    # one did not, so the published Windows client was the only one that could
+    # not play an animated sticker.
     $cmakeArgs = @("-S", (Join-Path $projectRoot "desktop"), "-B", $buildDir,
                    "-DCMAKE_BUILD_TYPE=$Configuration",
                    "-DCMAKE_INSTALL_PREFIX=$stageDir",
-                   "-DBUILD_TESTING=OFF")
+                   "-DBUILD_TESTING=OFF",
+                   "-DWHATSAPPGO_REQUIRE_WEBP=ON")
     if ($QtDir -ne "") { $cmakeArgs += "-DCMAKE_PREFIX_PATH=$QtDir" }
+    if ($ToolchainFile -ne "") { $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$ToolchainFile" }
+    if ($Triplet -ne "") { $cmakeArgs += "-DVCPKG_TARGET_TRIPLET=$Triplet" }
     & cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
     & cmake --build $buildDir --config $Configuration --parallel

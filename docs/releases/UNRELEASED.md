@@ -35,6 +35,25 @@ use them; a rebuild does not replace an already running process.
   a still image, so a wall of animated stickers looked like a wall of static
   ones. Only stickers that actually animate get a decoder; the rest keep their
   picture.
+- **Animated stickers on Windows:** the Windows build now carries the libwebp
+  library that decodes them, so an animated sticker moves there as it does
+  elsewhere. Every published Windows ZIP and installer was built without it and
+  told the reader animated stickers were unavailable; Linux and macOS have
+  insisted on the library since `0df4db9`, and the Windows job was the one left
+  out. All three builds, and the Windows packaging script, now stop at
+  configuration rather than quietly producing a client that refuses them. This
+  is **not verified on a Windows machine**: the change was written and reviewed
+  on Linux, and the first Windows run of the suite is what will prove it.
+- **A sticker the decoder refuses now gives its tile up.** The refusals that
+  need no decoding — a build without libwebp, a sticker that is not a file on
+  this computer — were reported from inside the item's own construction, which
+  in the picker's grid happens inside the binding that decides whether to build
+  it: the fallback wrote the property that binding was reading, Qt broke the
+  loop, and the tile kept a dead decoder for the life of the panel while
+  logging a binding loop. The refusal now goes out on the next turn of the
+  event loop. This is what the Windows suite had been failing on, and it was
+  never a Windows fault: built without libwebp on this machine it failed with
+  the same numbers.
 - **Account menu:** the ring marking where you are lands on the account you are
   using. The menu takes focus when it opens and focus went to whichever account
   came first, which contradicted the tick beside the account actually in use.
