@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
+	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/notify"
 	"github.com/shukiv/whatsappgo/internal/store"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -74,7 +75,16 @@ func TestAPlainMessageStillArrives(t *testing.T) {
 // that names the choice. This is what failed on a live phone: the tap was
 // delivered and acknowledged, and then nothing came out of the daemon at all.
 func TestATapReachesTheSocket(t *testing.T) {
-	c, _, seen := receivingClient(t)
+	c, st, seen := receivingClient(t)
+	// The question this answers has to be one this account asked, or the answer
+	// arrives marked unverified rather than acted upon.
+	if err := st.UpsertMessage(context.Background(), model.Message{
+		ID: "prompt1", ChatJID: types.NewJID("123", types.DefaultUserServer).String(),
+		SenderJID: "me@s.whatsapp.net", Timestamp: 1, Kind: "text", Body: "Do you see them?",
+		FromMe: true, Status: "sent",
+	}, "", false); err != nil {
+		t.Fatal(err)
+	}
 	c.handleMessage(incoming("tap1", &waE2E.Message{TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
 		SelectedID:          proto.String("yes"),
 		SelectedDisplayText: proto.String("Yes, I see them"),
@@ -93,11 +103,86 @@ func TestATapReachesTheSocket(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"selected_id": "yes", "selected_title": "Yes, I see them",
-		"message_id": "prompt1", "tap_id": "tap1",
+		"message_id": "prompt1", "tap_id": "tap1", "verified": "1",
 	} {
 		if data[key] != want {
 			t.Fatalf("%s = %q, want %q", key, data[key], want)
 		}
+	}
+}
+
+// Everything in an answer is written by whoever sent it, including which
+// question it claims to answer. A caller may be waiting on one of these to
+// approve something, so an answer that cannot be tied to a question this
+// account asked in this conversation must not arrive looking like one that can.
+func TestATapIsOnlyVerifiedAgainstAQuestionThisAccountAsked(t *testing.T) {
+	chat := types.NewJID("123", types.DefaultUserServer).String()
+	for _, tc := range []struct {
+		name    string
+		prompt  *model.Message
+		replyTo string
+		want    string
+	}{
+		{"answers a question this account asked", &model.Message{
+			ID: "prompt1", ChatJID: chat, SenderJID: chat, Timestamp: 1, Kind: "text",
+			Body: "Approve?", FromMe: true, Status: "sent",
+		}, "prompt1", "1"},
+		// Someone writing into the conversation can name a message this account
+		// never sent, or one it only received.
+		{"answers a message this account received", &model.Message{
+			ID: "theirs1", ChatJID: chat, SenderJID: chat, Timestamp: 1, Kind: "text",
+			Body: "Approve?", Status: "received",
+		}, "theirs1", "0"},
+		{"answers a message nobody here has", nil, "unknown1", "0"},
+		{"answers nothing at all", nil, "", "0"},
+	} {
+		c, st, seen := receivingClient(t)
+		if tc.prompt != nil {
+			if err := st.UpsertMessage(context.Background(), *tc.prompt, "Alice", false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var context_ *waE2E.ContextInfo
+		if tc.replyTo != "" {
+			context_ = replyTo(tc.replyTo)
+		}
+		c.handleMessage(incoming("tap-"+tc.name, &waE2E.Message{
+			TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
+				SelectedID: proto.String("yes"), SelectedDisplayText: proto.String("Approve"),
+				ContextInfo: context_,
+			}}))
+		tapped := named(*seen, "message.tapped")
+		if tapped == nil {
+			t.Fatalf("%s: the tap was not reported at all", tc.name)
+		}
+		data, _ := tapped.Data.(map[string]string)
+		if data["verified"] != tc.want {
+			t.Fatalf("%s: verified = %q, want %q", tc.name, data["verified"], tc.want)
+		}
+	}
+}
+
+// A question asked in another conversation is not an invitation to answer here.
+func TestATapCannotBorrowAQuestionFromAnotherChat(t *testing.T) {
+	c, st, seen := receivingClient(t)
+	elsewhere := types.NewJID("999", types.DefaultUserServer).String()
+	if err := st.UpsertMessage(context.Background(), model.Message{
+		ID: "prompt1", ChatJID: elsewhere, SenderJID: elsewhere, Timestamp: 1, Kind: "text",
+		Body: "Approve?", FromMe: true, Status: "sent",
+	}, "Someone", false); err != nil {
+		t.Fatal(err)
+	}
+	c.handleMessage(incoming("tap1", &waE2E.Message{
+		TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
+			SelectedID: proto.String("yes"), ContextInfo: replyTo("prompt1"),
+		}}))
+	tapped := named(*seen, "message.tapped")
+	if tapped == nil {
+		t.Fatal("the tap was not reported at all")
+	}
+	data, _ := tapped.Data.(map[string]string)
+	if data["verified"] != "0" {
+		t.Fatalf("a question from another conversation was accepted: %#v", data)
 	}
 }
 

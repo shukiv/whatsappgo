@@ -824,9 +824,33 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		// because the identifier is read out of a JSON document whose key is
 		// not documented anywhere: where it cannot be read, the title still
 		// says which button was pressed.
+		//
+		// Everything in an answer is written by whoever sent it, including
+		// which message it claims to answer and which button it claims was
+		// pressed. Anyone able to write into a conversation can therefore send
+		// a message shaped like an answer to a question nobody asked them, or
+		// to a question asked of somebody else. Because a caller may be waiting
+		// on one of these to approve something, the answer is checked against
+		// the conversation before it goes out: the question has to be a message
+		// this account actually sent, in this same chat.
+		//
+		// A check that fails marks the answer rather than dropping it. A
+		// dropped answer is the failure this event exists to end, and an answer
+		// to a question this device never saw - a prompt older than its history
+		// - is unproven rather than forged. A caller acting on an answer must
+		// require verified=1, and must still decide for itself whether
+		// sender_jid is the person it asked: in a group, every member can see
+		// the question and press the button.
+		verified := "0"
+		if msg.ReplyTo != "" {
+			if prompt, err := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ReplyTo); err == nil && prompt.FromMe {
+				verified = "1"
+			}
+		}
 		c.emit(gateway.Event{Name: "message.tapped", Data: map[string]string{
 			"chat_jid": msg.ChatJID, "message_id": msg.ReplyTo, "selected_id": answer.ID,
 			"selected_title": answer.Title, "sender_jid": msg.SenderJID, "tap_id": msg.ID,
+			"verified": verified,
 		}})
 	}
 	if errors.Is(previousErr, sql.ErrNoRows) {

@@ -1392,6 +1392,10 @@ func (s *Store) DeleteChat(ctx context.Context, chatJID string) error {
 		`DELETE FROM reactions WHERE chat_jid=?`,
 		`DELETE FROM message_pins WHERE chat_jid=?`,
 		`DELETE FROM media_payloads WHERE chat_jid=?`,
+		// Deleting the chat row cascades to this table, but only while foreign
+		// keys are enforced. Saying it here keeps the deletion a property of
+		// the statement rather than of the connection's settings.
+		`DELETE FROM message_revisions WHERE chat_jid=?`,
 		`DELETE FROM messages WHERE chat_jid=?`,
 		`DELETE FROM chat_aliases WHERE canonical_jid=? OR alias_jid=?`,
 		`DELETE FROM chats WHERE jid=?`,
@@ -2062,6 +2066,10 @@ func (s *Store) ClearChatMessages(ctx context.Context, chatJID string) error {
 		// conversations, and clearing one used to take the other's attachment
 		// payload with it, leaving a message that could never be downloaded.
 		`DELETE FROM media_payloads WHERE chat_jid=?`,
+		// Earlier versions of an edited message are the message too. Clearing a
+		// conversation left them behind, because this table hangs off the chat
+		// row rather than the message rows, and the chat row is kept here.
+		`DELETE FROM message_revisions WHERE chat_jid=?`,
 		`DELETE FROM messages WHERE chat_jid=?`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, chatJID); err != nil {
