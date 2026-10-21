@@ -6,6 +6,18 @@ use them; a rebuild does not replace an already running process.
 
 ## Fixed
 
+- **Quitting no longer ends in a crash.** When the chat list went, it left one
+  of the rows it had been showing parented to the application object rather
+  than to the engine, so the row outlived the whole interface, and Qt deletes
+  the application object's children only after it has taken the platform
+  integration down. Deleting the row there laid its text out again, measuring
+  text asks the font database to populate itself, and with no platform left to
+  ask it of Qt ended the process with `SIGABRT` and `QFontDatabase: Must
+  construct a QGuiApplication before accessing QFontDatabase`. The window had
+  closed by then, so nobody saw it, but the exit status said the program had
+  crashed and nothing registered to run at exit ran. The rows are now deleted
+  while there is still a platform to measure text with.
+
 - **Chat list:** a conversation holding a message that has not gone yet is
   listed, and the row says so. The list only ever showed a conversation that
   already held a message, was pinned, or was a favourite, so scheduling the
@@ -148,7 +160,10 @@ use them; a rebuild does not replace an already running process.
 
 ## Known issues
 
-- `desktop-resize-rendering` aborts intermittently with `QFontDatabase: Must
-  construct a QGuiApplication before accessing QFontDatabase`. It is a race,
-  not a regression: measured on 2026-10-04 it passed 1 run in 5 both with and
-  without the changes above. Tracked as `whatsappgo-8hd`.
+- The `desktop-resize-rendering` abort that was listed here is fixed by the
+  entry above: it was that crash, reached by the test rather than by a reader
+  quitting. 36 runs in the configuration that used to fail 7 in 12 now pass.
+  What is still missing is a test that reproduces it deterministically, which
+  `whatsappgo-pj4` tracks: the fix is verified by measurement, and the two
+  attempts at a test both passed against a build with the fix disabled, so
+  neither was kept.

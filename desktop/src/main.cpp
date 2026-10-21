@@ -791,6 +791,43 @@ int main(int argc, char *argv[])
     }
 
     RpcClient backend(initialProfile, parser.value(chatOption));
+    // Destroyed immediately after the engine, which is the only moment the rows
+    // the chat list leaves behind can be got rid of safely.
+    //
+    // When the interface goes, one of the rows the list was showing is left
+    // parented to the application object rather than destroyed, so it outlives
+    // the interface entirely. What leaves it there has not been established:
+    // nothing in this project parents anything to the application object, and
+    // the row is not there yet when the event loop returns. What is measured is
+    // where it ends up - a QQuickItem among the application object's children -
+    // and the application object deletes its children only after Qt has taken
+    // the platform integration down. Deleting a row there lays its text out
+    // again, measuring text asks the font database to populate itself, and with
+    // no platform left to ask it of Qt prints "QFontDatabase: Must construct a
+    // QGuiApplication before accessing QFontDatabase" and ends the process with
+    // SIGABRT. The window has closed by then so nobody sees it, but the exit
+    // status says the program crashed and nothing registered to run at exit
+    // runs. It is what desktop-resize-rendering kept failing on: it aborted
+    // after it had already passed, 7 runs in 12 against a populated chat list,
+    // and the row the abort came from was named by deleting the children one at
+    // a time: ChatListDelegate, an ItemDelegate whose RowLayout re-measures the
+    // text in its labels as it goes.
+    //
+    // A local declared here is destroyed after the engine and before everything
+    // above it, the application object last of all, so this is the one point
+    // where the row has been left behind and there is still a platform to
+    // measure text with.
+    struct ParkedRowSweeper {
+        QApplication *app;
+        ~ParkedRowSweeper()
+        {
+            const auto parked = app->children();
+            for (QObject *child : parked) {
+                if (qobject_cast<QQuickItem *>(child) != nullptr)
+                    delete child;
+            }
+        }
+    } parkedRowSweeper{&app};
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("lucide"), new LucideProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
