@@ -1628,24 +1628,52 @@ Item {
                             anchors.centerIn: parent
                             width: parent.width - 16
                             spacing: 2
-                            Label {
-                                objectName: "promptChoiceTitle"
-                                width: parent.width
-                                horizontalAlignment: Text.AlignHCenter
-                                text: String(parent.parent.modelData.title || parent.parent.modelData.id || "")
-                                elide: Text.ElideRight
-                                // Pressable only when somebody else asked:
-                                // answering your own question sends nobody
-                                // anything, and the daemon refuses it.
-                                color: root.promptAnswerable ? Theme.link : Theme.textMuted
-                                font.pixelSize: root.bodyFontSize
+                            // The mark beside the answer, as WhatsApp Web draws
+                            // it: pressing one sends a reply, and the arrow is
+                            // what says so before it is pressed.
+                            Row {
+                                id: promptChoiceRow
+                                // A Column positions its children vertically and
+                                // leaves x alone, so the row centres itself.
+                                x: (parent.width - width) / 2
+                                spacing: 6
+                                // The mark follows the writing direction of the
+                                // answer, as it does on WhatsApp Web: left of a
+                                // Latin answer, right of a Hebrew one.
+                                layoutDirection: promptChoiceTitle.horizontalAlignment === Text.AlignRight
+                                    ? Qt.RightToLeft : Qt.LeftToRight
+                                TintedIcon {
+                                    id: promptChoiceMark
+                                    objectName: "promptChoiceMark"
+                                    width: root.bodyFontSize
+                                    height: root.bodyFontSize
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    source: Qt.resolvedUrl("icons/reply.svg")
+                                    tint: promptChoiceTitle.color
+                                }
+                                Label {
+                                    id: promptChoiceTitle
+                                    objectName: "promptChoiceTitle"
+                                    // Measured against the column, not the row:
+                                    // a width taken from the row that the row
+                                    // takes from its children is a binding loop.
+                                    width: Math.min(implicitWidth,
+                                        choiceColumn.width - promptChoiceMark.width - promptChoiceRow.spacing)
+                                    text: String(choiceColumn.parent.modelData.title || choiceColumn.parent.modelData.id || "")
+                                    elide: Text.ElideRight
+                                    // Pressable only when somebody else asked:
+                                    // answering your own question sends nobody
+                                    // anything, and the daemon refuses it.
+                                    color: root.promptAnswerable ? Theme.link : Theme.textMuted
+                                    font.pixelSize: root.bodyFontSize
+                                }
                             }
                             Label {
                                 objectName: "promptChoiceDescription"
-                                visible: Boolean(parent.parent.modelData.description)
+                                visible: Boolean(choiceColumn.parent.modelData.description)
                                 width: parent.width
                                 horizontalAlignment: Text.AlignHCenter
-                                text: String(parent.parent.modelData.description || "")
+                                text: String(choiceColumn.parent.modelData.description || "")
                                 wrapMode: Text.Wrap
                                 color: Theme.textMuted
                                 font.pixelSize: root.captionFontSize
