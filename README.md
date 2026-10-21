@@ -1,7 +1,7 @@
 # WhatsAppGo
 
-WhatsAppGo is an unofficial, native WhatsApp client for Linux. Its interface is
-built with Qt 6 and QML. A bundled Go backend uses
+WhatsAppGo is an unofficial, native WhatsApp client for Linux, Windows, and
+macOS. Its interface is built with Qt 6 and QML. A bundled Go backend uses
 [whatsmeow](https://github.com/tulir/whatsmeow) to connect through WhatsApp's
 multi-device protocol. There is no Chromium, WebKit, Electron, or WhatsApp Web
 page in the application.
@@ -31,11 +31,15 @@ systemd unit to start manually.
 
 ## Quick start
 
+Every tagged version publishes a build for each system: an AppImage for Linux,
+an installer and a portable ZIP for Windows, and a disk image for Apple silicon
+Macs. None of them is signed, and each system says so in its own way; the
+sections below describe what to expect.
+
 ### Download for Linux
 
-Every tagged version publishes an AppImage: one file, no build tools. Put it
-somewhere you can write to, because an update installs itself by replacing that
-file.
+The AppImage is one file and needs no build tools. Put it somewhere you can
+write to, because an update installs itself by replacing that file.
 
 ```bash
 mkdir -p ~/Applications && cd ~/Applications
@@ -52,6 +56,25 @@ is worth running. On a system without FUSE, start it with
 
 The published binaries are **unsigned**: the checksum confirms that the download
 arrived intact, not who built it. Building from source avoids the question.
+
+### Download for Windows
+
+`WhatsAppGo-Setup.exe` installs the application; `WhatsAppGo-windows-x64.zip` is
+the same thing as a folder to unpack and run. Both are on the
+[latest release](https://github.com/shukiv/whatsappgo/releases/latest) beside
+`SHA256SUMS`, which is worth checking before running either.
+
+They are unsigned, so SmartScreen warns about them and has to be told to
+continue. Notifications behave differently here than on Linux: they are handed
+to the desktop client rather than to a system service, so they appear only while
+WhatsAppGo is running. The daemon and the client talk over a named pipe.
+
+### Download for macOS
+
+`WhatsAppGo-arm64.dmg` is for **Apple silicon**; no Intel build is published,
+because the Intel runner that produced one no longer exists. It is unsigned and
+not notarised, so Gatekeeper refuses it until it is allowed through explicitly.
+Notifications appear only while the application is running, as on Windows.
 
 ### Build from source
 
@@ -81,7 +104,8 @@ devices → Link a device**, then scan the QR code. Phone-code pairing accepts a
 international number without `+`, spaces, or a leading zero.
 
 For Fedora, Arch, per-user installation, system-wide installation, upgrades,
-and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
+and uninstalling, see [Installing WhatsAppGo](INSTALL.md). Building from source
+on Windows or macOS is covered there too: the steps below are for Linux.
 
 ## Features
 
@@ -130,7 +154,8 @@ and uninstalling, see [Installing WhatsAppGo](INSTALL.md).
 - An **AI assistant interface**: `whatsappmcp` serves the same local API over
   the Model Context Protocol, so an assistant can read and act on the account
   through the tools the daemon already publishes
-- Flatpak, Debian, RPM, and AppImage packaging definitions
+- Flatpak, Debian, RPM, and AppImage packaging definitions for Linux, an Inno
+  Setup installer and a portable ZIP for Windows, and a disk image for macOS
 - **Report a problem** opens the WhatsAppGo GitHub issues page directly in
   your browser, with no in-app form or intake key;
   see [bug reporting](docs/BUG_REPORTING.md)
