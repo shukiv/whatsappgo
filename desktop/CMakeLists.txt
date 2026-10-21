@@ -770,6 +770,15 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         TIMEOUT 30
     )
+    # Kept away from the developer's own account, which it had been reaching:
+    # unisolated it attached to a running daemon, drew that account's
+    # conversations and read its avatar cache. That is also what made the
+    # teardown crash it was failing on show up on 7 runs in 12 rather than 1,
+    # so finding the crash needed the live account and the test must not.
+    set_tests_properties(desktop-resize-rendering PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/rr;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/resize-rendering-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/resize-rendering-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/resize-rendering-test/config"
+        TIMEOUT 30
+    )
     set_tests_properties(desktop-channel-row PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WHATSAPPGO_BACKEND=/bin/false;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/cr;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/channel-row-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/channel-row-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/channel-row-test/config"
         TIMEOUT 20

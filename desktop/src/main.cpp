@@ -1815,10 +1815,24 @@ int main(int argc, char *argv[])
             return WHATSAPPGO_TEST_FAILURE();
         const auto initialGeneration = window->property("_resizeRepaintGeneration").toInt();
         window->resize(window->width() - 37, window->height() - 23);
-        QTimer::singleShot(150, &app, [window, initialGeneration] {
-            const bool repainted = window->property("_resizeRepaintGeneration").toInt() > initialGeneration;
-            QCoreApplication::exit(repainted ? EXIT_SUCCESS : EXIT_FAILURE);
+        // Waited for rather than read once after a fixed delay. The repaint
+        // lands in a few milliseconds on an idle machine and later than 150 ms
+        // on one busy with a serial build, and the second case failed the test
+        // with no output at all, for a reason that had nothing to do with
+        // whether resizing schedules a repaint.
+        QTimer repaintWatch;
+        repaintWatch.setInterval(25);
+        QElapsedTimer waited;
+        waited.start();
+        QObject::connect(&repaintWatch, &QTimer::timeout, &app, [window, initialGeneration, &waited] {
+            if (window->property("_resizeRepaintGeneration").toInt() > initialGeneration) {
+                QCoreApplication::exit(EXIT_SUCCESS);
+            } else if (waited.elapsed() > 5000) {
+                qInfo().noquote() << QStringLiteral("FAIL: resizing scheduled no repaint within 5 seconds");
+                QCoreApplication::exit(EXIT_FAILURE);
+            }
         });
+        repaintWatch.start();
         return app.exec();
     }
     if (searchNavigationTest) {
