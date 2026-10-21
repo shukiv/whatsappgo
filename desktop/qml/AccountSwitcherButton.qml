@@ -108,7 +108,23 @@ ThemedToolButton {
             }
         }
 
+        // The popup takes focus when it opens, and focus lands on the first
+        // item in it. That drew the ring around whichever account happened to
+        // be first, which reads as "this is the one you are on" and contradicts
+        // the tick beside the account actually in use. Start on the current
+        // one, which is also where a keyboard reader expects to be.
+        onOpened: Qt.callLater(() => {
+            for (let i = 0; i < accountItems.count; ++i) {
+                const item = accountItems.itemAt(i)
+                if (item && item.checked) {
+                    item.forceActiveFocus(Qt.TabFocusReason)
+                    return
+                }
+            }
+        })
+
         Repeater {
+            id: accountItems
             model: root.profiles
             WhatsAppMenuItem {
                 required property string modelData

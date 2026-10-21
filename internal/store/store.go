@@ -212,6 +212,18 @@ CREATE TABLE IF NOT EXISTS metadata (
 			return err
 		}
 	}
+	// WhatsApp's own hash of the media file. The same sticker sent twenty
+	// times is twenty messages, and the sticker picker is a list of stickers,
+	// not of messages: without an identity for the file there is no way to
+	// show each one once. It is recorded only where it is used, which today
+	// means stickers.
+	if err := s.ensureColumn(ctx, "messages", "media_sha", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_messages_media_sha ON messages(media_sha) WHERE media_sha <> ''`); err != nil {
+		return err
+	}
 	if err := s.ensureColumn(ctx, "messages", "media_duration", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -1022,6 +1034,20 @@ func (s *Store) ListAllSharedMessages(ctx context.Context, category string, offs
 	return s.sharedMessages(ctx, "", category, offset, limit)
 }
 
+// newestPerSticker keeps one row for each distinct sticker file: the most
+// recent message carrying it. The picker is a list of stickers, so the same
+// one sent in four conversations belongs in it once.
+//
+// A row whose hash is not known yet is never merged with anything. Merging on
+// an unknown identity would hide a sticker that is not a duplicate, which is
+// the one mistake this must not make.
+func newestPerSticker(extra string) string {
+	return ` AND (m.media_sha='' OR m.id=(SELECT x.id FROM messages x
+	 WHERE x.media_sha=m.media_sha AND x.kind='sticker' AND x.revoked=0
+	 AND x.chat_jid<>'status@broadcast'` + extra + `
+	 ORDER BY x.timestamp DESC,x.id DESC LIMIT 1))`
+}
+
 // sharedMessages backs both browsers. An empty chatJID means every chat.
 func (s *Store) sharedMessages(ctx context.Context, chatJID, category string, offset, limit int) (model.SharedMessagePage, error) {
 	if offset < 0 {
@@ -1037,9 +1063,9 @@ func (s *Store) sharedMessages(ctx context.Context, chatJID, category string, of
 	case "documents":
 		condition = `m.kind='document'`
 	case "stickers":
-		condition = `m.kind='sticker' AND m.chat_jid<>'status@broadcast'`
+		condition = `m.kind='sticker' AND m.chat_jid<>'status@broadcast'` + newestPerSticker("")
 	case "starred_stickers":
-		condition = `m.kind='sticker' AND m.starred=1 AND m.chat_jid<>'status@broadcast'`
+		condition = `m.kind='sticker' AND m.starred=1 AND m.chat_jid<>'status@broadcast'` + newestPerSticker(" AND x.starred=1")
 	case "links":
 		condition = `(m.link_url<>'' OR m.body LIKE '%http://%' OR m.body LIKE '%https://%')`
 	case "all", "":
@@ -1495,6 +1521,46 @@ func (s *Store) SaveMediaPayload(ctx context.Context, chatJID, messageID string,
 	_, err := s.db.ExecContext(ctx, `INSERT INTO media_payloads(chat_jid,message_id,payload)
  SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM messages WHERE chat_jid=? AND id=? AND kind='view_once')
  ON CONFLICT(chat_jid,message_id) DO UPDATE SET payload=excluded.payload`, chatJID, messageID, payload, chatJID, messageID)
+	return err
+}
+
+// StickersWithoutMediaSha answers the rows whose sticker file has not been
+// identified yet, newest first, with the stored payload the hash comes out of.
+// Bounded, because this runs on the way to drawing a picker.
+func (s *Store) StickersWithoutMediaSha(ctx context.Context, limit int) ([]StickerPayload, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT m.chat_jid,m.id,p.payload
+	 FROM messages m JOIN media_payloads p ON p.chat_jid=m.chat_jid AND p.message_id=m.id
+	 WHERE m.kind='sticker' AND m.media_sha='' AND m.revoked=0
+	 ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	pending := []StickerPayload{}
+	for rows.Next() {
+		var item StickerPayload
+		if err := rows.Scan(&item.ChatJID, &item.MessageID, &item.Payload); err != nil {
+			return nil, err
+		}
+		pending = append(pending, item)
+	}
+	return pending, rows.Err()
+}
+
+// StickerPayload is one sticker message and the bytes its identity is read from.
+type StickerPayload struct {
+	ChatJID   string
+	MessageID string
+	Payload   []byte
+}
+
+// SetMediaSha records the identity of a message's media file.
+func (s *Store) SetMediaSha(ctx context.Context, chatJID, messageID, sha string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE messages SET media_sha=? WHERE chat_jid=? AND id=?`,
+		sha, s.canonicalChatJID(ctx, chatJID), messageID)
 	return err
 }
 

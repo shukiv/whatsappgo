@@ -3,6 +3,7 @@
 #include "traybehavior.h"
 #include "lucideprovider.h"
 #include "uninstall.h"
+#include "stickeranimation.h"
 
 #include <QApplication>
 #include <QAction>
@@ -153,11 +154,13 @@ QByteArray linuxPlatformTheme(const std::function<QByteArray(const char *)> &env
     if (!env("QT_QPA_PLATFORMTHEME").isEmpty())
         return {};
     // An AppImage carries its own Qt and its own plugin path, so the host's
-    // platform theme is invisible to it. Only the portal theme is bundled: it
-    // reaches the desktop's own file chooser over D-Bus, where the GTK theme
-    // would mean carrying the whole of GTK to do the same job. Left to itself
-    // Qt would detect the desktop, ask for that GTK theme and find nothing,
-    // which is how a GNOME session ended up with Qt's own file dialog.
+    // platform themes are invisible to it. It bundles two: the portal theme,
+    // which reaches the desktop's own file chooser over D-Bus, and the GTK
+    // theme, which Qt builds the portal theme on top of and falls back to when
+    // nothing answers the portal. Asking for the portal theme by name gets
+    // both, because Qt picks the base from the desktop it detects. Left to
+    // itself Qt would ask only for the GTK theme, and on a desktop whose
+    // portal is running it would miss the better answer.
     if (!env("APPDIR").isEmpty())
         return QByteArrayLiteral("xdgdesktopportal");
     // Service/terminal launchers can omit the desktop identity. Qt then uses
@@ -337,6 +340,8 @@ int main(int argc, char *argv[])
     parser.addOption(voiceSeekFileOption);
     QCommandLineOption stickerAnimationTestOption(QStringLiteral("sticker-animation-test"), QStringLiteral("Verify an animated sticker decodes and draws a frame"));
     parser.addOption(stickerAnimationTestOption);
+    QCommandLineOption stickerGridTestOption(QStringLiteral("sticker-grid-test"), QStringLiteral("Verify the sticker picker plays an animated sticker in its grid"));
+    parser.addOption(stickerGridTestOption);
     QCommandLineOption stickerAnimationFileOption(QStringLiteral("sticker-animation-file"), QStringLiteral("The animated sticker --sticker-animation-test plays"), QStringLiteral("path"));
     parser.addOption(stickerAnimationFileOption);
     QCommandLineOption bundledFontTestOption(QStringLiteral("bundled-font-test"), QStringLiteral("Verify the bundled Roboto faces load and drive the interface font"));
@@ -597,6 +602,7 @@ int main(int argc, char *argv[])
     const bool channelPostsTest = parser.isSet(channelPostsTestOption);
     const bool voiceSeekTest = parser.isSet(voiceSeekTestOption);
     const bool stickerAnimationTest = parser.isSet(stickerAnimationTestOption);
+    const bool stickerGridTest = parser.isSet(stickerGridTestOption);
     const bool presenceDisplayTest = parser.isSet(presenceDisplayTestOption);
     const auto screenshotPath = parser.value(screenshotOption);
     const auto openDialogName = parser.value(openDialogOption);
@@ -1156,6 +1162,160 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
+    if (stickerGridTest) {
+        // A sticker that moves must move in the picker's grid, not only in the
+        // preview under it: the reader chooses from the grid, and a wall of
+        // still first frames is the same picture as a wall of static stickers.
+        QTemporaryDir stickerDir;
+        if (!stickerDir.isValid())
+            return WHATSAPPGO_TEST_FAILURE();
+        // The two-frame lossless animation the sticker-animation test uses.
+        static const unsigned char animation[] = {
+            0x52, 0x49, 0x46, 0x46, 0x80, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50,
+            0x38, 0x58, 0x0A, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x41, 0x4E, 0x49, 0x4D, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x41, 0x4E, 0x4D, 0x46, 0x26, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x56, 0x50,
+            0x38, 0x4C, 0x0D, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x10, 0x07, 0x10, 0x11,
+            0x11, 0x88, 0x88, 0xFE, 0x07, 0x00, 0x41, 0x4E, 0x4D, 0x46, 0x26, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x96, 0x00,
+            0x00, 0x00, 0x56, 0x50, 0x38, 0x4C, 0x0D, 0x00, 0x00, 0x00, 0x2F, 0x00, 0x00, 0x00,
+            0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xFE, 0x07, 0x00,
+        };
+        const auto movingPath = stickerDir.filePath(QStringLiteral("moving.webp"));
+        {
+            QFile file(movingPath);
+            if (!file.open(QIODevice::WriteOnly)
+                || file.write(reinterpret_cast<const char *>(animation), sizeof(animation))
+                    != qint64(sizeof(animation)))
+                return WHATSAPPGO_TEST_FAILURE();
+        }
+        // A still sticker, so the grid can be asked to tell the two apart.
+        const auto stillPath = stickerDir.filePath(QStringLiteral("still.png"));
+        {
+            QImage still(32, 32, QImage::Format_ARGB32);
+            still.fill(QColor(0, 160, 120));
+            if (!still.save(stillPath, "PNG"))
+                return WHATSAPPGO_TEST_FAILURE();
+        }
+
+        QQmlComponent component(&engine);
+        component.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            ApplicationWindow {
+                id: harness
+                width: 520
+                height: 640
+                visible: true
+                property string movingSource: ""
+                property string stillSource: ""
+                // Only what the panel reads to draw its grid.
+                QtObject {
+                    id: stubClient
+                    property var stickers: [
+                        { id: "moving", chat_jid: "1@s.whatsapp.net", chat_title: "Moving",
+                          kind: "sticker", media_path: harness.stillSource,
+                          sticker_animated: true, sticker_source: harness.movingSource },
+                        { id: "still", chat_jid: "1@s.whatsapp.net", chat_title: "Still",
+                          kind: "sticker", media_path: harness.stillSource,
+                          sticker_animated: false, sticker_source: "" }
+                    ]
+                    property bool stickersLoading: false
+                    property string stickersError: ""
+                    property bool stickersHasMore: false
+                    function loadStickers(favorites) {}
+                }
+                ExpressionPanel {
+                    objectName: "stickerGridPanel"
+                    anchors.fill: parent
+                    kind: "sticker"
+                    client: stubClient
+                }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/sticker-grid-test.qml")));
+        std::unique_ptr<QObject> harness(component.create());
+        if (!harness) {
+            qWarning().noquote() << component.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        harness->setProperty("movingSource", movingPath);
+        harness->setProperty("stillSource", stillPath);
+        QCoreApplication::processEvents();
+
+        auto *window = qobject_cast<QQuickWindow *>(harness.get());
+        if (!window)
+            return WHATSAPPGO_TEST_FAILURE();
+        // Grid delegates are not QObject children of the view, so findChild
+        // does not reach them; the visual tree is walked instead.
+        const auto collect = [](auto &&self, QQuickItem *parent, const QString &name,
+                                QList<QQuickItem *> &found) -> void {
+            if (parent == nullptr)
+                return;
+            if (parent->objectName() == name)
+                found.append(parent);
+            for (auto *child : parent->childItems())
+                self(self, child, name, found);
+        };
+        const auto gather = [&](const QString &name) {
+            QList<QQuickItem *> found;
+            collect(collect, window->contentItem(), name, found);
+            return found;
+        };
+
+        // Decoding happens off the interface thread, so the frame is waited
+        // for rather than read.
+        int active = 0;
+        bool movingDrew = false;
+        for (int elapsed = 0; elapsed < 5000; elapsed += 50) {
+            active = 0;
+            movingDrew = false;
+            for (auto *loader : gather(QStringLiteral("stickerTileAnimation"))) {
+                if (!loader->property("active").toBool())
+                    continue;
+                ++active;
+                if (auto *item = loader->property("item").value<QQuickItem *>())
+                    movingDrew = movingDrew || item->property("hasFrame").toBool();
+            }
+            if (movingDrew)
+                break;
+            QEventLoop loop;
+            QTimer::singleShot(50, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        const auto tiles = gather(QStringLiteral("stickerTileImage"));
+        int stillImagesShown = 0;
+        for (auto *image : tiles) {
+            if (image->property("visible").toBool())
+                ++stillImagesShown;
+        }
+        qInfo().noquote() << QStringLiteral("sticker grid: tiles=%1 animating=%2 drew=%3 stillShown=%4")
+                                 .arg(tiles.size()).arg(active).arg(movingDrew).arg(stillImagesShown);
+
+        auto *probe = new StickerAnimation;
+        const bool decoder = probe->supported();
+        delete probe;
+        if (!decoder) {
+            // A build with no decoder must not pretend: no tile may animate.
+            if (active != 0) {
+                qWarning().noquote() << QStringLiteral("a build with no decoder still started a tile");
+                return WHATSAPPGO_TEST_FAILURE();
+            }
+            return EXIT_SUCCESS;
+        }
+        return
+            tiles.size() == 2
+            // Exactly the animated sticker animates. Animating the still one
+            // would mean a decoder per tile for nothing.
+            && active == 1
+            && movingDrew
+            // The still sticker keeps its picture, and the moving one hands
+            // its tile over to the animation once there is a frame to show.
+            && stillImagesShown == 1
+            ? EXIT_SUCCESS
+            : EXIT_FAILURE;
+    }
     if (stickerAnimationTest) {
         // An animated sticker is decoded here rather than by an optional Qt
         // image plugin, so nothing outside this program proves it works.
@@ -2741,6 +2901,34 @@ QtObject {
         auto *accountEditButton = findVisualItem(findVisualItem, accountWindow.contentItem(), QStringLiteral("accountRenameButton"));
         const bool customAccountNameShown = accountMenuItem
             && accountMenuItem->property("text").toString() == QStringLiteral("Personal");
+        // The ring an open menu draws says "this is where you are". It used to
+        // land on whichever account came first, which contradicted the tick on
+        // the account actually in use. "Personal" is first here; "Support" is
+        // the current one, and is the one that must carry both marks.
+        const auto collectVisualItems = [](auto &&self, QQuickItem *parent, const QString &name,
+                                           QList<QQuickItem *> &found) -> void {
+            if (parent == nullptr)
+                return;
+            if (parent->objectName() == name)
+                found.append(parent);
+            for (auto *child : parent->childItems())
+                self(self, child, name, found);
+        };
+        QList<QQuickItem *> accountItems;
+        collectVisualItems(collectVisualItems, accountWindow.contentItem(),
+                           QStringLiteral("accountSwitcherMenuItem"), accountItems);
+        QString focusedAccount, tickedAccount;
+        for (auto *item : accountItems) {
+            if (item->property("activeFocus").toBool())
+                focusedAccount = item->property("text").toString();
+            if (item->property("checked").toBool())
+                tickedAccount = item->property("text").toString();
+        }
+        qInfo().noquote() << QStringLiteral("account menu: items=%1 focused=%2 ticked=%3")
+                                 .arg(accountItems.size()).arg(focusedAccount).arg(tickedAccount);
+        const bool currentAccountIsTheMarkedOne = accountItems.size() == 2
+            && tickedAccount == QStringLiteral("Support")
+            && focusedAccount == QStringLiteral("Support");
         const bool accountEditAvailable = accountEditButton && accountEditButton->isVisible()
             && accountEditButton->width() >= 32.0 && accountEditButton->width() <= 36.0
             && accountEditButton->height() >= 32.0 && accountEditButton->height() <= 36.0;
@@ -2883,6 +3071,7 @@ QtObject {
                 && note(accountClicked, "account chip click")
                 && note(standaloneAccountMenuOpened, "standalone account menu opened")
                 && note(customAccountNameShown, "custom account name")
+                && note(currentAccountIsTheMarkedOne, "current account carries both marks")
                 && note(accountEditAvailable, "account edit action")
                 && note(accountMenu->property("height").toReal() >= 76.0, "account menu height")
                 && note(accountMenu->property("width").toReal() == 244.0, "account menu width")

@@ -63,7 +63,7 @@ jobs:
       # libwebp decodes animated stickers. Without it every AppImage this
       # workflow published told the reader they were unavailable, and the
       # build said so only in a warning nobody reads.
-      - run: sudo apt-get update && sudo apt-get install -y libfuse2 libxcb-cursor0 libwebp-dev qt6-xdgdesktopportal-platformtheme
+      - run: sudo apt-get update && sudo apt-get install -y libfuse2 libxcb-cursor0 libwebp-dev qt6-xdgdesktopportal-platformtheme qt6-gtk-platformtheme
       - run: packaging/appimage/build.sh
       - run: gh release upload "${{ needs.draft.outputs.tag }}" build/WhatsAppGo-*.AppImage --clobber
         env:

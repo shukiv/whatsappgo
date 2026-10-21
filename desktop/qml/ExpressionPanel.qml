@@ -300,14 +300,42 @@ ColumnLayout {
                     border.color: tile.activeFocus ? Theme.primary : "transparent"
                     border.width: 2
                 }
+                // A sticker that moves is drawn moving here, the way it is in
+                // the conversation and in the preview below. The still image
+                // stays underneath as the placeholder, and comes back if the
+                // decoder cannot read this one.
+                readonly property bool tileAnimated: root.kind === "sticker"
+                    && Boolean(modelData.sticker_animated) && Boolean(modelData.sticker_source)
+                property bool tileAnimationFailed: false
                 contentItem: Item {
                     Image {
+                        objectName: "stickerTileImage"
                         anchors.fill: parent; anchors.margins: 5
                         source: root.kind === "gif" ? (tile.modelData.image || "")
                             : Theme.fileUrl(tile.modelData.media_path || tile.modelData.media_thumbnail || "")
                         sourceSize: Qt.size(240, 240)
                         fillMode: Image.PreserveAspectFit
                         asynchronous: true
+                        // Hidden only once the animation is drawing, so the
+                        // tile is never empty while the decoder starts.
+                        visible: !tileAnimationLoader.item || !tileAnimationLoader.item.hasFrame
+                    }
+                    Loader {
+                        id: tileAnimationLoader
+                        objectName: "stickerTileAnimation"
+                        anchors.fill: parent; anchors.margins: 5
+                        // Only while the panel is on screen and the window has
+                        // focus: a grid of decoders left running behind another
+                        // window costs the reader battery for nothing.
+                        active: tile.tileAnimated && !tile.tileAnimationFailed
+                            && root.visible && root.Window.active
+                        sourceComponent: InlineAnimation {
+                            source: Theme.fileUrl(tile.modelData.sticker_source)
+                            sticker: true
+                            // One tile that will not decode falls back to its
+                            // still image; the rest of the grid keeps moving.
+                            onFailed: tile.tileAnimationFailed = true
+                        }
                     }
                     Label {
                         anchors.centerIn: parent

@@ -46,22 +46,48 @@ fi
 
 # Without a platform theme Qt has no native file chooser and falls back to
 # drawing its own, which is not the dialog the rest of the desktop uses. The
-# portal theme reaches the desktop's own chooser over D-Bus; the GTK theme
-# would mean bundling GTK itself. Copy it in rather than hoping the Qt plugin
-# notices it: shipping an image without one is the bug this guards against.
-portal_theme=""
-for candidate in \
-  "$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null)/platformthemes/libqxdgdesktopportal.so" \
-  "/usr/lib/${arch}-linux-gnu/qt6/plugins/platformthemes/libqxdgdesktopportal.so" \
-  "/usr/lib/qt6/plugins/platformthemes/libqxdgdesktopportal.so"; do
-  if [[ -f "${candidate}" ]]; then portal_theme="${candidate}"; break; fi
-done
-if [[ -z "${portal_theme}" ]]; then
+# portal theme reaches the desktop's own chooser over D-Bus. Both are copied
+# in rather than hoping the Qt plugin notices them: shipping an image without
+# a platform theme is the bug this guards against.
+#
+# The image must work on whatever the reader is running, so it carries two:
+#
+#   libqxdgdesktopportal.so  asks xdg-desktop-portal, which hands the request
+#                            to the desktop's own chooser. Right answer where
+#                            a portal is running, and the only one that works
+#                            under a sandbox.
+#   libqgtk3.so              the GTK chooser, used as the base theme when no
+#                            portal answers. A portal is not universal: it can
+#                            be absent, or installed and failing to start, and
+#                            then the portal theme alone leaves Qt drawing its
+#                            own dialog.
+#
+# GTK itself is NOT bundled. libqgtk3.so links against the host's GTK, which
+# the AppImage excludelist leaves out of the image, so there is no second GTK
+# to clash with the one the desktop is already using. A host without GTK 3
+# simply fails to load the plugin and falls through to the portal.
+find_platform_theme() {
+  local plugin="$1" candidate
+  for candidate in \
+    "$(qmake6 -query QT_INSTALL_PLUGINS 2>/dev/null)/platformthemes/${plugin}" \
+    "/usr/lib/${arch}-linux-gnu/qt6/plugins/platformthemes/${plugin}" \
+    "/usr/lib/qt6/plugins/platformthemes/${plugin}"; do
+    if [[ -f "${candidate}" ]]; then printf '%s' "${candidate}"; return 0; fi
+  done
+  return 1
+}
+portal_theme="$(find_platform_theme libqxdgdesktopportal.so)" || {
   echo "libqxdgdesktopportal.so not found: install qt6-xdgdesktopportal-platformtheme" >&2
   echo "(without it the app draws its own file dialog instead of the desktop's)" >&2
   exit 1
-fi
+}
+gtk_theme="$(find_platform_theme libqgtk3.so)" || {
+  echo "libqgtk3.so not found: install qt6-gtk-platformtheme" >&2
+  echo "(without it a desktop with no running portal gets the app's own dialog)" >&2
+  exit 1
+}
 install -Dm644 "${portal_theme}" "${appdir}/usr/plugins/platformthemes/libqxdgdesktopportal.so"
+install -Dm644 "${gtk_theme}" "${appdir}/usr/plugins/platformthemes/libqgtk3.so"
 
 export QML_SOURCES_PATHS="${project_root}/desktop/qml"
 export EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so"

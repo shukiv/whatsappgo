@@ -378,6 +378,7 @@ public:
     Q_INVOKABLE void openFile(const QString &path);
     Q_INVOKABLE bool openExternally(const QString &url);
     Q_INVOKABLE void downloadMedia(const QString &messageId);
+    void fetchMissingStickerMedia(quint64 generation, quint64 session);
     // Save a document to Downloads without launching an external application.
     Q_INVOKABLE void downloadDocument(const QVariantMap &message);
     Q_INVOKABLE void downloadPhoto(const QVariantMap &message);
@@ -507,6 +508,8 @@ private:
     bool m_stickersLoading = false, m_stickersHasMore = false, m_stickersFavorites = false;
     QString m_stickersError;
     quint64 m_stickerGeneration = 0;
+    int m_stickerDownloads = 0;
+    QSet<QString> m_stickerDownloadsTried;
     void sendPreparedAttachment(const QString &localUrl, const QString &caption, const QString &replyTo, bool document, bool clipboard, const QString &quality);
     using Callback = std::function<void(const QJsonValue &, const QJsonObject &)>;
 

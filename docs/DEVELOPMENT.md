@@ -27,9 +27,18 @@ overrides are preserved; offscreen/minimal runs do not select GTK. Qt retains
 its built-in picker as a fallback when native integration is unavailable.
 
 An AppImage carries its own Qt and its own plugin path, so none of the host's
-platform themes are visible to it. It bundles `libqxdgdesktopportal.so`, which
-reaches the desktop's own file chooser over D-Bus; the GTK theme is not
-bundled, because that would mean carrying GTK itself to do the same job.
+platform themes are visible to it. It bundles two: `libqxdgdesktopportal.so`,
+which reaches the desktop's own file chooser over D-Bus, and `libqgtk3.so`,
+which Qt uses as the base theme under it. A portal is not universal — it can be
+absent, or installed and failing to start — and the portal theme on its own
+then leaves Qt drawing its own dialog. With the GTK theme present the dialog
+falls through to GTK's instead. Measured on a host with a dead portal:
+`XDG_CURRENT_DESKTOP=GNOME` and `XFCE` load both plugins, `KDE` loads only the
+portal one, since its base would be the KDE theme, which is not bundled.
+
+GTK itself is not bundled. `libqgtk3.so` links against the host's GTK, and the
+AppImage excludelist keeps `libgtk-3.so.0` and `libgdk-3.so.0` out of the image,
+so there is no second GTK competing with the desktop's.
 Startup therefore asks for `xdgdesktopportal` whenever `APPDIR` is set and no
 theme was chosen, since Qt's own detection would ask for the GTK theme and
 find nothing. `packaging/appimage/build.sh` copies the plugin in and fails the

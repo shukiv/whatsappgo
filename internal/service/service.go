@@ -8,7 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"encoding/hex"
+
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/shukiv/whatsappgo/internal/bugreport"
 	"github.com/shukiv/whatsappgo/internal/config"
@@ -86,6 +90,31 @@ func (s *Service) bugReportEnvironment() bugreport.Environment {
 func (s *Service) Close() {
 	if s.unsubscribe != nil {
 		s.unsubscribe()
+	}
+}
+
+// identifyStickers records WhatsApp's own hash of each sticker file, read out
+// of the payload already stored for that message. The picker shows a list of
+// stickers rather than of messages, and without this the same sticker appears
+// once for every time anybody sent it.
+//
+// Bounded and best-effort: it runs on the way to drawing the picker, and a
+// sticker that cannot be identified is simply never merged with another.
+func (s *Service) identifyStickers(ctx context.Context) {
+	pending, err := s.store.StickersWithoutMediaSha(ctx, 500)
+	if err != nil {
+		return
+	}
+	for _, item := range pending {
+		var raw waE2E.Message
+		if proto.Unmarshal(item.Payload, &raw) != nil {
+			continue
+		}
+		hash := raw.GetStickerMessage().GetFileSHA256()
+		if len(hash) == 0 {
+			continue
+		}
+		_ = s.store.SetMediaSha(ctx, item.ChatJID, item.MessageID, hex.EncodeToString(hash))
 	}
 }
 
@@ -426,6 +455,9 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		var p sharedListParams
 		if err := decode(raw, &p); err != nil {
 			return nil, err
+		}
+		if p.Category == "stickers" || p.Category == "starred_stickers" {
+			s.identifyStickers(ctx)
 		}
 		page, err := s.store.ListAllSharedMessages(ctx, p.Category, p.Offset, p.Limit)
 		if err != nil {

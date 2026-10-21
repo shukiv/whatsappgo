@@ -3190,6 +3190,57 @@ void RpcClient::sendFile(const QString &localUrl, const QString &caption, const 
     sendPreparedAttachment(localUrl, caption, replyTo, document, false, photoQuality);
 }
 
+// A sticker whose file was never downloaded cannot be drawn, and a grid of
+// grey boxes is no use to somebody choosing one. The bytes are fetched here,
+// a few at a time so opening the picker does not become a stampede, and each
+// row is replaced as its file arrives.
+void RpcClient::fetchMissingStickerMedia(quint64 generation, quint64 session)
+{
+    constexpr int concurrentStickerDownloads = 3;
+    for (int index = 0; index < m_stickers.size(); ++index) {
+        if (m_stickerDownloads >= concurrentStickerDownloads)
+            return;
+        const auto item = m_stickers.at(index).toMap();
+        if (!item.value(QStringLiteral("media_path")).toString().isEmpty()
+            || !item.value(QStringLiteral("media_thumbnail")).toString().isEmpty())
+            continue;
+        const auto chatJid = item.value(QStringLiteral("chat_jid")).toString();
+        const auto messageId = item.value(QStringLiteral("id")).toString();
+        if (chatJid.isEmpty() || messageId.isEmpty())
+            continue;
+        const auto key = chatJid + QLatin1Char('/') + messageId;
+        // One attempt per sticker per sitting. A sticker the account can no
+        // longer fetch must not be asked for again on every page.
+        if (m_stickerDownloadsTried.contains(key))
+            continue;
+        m_stickerDownloadsTried.insert(key);
+        ++m_stickerDownloads;
+        sendRequest(QStringLiteral("message.download"),
+            {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("message_id"), messageId}},
+            [this, generation, session](const QJsonValue &result, const QJsonObject &error) {
+                --m_stickerDownloads;
+                if (generation != m_stickerGeneration || session != m_attachmentSession)
+                    return;
+                if (error.isEmpty()) {
+                    const auto message = result.toObject().toVariantMap();
+                    const auto chat = message.value(QStringLiteral("chat_jid")).toString();
+                    const auto id = message.value(QStringLiteral("id")).toString();
+                    for (int row = 0; row < m_stickers.size(); ++row) {
+                        const auto existing = m_stickers.at(row).toMap();
+                        if (existing.value(QStringLiteral("chat_jid")).toString() == chat
+                            && existing.value(QStringLiteral("id")).toString() == id) {
+                            m_stickers[row] = message;
+                            break;
+                        }
+                    }
+                    emit stickersChanged();
+                }
+                // Keep going through the rest of the page either way.
+                fetchMissingStickerMedia(generation, session);
+            }, OnFailure::StayQuiet);
+    }
+}
+
 void RpcClient::loadStickers(bool favorites, bool more)
 {
     if (more && (m_stickersLoading || !m_stickersHasMore || m_stickers.size() >= 240)) return;
@@ -3210,6 +3261,7 @@ void RpcClient::loadStickers(bool favorites, bool more)
                 const auto page = result.toObject();
                 m_stickers += page.value(QStringLiteral("messages")).toArray().toVariantList();
                 m_stickersHasMore = page.value(QStringLiteral("has_more")).toBool() && m_stickers.size() < 240;
+                fetchMissingStickerMedia(generation, session);
             }
             emit stickersChanged();
         }, OnFailure::StayQuiet);
