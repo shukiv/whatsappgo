@@ -1138,6 +1138,39 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
 		s.playOutgoingSound()
 		return msg, nil
+	case "message.send_list":
+		var p struct {
+			ChatJID  string                `json:"chat_jid"`
+			ReplyTo  string                `json:"reply_to"`
+			Text     string                `json:"text"`
+			Footer   string                `json:"footer"`
+			Button   string                `json:"button_text"`
+			Sections []model.PromptSection `json:"sections"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if err := model.ValidateSendTarget(p.ChatJID); err != nil {
+			return nil, err
+		}
+		prompt, err := model.NewListPrompt(p.Text, p.Footer, p.Button, p.Sections)
+		if err != nil {
+			return nil, err
+		}
+		sender, ok := s.gateway.(gateway.ListPromptSender)
+		if !ok {
+			return nil, errors.New("interactive prompts are unavailable")
+		}
+		msg, err := sender.SendListPrompt(ctx, gateway.ListPromptRequest{ChatJID: p.ChatJID, ReplyTo: p.ReplyTo, Prompt: prompt})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpsertMessage(ctx, msg, "", false); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
+		s.playOutgoingSound()
+		return msg, nil
 	case "message.send_media":
 		var p sendMediaParams
 		if err := decode(raw, &p); err != nil {

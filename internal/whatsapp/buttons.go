@@ -174,3 +174,85 @@ func buttonTap(msg *waE2E.Message) (buttonAnswer, bool) {
 	}
 	return buttonAnswer{}, false
 }
+
+// singleSelectButton is the name WhatsApp gives the button that opens a list.
+const singleSelectButton = "single_select"
+
+// listPromptPayload builds a question whose answers are too many to be
+// buttons. It travels the same way a button prompt does, as an interactive
+// message carrying a native flow, with the same stanza node beside it; only
+// the one button differs, and it opens a list instead of answering.
+//
+// The legacy ListMessage is not used. A linked device is refused when it sends
+// one, and the library this project builds on tags it as a list of its own
+// accord, which is the tagging those refusals are about.
+func listPromptPayload(prompt model.ListPrompt, reply *waE2E.ContextInfo, now time.Time) (*waE2E.Message, []waBinary.Node, error) {
+	type row struct {
+		Header      string `json:"header"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		ID          string `json:"id"`
+	}
+	type section struct {
+		Title string `json:"title"`
+		Rows  []row  `json:"rows"`
+	}
+	params := struct {
+		Title    string    `json:"title"`
+		Sections []section `json:"sections"`
+	}{Title: prompt.ButtonText}
+	for _, from := range prompt.Sections {
+		built := section{Title: from.Title}
+		for _, choice := range from.Rows {
+			built.Rows = append(built.Rows, row{Title: choice.Title, Description: choice.Description, ID: choice.ID})
+		}
+		params.Sections = append(params.Sections, built)
+	}
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return nil, nil, err
+	}
+	interactive := &waE2E.InteractiveMessage{
+		Body:        &waE2E.InteractiveMessage_Body{Text: proto.String(prompt.Text)},
+		ContextInfo: reply,
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{{
+					Name: proto.String(singleSelectButton), ButtonParamsJSON: proto.String(string(encoded)),
+				}},
+				MessageVersion: proto.Int32(1),
+			},
+		},
+	}
+	if prompt.Footer != "" {
+		interactive.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(prompt.Footer)}
+	}
+	return &waE2E.Message{InteractiveMessage: interactive},
+		[]waBinary.Node{nativeFlowBizNode(singleSelectButton, now)}, nil
+}
+
+func (c *Client) SendListPrompt(ctx context.Context, req gateway.ListPromptRequest) (model.Message, error) {
+	prompt, err := model.NewListPrompt(req.Prompt.Text, req.Prompt.Footer, req.Prompt.ButtonText, req.Prompt.Sections)
+	if err != nil {
+		return model.Message{}, err
+	}
+	chat, err := types.ParseJID(req.ChatJID)
+	if err != nil || chat.User == "" || (chat.Server != types.DefaultUserServer && chat.Server != types.HiddenUserServer && chat.Server != types.GroupServer) {
+		return model.Message{}, errors.New("a direct or group conversation is required")
+	}
+	if c.wa == nil || !c.wa.IsConnected() {
+		return model.Message{}, errors.New("WhatsApp is disconnected")
+	}
+	payload, nodes, err := listPromptPayload(prompt, c.replyContext(ctx, req.ChatJID, req.ReplyTo), time.Now())
+	if err != nil {
+		return model.Message{}, err
+	}
+	resp, err := c.wa.SendMessage(ctx, chat, payload, whatsmeow.SendRequestExtra{AdditionalNodes: &nodes})
+	if err != nil {
+		return model.Message{}, err
+	}
+	msg := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(),
+		Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: prompt.Text, FromMe: true,
+		Status: "sent", ReplyTo: req.ReplyTo}
+	return c.withReplyPreview(ctx, msg), nil
+}

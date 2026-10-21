@@ -113,8 +113,8 @@ reason; the message still reaches the chat list and the conversation. The alert-
 full, so a run of status updates cannot silence a call or security-code alert.
 
 Conversation sends - `message.send`, `message.send_media`, `message.send_contact`,
-`message.send_buttons`, `message.forward` and `sticker.send` - accept only person
-and group addresses.
+`message.send_buttons`, `message.send_list`, `message.forward` and `sticker.send`
+- accept only person and group addresses.
 A status update arrives as an ordinary message whose chat is the status
 broadcast address, so answering the chat an event came from would otherwise
 publish a status update. `status.post` remains the way to publish one, and a

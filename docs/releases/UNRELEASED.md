@@ -70,6 +70,21 @@ use them; a rebuild does not replace an already running process.
   conversation as a reply carrying the chosen title, which is how WhatsApp shows
   it. Until now none of them was handled at all, so a tap matched nothing in
   the message reader and was discarded as an empty message.
+- **Lists:** `message.send_list` asks a question whose answers are too many to
+  be buttons - up to ten choices behind one button, with headings and
+  descriptions. It travels the way a button prompt does, as an interactive
+  message carrying a native flow, because the legacy list shape is refused for
+  a linked device.
+- **An answer now says whether it can be trusted.** `message.tapped` carries
+  `verified`, which is `1` only when the question is a message this account
+  itself sent in that same conversation. Everything in an answer is written by
+  whoever sent it, including which message it claims to answer, so without this
+  anyone able to write into a conversation could send something shaped like an
+  approval. An answer that fails the check still arrives, marked `0`.
+- **Clearing a conversation now takes the earlier wording of an edited message
+  with it.** Those are kept against the conversation rather than the message
+  rows, and clearing keeps the conversation, so until now they survived a clear
+  and left behind the text of messages the reader had asked to be rid of.
 - **A message this client cannot read now says so**, as the new
   `message.unmapped` event naming the fields it carries, and as a line in the
   log. Anything the reader could not place was dropped without a trace: on a

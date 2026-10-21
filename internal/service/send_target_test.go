@@ -30,6 +30,7 @@ func TestSendMethodsRefuseTheStatusBroadcastAddress(t *testing.T) {
 		"message.send_media":   `{"chat_jid":"status@broadcast","path":"/tmp/whatsappgo-test.png"}`,
 		"message.send_contact": `{"chat_jid":"status@broadcast","contact":{"name":"Alice","phone":"+15551234567"}}`,
 		"message.send_buttons": `{"chat_jid":"status@broadcast","text":"Approve?","buttons":[{"id":"yes","title":"Approve"}]}`,
+		"message.send_list":    `{"chat_jid":"status@broadcast","text":"Which day?","button_text":"Choose","sections":[{"title":"","rows":[{"id":"mon","title":"Monday"}]}]}`,
 		"message.forward":      `{"chat_jid":"alice@lid","message_id":"m1","to_chat_jid":"status@broadcast"}`,
 		"sticker.send":         `{"chat_jid":"alice@lid","message_id":"m1","to_chat_jid":"status@broadcast"}`,
 	}

@@ -70,11 +70,26 @@ They use the existing owner-only local transport and active profile.
 | `community.link` | `chat_jid`, `child_jid`, `action` (`link`/`unlink`) | Rechecks permissions; protects announcement groups. |
 | `status.audience_contacts` | none | Audience `type` and resolved `people`; read-only. |
 | `message.send_buttons` | `chat_jid`, `text`, `footer`, `buttons`, `reply_to` | Sent message. 1–3 buttons, each with a distinct `id` (≤256 characters) and a `title` (≤20). Text ≤1024, footer ≤60. A tap arrives as `message.tapped`. Read the warning below before using it. |
+| `message.send_list` | `chat_jid`, `text`, `footer`, `button_text`, `sections`, `reply_to` | Sent message. One button (`button_text` ≤20) opens up to 10 choices in all, across up to 10 sections. Each choice needs a distinct `id` (≤256) and `title` (≤24), and may carry a `description` (≤72); a section heading is ≤24. Text ≤4096. A tap arrives as `message.tapped`. Same warning as above. |
 
 `message.tapped` identifies the `chat_jid`, the `message_id` of the prompt that was
 tapped, the `selected_id` of the chosen button, its `selected_title`, the
 `sender_jid` of whoever tapped and the `tap_id` of the answer itself, so a
-repeated answer can be told from a redelivered one. The title travels beside the
+repeated answer can be told from a redelivered one.
+
+**`verified` is the field to check before acting on an answer.** Everything in
+an answer is written by whoever sent it, including which message it claims to
+answer and which button it claims was pressed, so anyone able to write into a
+conversation can send something shaped like an answer to a question nobody asked
+them. `verified` is `1` only when the question is a message this account itself
+sent, in that same conversation. An answer that fails the check still arrives,
+marked `0`, because a dropped answer is the failure this event exists to end and
+an answer to a prompt older than this device's history is unproven rather than
+forged. A caller acting on an answer - approving something, say - must require
+`verified=1`, and must still decide for itself whether `sender_jid` is the
+person it asked: in a group, every member can see the question and press the
+button. The button set is not stored, so `selected_id` is not checked against
+the question's own choices. The title travels beside the
 identifier because the identifier comes out of a JSON document whose key
 WhatsApp documents nowhere, while the title is a plain field in every answer
 shape: where `selected_id` is empty, `selected_title` still says which button was
@@ -128,7 +143,7 @@ through `poll.updated`.
 ## Where a message may be sent
 
 `message.send`, `message.send_media`, `message.send_contact`, `message.send_buttons`,
-`message.forward` and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
+`message.send_list`, `message.forward` and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
 (`@g.us`). Every other address is refused.
 
 This matters for a bot that answers what it receives. A status update arrives

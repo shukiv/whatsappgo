@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,82 @@ func TestAPromptKeepsLineBreaksInItsQuestion(t *testing.T) {
 	}
 	if prompt.Text != "Approve the transfer?\n\nref 4821" {
 		t.Fatalf("text = %q", prompt.Text)
+	}
+}
+
+func TestAListKeepsItsChoicesInOrder(t *testing.T) {
+	prompt, err := NewListPrompt(" Which day suits you? ", " this week ", " Choose a day ", []PromptSection{
+		{Title: " This week ", Rows: []PromptRow{
+			{ID: " mon ", Title: " Monday ", Description: " Morning only "},
+			{ID: "tue", Title: "Tuesday"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prompt.Text != "Which day suits you?" || prompt.Footer != "this week" || prompt.ButtonText != "Choose a day" {
+		t.Fatalf("prompt = %#v", prompt)
+	}
+	if len(prompt.Sections) != 1 || prompt.Sections[0].Title != "This week" || len(prompt.Sections[0].Rows) != 2 {
+		t.Fatalf("sections = %#v", prompt.Sections)
+	}
+	if prompt.Sections[0].Rows[0] != (PromptRow{ID: "mon", Title: "Monday", Description: "Morning only"}) {
+		t.Fatalf("first choice = %#v", prompt.Sections[0].Rows[0])
+	}
+}
+
+func TestAListIsRefusedWhenAChoiceCouldNotBeActedOn(t *testing.T) {
+	ok := []PromptSection{{Rows: []PromptRow{{ID: "mon", Title: "Monday"}}}}
+	eleven := []PromptSection{{Rows: nil}}
+	for i := 0; i < 11; i++ {
+		eleven[0].Rows = append(eleven[0].Rows, PromptRow{ID: strconv.Itoa(i), Title: "Day " + strconv.Itoa(i)})
+	}
+	for _, tc := range []struct {
+		name     string
+		text     string
+		footer   string
+		button   string
+		sections []PromptSection
+	}{
+		{"no text", "  ", "", "Choose", ok},
+		{"text too long", strings.Repeat("x", 4097), "", "Choose", ok},
+		{"no button label", "Which day?", "", " ", ok},
+		{"button label too long", "Which day?", "", strings.Repeat("b", 21), ok},
+		{"no sections", "Which day?", "", "Choose", nil},
+		{"a section with no choices", "Which day?", "", "Choose", []PromptSection{{Title: "This week"}}},
+		// Ten is the ceiling across the whole list, not per section.
+		{"too many choices in all", "Which day?", "", "Choose", eleven},
+		{"too many choices across sections", "Which day?", "", "Choose", []PromptSection{
+			{Rows: []PromptRow{{ID: "a1", Title: "A1"}, {ID: "a2", Title: "A2"}, {ID: "a3", Title: "A3"}, {ID: "a4", Title: "A4"}, {ID: "a5", Title: "A5"}, {ID: "a6", Title: "A6"}}},
+			{Rows: []PromptRow{{ID: "b1", Title: "B1"}, {ID: "b2", Title: "B2"}, {ID: "b3", Title: "B3"}, {ID: "b4", Title: "B4"}, {ID: "b5", Title: "B5"}}},
+		}},
+		// Across the whole list, not merely within one section.
+		{"repeated identifier across sections", "Which day?", "", "Choose", []PromptSection{
+			{Rows: []PromptRow{{ID: "mon", Title: "Monday"}}},
+			{Rows: []PromptRow{{ID: "mon", Title: "Tuesday"}}},
+		}},
+		{"repeated title across sections", "Which day?", "", "Choose", []PromptSection{
+			{Rows: []PromptRow{{ID: "mon", Title: "Monday"}}},
+			{Rows: []PromptRow{{ID: "tue", Title: " Monday"}}},
+		}},
+		{"no choice identifier", "Which day?", "", "Choose", []PromptSection{{Rows: []PromptRow{{ID: " ", Title: "Monday"}}}}},
+		{"choice title too long", "Which day?", "", "Choose", []PromptSection{{Rows: []PromptRow{{ID: "mon", Title: strings.Repeat("t", 25)}}}}},
+		{"choice description too long", "Which day?", "", "Choose", []PromptSection{{Rows: []PromptRow{{ID: "mon", Title: "Monday", Description: strings.Repeat("d", 73)}}}}},
+		{"section heading too long", "Which day?", "", "Choose", []PromptSection{{Title: strings.Repeat("s", 25), Rows: []PromptRow{{ID: "mon", Title: "Monday"}}}}},
+		{"choice title with a newline", "Which day?", "", "Choose", []PromptSection{{Rows: []PromptRow{{ID: "mon", Title: "Mon\nday"}}}}},
+	} {
+		if _, err := NewListPrompt(tc.text, tc.footer, tc.button, tc.sections); err == nil {
+			t.Fatalf("%s was accepted", tc.name)
+		}
+	}
+}
+
+func TestAListOfExactlyTenChoicesIsAccepted(t *testing.T) {
+	var rows []PromptRow
+	for i := 0; i < 10; i++ {
+		rows = append(rows, PromptRow{ID: strconv.Itoa(i), Title: "Day " + strconv.Itoa(i)})
+	}
+	if _, err := NewListPrompt("Which day?", "", "Choose", []PromptSection{{Rows: rows}}); err != nil {
+		t.Fatalf("ten choices were refused: %v", err)
 	}
 }

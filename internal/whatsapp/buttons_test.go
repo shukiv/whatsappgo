@@ -237,3 +237,64 @@ func TestAnOrdinaryMessageIsNotReportedAsATap(t *testing.T) {
 		t.Fatal("an absent message was reported as a tap")
 	}
 }
+
+// A list travels the same way a button prompt does, with one button that opens
+// the choices rather than answering. The legacy ListMessage is refused for a
+// linked device, so it must not appear here.
+func TestAListIsSentAsASingleSelectNativeFlow(t *testing.T) {
+	prompt, err := model.NewListPrompt("Which day suits you?", "this week", "Choose a day", []model.PromptSection{
+		{Title: "This week", Rows: []model.PromptRow{
+			{ID: "mon", Title: "Monday", Description: `He said "go"`},
+			{ID: "tue", Title: "Tuesday"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, nodes, err := listPromptPayload(prompt, replyTo("prompt1"), time.Unix(1760000000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.GetListMessage() != nil || payload.GetButtonsMessage() != nil {
+		t.Fatalf("the list used a shape a linked device may not send: %#v", payload)
+	}
+	flow := payload.GetInteractiveMessage().GetNativeFlowMessage()
+	if len(flow.GetButtons()) != 1 || flow.GetButtons()[0].GetName() != "single_select" {
+		t.Fatalf("buttons = %#v", flow.GetButtons())
+	}
+	if payload.GetInteractiveMessage().GetBody().GetText() != "Which day suits you?" {
+		t.Fatalf("body = %q", payload.GetInteractiveMessage().GetBody().GetText())
+	}
+	if len(nodes) != 1 || nodes[0].Tag != "biz" {
+		t.Fatalf("the send carries no business node: %#v", nodes)
+	}
+	children, _ := nodes[0].Content.([]waBinary.Node)
+	flowNode, _ := children[0].Content.([]waBinary.Node)
+	if got, _ := flowNode[0].Attrs["name"].(string); got != "single_select" {
+		t.Fatalf("flow name = %q", got)
+	}
+	var params struct {
+		Title    string `json:"title"`
+		Sections []struct {
+			Title string `json:"title"`
+			Rows  []struct {
+				Title       string `json:"title"`
+				Description string `json:"description"`
+				ID          string `json:"id"`
+			} `json:"rows"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal([]byte(flow.GetButtons()[0].GetButtonParamsJSON()), &params); err != nil {
+		t.Fatalf("list parameters are not valid JSON: %v (%s)", err, flow.GetButtons()[0].GetButtonParamsJSON())
+	}
+	if params.Title != "Choose a day" || len(params.Sections) != 1 || params.Sections[0].Title != "This week" {
+		t.Fatalf("list parameters = %#v", params)
+	}
+	if len(params.Sections[0].Rows) != 2 {
+		t.Fatalf("rows = %#v", params.Sections[0].Rows)
+	}
+	first := params.Sections[0].Rows[0]
+	if first.ID != "mon" || first.Title != "Monday" || first.Description != `He said "go"` {
+		t.Fatalf("first row = %#v", first)
+	}
+}
