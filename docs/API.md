@@ -69,16 +69,66 @@ They use the existing owner-only local transport and active profile.
 | `community.description` | `chat_jid`, `description`, `previous` | Current-admin and previous-value checks; ≤2048 characters. |
 | `community.link` | `chat_jid`, `child_jid`, `action` (`link`/`unlink`) | Rechecks permissions; protects announcement groups. |
 | `status.audience_contacts` | none | Audience `type` and resolved `people`; read-only. |
+| `message.send_buttons` | `chat_jid`, `text`, `footer`, `buttons`, `reply_to` | Sent message. 1–3 buttons, each with a distinct `id` (≤256 characters) and a `title` (≤20). Text ≤1024, footer ≤60. A tap arrives as `message.tapped`. Read the warning below before using it. |
+
+`message.tapped` identifies the `chat_jid`, the `message_id` of the prompt that was
+tapped, the `selected_id` of the chosen button, its `selected_title`, the
+`sender_jid` of whoever tapped and the `tap_id` of the answer itself, so a
+repeated answer can be told from a redelivered one. The title travels beside the
+identifier because the identifier comes out of a JSON document whose key
+WhatsApp documents nowhere, while the title is a plain field in every answer
+shape: where `selected_id` is empty, `selected_title` still says which button was
+pressed.
+
+`message.unmapped` reports a received message this client cannot read, naming
+the protobuf `fields` it carries along with `chat_jid`, `message_id` and
+`sender_jid`. Such a message used to be dropped without a trace, which is how a
+tapped button could be delivered, acknowledged to WhatsApp and then vanish.
+Transport envelopes - key distribution, a message context, a protocol message -
+are machinery rather than something that failed to be read, and are not
+reported. The same tap also arrives as an ordinary `message.upsert`, as a
+reply whose body is the chosen title. An interactive answer that is not a button
+tap - a form or an address flow, which this client never sends - also reaches
+this event, with an empty `selected_id`; treat an empty `selected_id` as "not a
+button tap" rather than as a choice. Button titles, like identifiers, must
+differ from each other: WhatsApp requires it, and the reader could not tell two
+identical answers apart.
 
 `poll.updated` identifies `chat_jid` and `message_id`; `community.updated` identifies
 `jid`. Old encrypted votes are retained until their key arrives, and later history
 cannot overwrite a newer vote. Revoked/view-once messages never expose these
 details. API clients must not automatically retry sends after an uncertain reply.
 
+## Tappable prompts are accepted, not proven to draw
+
+`message.send_buttons` sends the only shape a linked device can send at all: an
+interactive message carrying a native flow, with the stanza node WhatsApp's
+servers require beside it. The legacy `ButtonsMessage` and `ListMessage` shapes
+are refused outright for a linked device, so they are not used here.
+
+Half of the question is now answered. On 2026-10-21 a prompt sent this way was
+**accepted** by WhatsApp from an ordinary linked account: the call returned a
+message id and a `sent` status, with no 405 and no 479, which means the stanza
+node above is not rejected. That result is reported from the session that ran
+the send, not observed in this repository.
+
+What is still **not** established is whether the message draws buttons on the
+reader's phone. An accepted send and a visible row of buttons are different
+things, and this is exactly the second outcome: the server took the message, and
+the reader may still be looking at one with no buttons. Reports from other
+projects through October 2026 say quick-reply buttons sent this way render on
+Android, iOS and Web, but those are other people's reports, several from forks.
+
+This is also not an official interface. The stanza declares the sender a third
+party, which is accurate and deliberate, and sending unofficial message shapes
+carries a risk to the account. Where a reliable choice matters more than the way
+it looks, `poll.create` is official, renders everywhere, and reports answers
+through `poll.updated`.
+
 ## Where a message may be sent
 
-`message.send`, `message.send_media`, `message.send_contact`, `message.forward`
-and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
+`message.send`, `message.send_media`, `message.send_contact`, `message.send_buttons`,
+`message.forward` and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
 (`@g.us`). Every other address is refused.
 
 This matters for a bot that answers what it receives. A status update arrives

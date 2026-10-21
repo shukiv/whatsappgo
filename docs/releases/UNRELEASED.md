@@ -24,6 +24,60 @@ use them; a rebuild does not replace an already running process.
   call and fell back to drawing one; it now carries the portal theme, which
   reaches whatever chooser the desktop provides.
 
+- **File picker, again:** the AppImage now also carries the GTK platform theme,
+  so a desktop whose portal is missing or failing to start still gets its own
+  file chooser rather than one drawn by the application. Carrying only the
+  portal theme was not enough: a portal that never finishes starting leaves Qt
+  with nothing native to call.
+
+- **Sticker picker:** an animated sticker moves in the picker's grid, the way
+  it already did in the preview below it and in the conversation. The grid drew
+  a still image, so a wall of animated stickers looked like a wall of static
+  ones. Only stickers that actually animate get a decoder; the rest keep their
+  picture.
+- **Account menu:** the ring marking where you are lands on the account you are
+  using. The menu takes focus when it opens and focus went to whichever account
+  came first, which contradicted the tick beside the account actually in use.
+
+- **Sticker picker contents:** each sticker is listed once, and a sticker whose
+  file was never downloaded is fetched rather than left as a grey box. The
+  picker listed sticker *messages*, so one sticker sent in four conversations
+  filled four tiles, and a row with no local file had nothing to draw. Stickers
+  are now told apart by WhatsApp's own hash of the file, taken from the payload
+  already stored for that message; a sticker whose hash is not known yet is
+  never merged with another, since that would hide one that is not a duplicate.
+- **Shared contacts:** a contact card for a number that is on WhatsApp now
+  arrives with **Message** beside it instead of **Invite**, and the recipient's
+  client can show that contact's profile photo. The card's telephone line was
+  missing the `waid` parameter that tells the receiving client the number
+  belongs to an account, so every card we sent looked like a stranger's number.
+  The number is confirmed against WhatsApp before the card goes out: a number
+  that is genuinely not registered still arrives as an invitation, and if the
+  check itself fails the card is sent without the parameter rather than not
+  sent at all. Where WhatsApp registers a different form of the number than the
+  one you dial, the card carries the form WhatsApp answers with.
+- **Tappable prompts, unverified:** a new `message.send_buttons` asks a question
+  with up to three buttons, and a tap on one arrives as the new `message.tapped`
+  event alongside the ordinary message. It is sent as an interactive message
+  carrying a native flow, which is the only shape a linked device may send; the
+  legacy buttons and list shapes are refused by WhatsApp outright. Whether the
+  buttons actually draw on the reader's phone is **not established** — no prompt
+  has been sent to a live recipient from this project, and the reports that say
+  this shape renders are other people's. `poll.create` remains the official way
+  to ask for a choice. See `docs/API.md` for what a refusal looks like.
+- **Taps on someone else's prompt:** a tap on a prompt sent by a business account
+  is now shown. All four answer shapes are read, and each appears in the
+  conversation as a reply carrying the chosen title, which is how WhatsApp shows
+  it. Until now none of them was handled at all, so a tap matched nothing in
+  the message reader and was discarded as an empty message.
+- **A message this client cannot read now says so**, as the new
+  `message.unmapped` event naming the fields it carries, and as a line in the
+  log. Anything the reader could not place was dropped without a trace: on a
+  live phone a tapped button was delivered, acknowledged to WhatsApp, and then
+  vanished, with nothing anywhere to show it had ever arrived. Key exchange and
+  other transport envelopes stay quiet, since those are machinery rather than
+  something that failed to be read.
+
 ## Changed
 
 - **Long messages:** a message long enough to fill the window is shown as its

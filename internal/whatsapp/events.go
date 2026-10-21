@@ -10,6 +10,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -25,6 +26,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/mediaformat"
@@ -790,6 +792,7 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	c.linkChatIdentity(context.Background(), evt.Info.Chat, messageAltAddress(evt))
 	msg := c.withSenderName(context.Background(), messageFromEvent(evt))
 	if msg.ID == "" || msg.ChatJID == "" {
+		c.reportUnmappedMessage(evt)
 		return
 	}
 	previous, previousErr := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ID)
@@ -814,6 +817,18 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 	}
 	c.rememberMediaPayload(msg, evt.Message)
 	c.emit(gateway.Event{Name: "message.upsert", Data: msg})
+	if answer, tapped := buttonTap(evt.Message); tapped {
+		// message_id is the prompt that was tapped and tap_id this answer, so a
+		// caller that sees the same answer twice can tell a redelivery from a
+		// reader who tapped again. The title travels beside the identifier
+		// because the identifier is read out of a JSON document whose key is
+		// not documented anywhere: where it cannot be read, the title still
+		// says which button was pressed.
+		c.emit(gateway.Event{Name: "message.tapped", Data: map[string]string{
+			"chat_jid": msg.ChatJID, "message_id": msg.ReplyTo, "selected_id": answer.ID,
+			"selected_title": answer.Title, "sender_jid": msg.SenderJID, "tap_id": msg.ID,
+		}})
+	}
 	if errors.Is(previousErr, sql.ErrNoRows) {
 		c.notifyStatusUpdate(evt, msg)
 	}
@@ -1442,6 +1457,33 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		m.Body = v.GetText()
 		applyContext(&m, v.GetContextInfo())
 		applyLinkPreview(&m, v)
+	// A tap on a prompt arrives as a message of its own, in one of three
+	// shapes depending on what the other side was sent. WhatsApp shows it in
+	// the conversation as a reply carrying the chosen title, so it is read here
+	// as text quoting the prompt and this client draws it like any other reply.
+	// The identifier behind the choice is not stored on the message: it is
+	// carried by the message.tapped event, for the caller that has to act on it.
+	case msg.GetButtonsResponseMessage() != nil:
+		v := msg.GetButtonsResponseMessage()
+		m.Kind = "text"
+		m.Body = firstNonEmpty(v.GetSelectedDisplayText(), v.GetSelectedButtonID())
+		applyContext(&m, v.GetContextInfo())
+	case msg.GetListResponseMessage() != nil:
+		v := msg.GetListResponseMessage()
+		m.Kind = "text"
+		m.Body = firstNonEmpty(v.GetTitle(), v.GetSingleSelectReply().GetSelectedRowID())
+		applyContext(&m, v.GetContextInfo())
+	case msg.GetInteractiveResponseMessage() != nil:
+		v := msg.GetInteractiveResponseMessage()
+		m.Kind = "text"
+		id, title := nativeFlowChoice(v.GetNativeFlowResponseMessage())
+		m.Body = firstNonEmpty(v.GetBody().GetText(), title, id)
+		applyContext(&m, v.GetContextInfo())
+	case msg.GetTemplateButtonReplyMessage() != nil:
+		v := msg.GetTemplateButtonReplyMessage()
+		m.Kind = "text"
+		m.Body = firstNonEmpty(v.GetSelectedDisplayText(), v.GetSelectedID())
+		applyContext(&m, v.GetContextInfo())
 	case msg.GetImageMessage() != nil:
 		v := msg.GetImageMessage()
 		m.Kind = "image"
@@ -1546,6 +1588,56 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 		return model.Message{}
 	}
 	return m
+}
+
+// transportOnlyMessageFields carry no visible message. A message made only of
+// these is machinery rather than something this client failed to read, so it
+// stays out of the log instead of filling it on every key exchange.
+var transportOnlyMessageFields = map[string]bool{
+	"senderKeyDistributionMessage": true,
+	"messageContextInfo":           true,
+	"protocolMessage":              true,
+}
+
+// reportUnmappedMessage says what arrived when a received message maps to
+// nothing this client can show. Such a message used to be dropped in silence,
+// which is how a tapped button could be delivered, acknowledged to WhatsApp and
+// then vanish with nothing in the log to show it had ever arrived. The field
+// names are read off the message itself rather than listed here, so a shape
+// nobody has seen yet still reports itself by name.
+func (c *Client) reportUnmappedMessage(evt *waEvents.Message) {
+	if evt == nil || evt.Message == nil || evt.Info.ID == "" {
+		return
+	}
+	fields := setMessageFields(evt.Message)
+	readable := false
+	for _, field := range fields {
+		if !transportOnlyMessageFields[field] {
+			readable = true
+		}
+	}
+	if !readable {
+		return
+	}
+	carried := strings.Join(fields, ",")
+	log.Printf("whatsapp: message %s in %s carries nothing this client can read: %s",
+		evt.Info.ID, evt.Info.Chat, carried)
+	c.emit(gateway.Event{Name: "message.unmapped", Data: map[string]string{
+		"chat_jid": evt.Info.Chat.String(), "message_id": string(evt.Info.ID),
+		"sender_jid": evt.Info.Sender.String(), "fields": carried,
+	}})
+}
+
+// setMessageFields names the protobuf fields a message actually carries, in a
+// fixed order so the report reads the same way twice.
+func setMessageFields(msg *waE2E.Message) []string {
+	var names []string
+	msg.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		names = append(names, string(field.Name()))
+		return true
+	})
+	sort.Strings(names)
+	return names
 }
 
 // phoneFromVCard returns the first telephone number in a shared contact card.

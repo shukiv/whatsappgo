@@ -126,6 +126,7 @@ var apiMethods = []MethodDescription{
 		map[string]any{"chat_jid": ""}),
 	method("message.unschedule", "Drop a message that has not been sent yet", true, map[string]any{"id": "scheduled-1"}),
 	method("message.send_contact", "Send one reviewed name and international phone number as a contact card", true, map[string]any{"chat_jid": "123@lid", "reply_to": "", "contact": map[string]any{"name": "Alice", "phone": "+15551234567"}}),
+	method("message.send_buttons", "Ask a question with up to 3 tappable answers; taps arrive as message.tapped", true, map[string]any{"chat_jid": "123@lid", "reply_to": "", "text": "Approve the transfer?", "footer": "", "buttons": []map[string]any{{"id": "yes", "title": "Approve"}, {"id": "no", "title": "Reject"}}}),
 	method("message.send_media", "Send media; document=true preserves file semantics regardless of MIME type", true, map[string]any{"chat_jid": "123@lid", "path": "/absolute/file", "caption": "", "reply_to": "", "voice": false, "document": false}),
 	method("message.react", "Add or remove a reaction", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": "", "emoji": "👍"}),
 	method("message.pin", "Pin a message for 24 hours, 7 days, or 30 days", true, map[string]any{"chat_jid": "123@lid", "message_id": "MESSAGE_ID", "sender_jid": "", "duration_seconds": 604800}),
@@ -140,7 +141,7 @@ var apiMethods = []MethodDescription{
 }
 
 var apiEvents = []string{
-	"poll.updated", "community.updated",
+	"poll.updated", "community.updated", "message.tapped", "message.unmapped",
 	"call.upsert", "calls.synced", "chat.presence", "chat.updated", "group.updated",
 	"connection.changed", "contact.presence", "daemon.error", "directory.synced",
 	"history.collected", "history.synced", "media.collected", "message.edited",
