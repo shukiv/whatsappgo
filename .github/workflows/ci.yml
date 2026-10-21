@@ -140,8 +140,15 @@ jobs:
       # also the only thing that proves the application ships with the Qt DLLs
       # and QML plugins it needs. Build it even when a test failed: a red suite
       # is still worth a binary someone can try.
+      # The same libwebp the configure above was given: this script insists on
+      # the library the way the AppImage and macOS scripts do, so without the
+      # toolchain it stops at configuration even though the build beside it
+      # just passed.
       - if: ${{ !cancelled() }}
-        run: powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
+        run: >
+          powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
+          -ToolchainFile "$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          -Triplet x64-windows-static-md
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:

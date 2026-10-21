@@ -96,3 +96,41 @@ func TestAQuestionNeverRecordedVouchesForNothing(t *testing.T) {
 		t.Fatal("a question whose choices were never recorded vouched for one")
 	}
 }
+
+// Two identities for one person are merged by moving the messages across. A
+// question that lost its choices on the way would keep its text and lose its
+// buttons, which reads as a question nobody can answer.
+func TestAMergedChatKeepsItsQuestions(t *testing.T) {
+	st, err := Open("file:" + t.Name() + "?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ctx := context.Background()
+	const alias = "11111@s.whatsapp.net"
+	const canonical = "22222@lid"
+	question := model.Message{ID: "q1", ChatJID: alias, Kind: "text", Body: "Approve?",
+		Timestamp: 1, Prompt: &model.MessagePrompt{
+			Footer:  "from the agent",
+			Choices: []model.MessageChoice{{ID: "yes", Title: "Approve"}},
+		}}
+	if err := st.UpsertMessage(ctx, question, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LinkChatAliases(ctx, canonical, alias); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := st.GetMessage(ctx, canonical, "q1")
+	if err != nil {
+		t.Fatalf("the question did not survive the merge: %v", err)
+	}
+	if moved.Prompt == nil {
+		t.Fatal("the merged question kept its text and lost its choices")
+	}
+	if len(moved.Prompt.Choices) != 1 || moved.Prompt.Choices[0].ID != "yes" {
+		t.Fatalf("choices after the merge = %+v", moved.Prompt.Choices)
+	}
+	if moved.Prompt.Footer != "from the agent" {
+		t.Fatalf("footer after the merge = %q", moved.Prompt.Footer)
+	}
+}

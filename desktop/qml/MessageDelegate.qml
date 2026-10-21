@@ -34,6 +34,8 @@ Item {
     signal infoRequested(var message)
     signal historyRequested(var message)
     signal readMoreToggled(string messageId)
+    // One of a received question's answers was pressed.
+    signal promptAnswered(string messageId, string choiceId)
 
     // Clicking who said something opens the conversation with them. The name
     // above a group bubble is often the only place somebody outside the
@@ -79,6 +81,13 @@ Item {
     readonly property bool viewOnceKind: modelData.kind === "view_once"
     readonly property bool hasMedia: !viewOnceKind && Boolean(modelData.media_path)
     readonly property bool mediaKind: ["image", "video", "audio", "document", "sticker"].indexOf(modelData.kind) >= 0
+    // A question with tappable answers, as the daemon read it off the wire.
+    readonly property var promptChoiceList: (modelData.prompt && modelData.prompt.choices) || []
+    readonly property string promptFooterText: (modelData.prompt && modelData.prompt.footer) || ""
+    // Only a question somebody else asked can be answered, and a deleted one
+    // offers nothing any more.
+    readonly property bool promptAnswerable: promptChoiceList.length > 0
+        && !modelData.from_me && !modelData.revoked
     // WhatsApp Web puts a sticker on the conversation itself. It is drawn to
     // be seen against the wallpaper, so a panel behind it is wrong twice: it
     // fills in the transparency the sticker was drawn around, and it frames a
@@ -1576,6 +1585,87 @@ Item {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.readMoreToggled(String(root.modelData.id || ""))
+                }
+            }
+
+            // A question with tappable answers. WhatsApp draws the choices as
+            // full-width rows under the message, divided by a hairline, and
+            // that is what the phone shows for the same message.
+            Label {
+                id: promptFooter
+                objectName: "promptFooter"
+                visible: Boolean(root.promptFooterText)
+                width: root.contentWidth
+                text: root.promptFooterText
+                wrapMode: Text.Wrap
+                color: Theme.textMuted
+                font.pixelSize: root.captionFontSize
+            }
+
+            Column {
+                id: promptChoices
+                objectName: "promptChoices"
+                visible: root.promptChoiceList.length > 0
+                width: root.contentWidth
+                spacing: 0
+                topPadding: 4
+
+                Repeater {
+                    model: root.promptChoiceList
+                    delegate: Item {
+                        required property var modelData
+                        required property int index
+                        width: promptChoices.width
+                        height: choiceColumn.implicitHeight + 16
+
+                        Rectangle {
+                            width: parent.width; height: 1
+                            color: Theme.bubbleBorder
+                        }
+                        Column {
+                            id: choiceColumn
+                            objectName: "promptChoice"
+                            anchors.centerIn: parent
+                            width: parent.width - 16
+                            spacing: 2
+                            Label {
+                                objectName: "promptChoiceTitle"
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                text: String(parent.parent.modelData.title || parent.parent.modelData.id || "")
+                                elide: Text.ElideRight
+                                // Pressable only when somebody else asked:
+                                // answering your own question sends nobody
+                                // anything, and the daemon refuses it.
+                                color: root.promptAnswerable ? Theme.link : Theme.textMuted
+                                font.pixelSize: root.bodyFontSize
+                            }
+                            Label {
+                                objectName: "promptChoiceDescription"
+                                visible: Boolean(parent.parent.modelData.description)
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                text: String(parent.parent.modelData.description || "")
+                                wrapMode: Text.Wrap
+                                color: Theme.textMuted
+                                font.pixelSize: root.captionFontSize
+                            }
+                        }
+                        MouseArea {
+                            objectName: "promptChoiceArea"
+                            anchors.fill: parent
+                            enabled: root.promptAnswerable && root.actionsEnabled && !root.selectionActive
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: root.promptAnswered(String(root.modelData.id || ""),
+                                String(parent.modelData.id || ""))
+                        }
+                        Accessible.role: Accessible.Button
+                        Accessible.name: String(modelData.title || modelData.id || "")
+                        Accessible.onPressAction: {
+                            if (root.promptAnswerable)
+                                root.promptAnswered(String(root.modelData.id || ""), String(modelData.id || ""))
+                        }
+                    }
                 }
             }
 

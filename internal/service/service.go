@@ -1171,6 +1171,33 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
 		s.playOutgoingSound()
 		return msg, nil
+	case "message.answer_prompt":
+		var p struct {
+			ChatJID   string `json:"chat_jid"`
+			MessageID string `json:"message_id"`
+			ChoiceID  string `json:"choice_id"`
+		}
+		if err := decode(raw, &p); err != nil {
+			return nil, err
+		}
+		if err := model.ValidateSendTarget(p.ChatJID); err != nil {
+			return nil, err
+		}
+		sender, ok := s.gateway.(gateway.PromptAnswerSender)
+		if !ok {
+			return nil, errors.New("interactive prompts are unavailable")
+		}
+		msg, err := sender.SendPromptAnswer(ctx, gateway.PromptAnswerRequest{
+			ChatJID: p.ChatJID, MessageID: p.MessageID, ChoiceID: p.ChoiceID})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.store.UpsertMessage(ctx, msg, "", false); err != nil {
+			return nil, err
+		}
+		s.events.Publish(events.Event{Name: "message.upsert", Data: msg})
+		s.playOutgoingSound()
+		return msg, nil
 	case "message.send_media":
 		var p sendMediaParams
 		if err := decode(raw, &p); err != nil {

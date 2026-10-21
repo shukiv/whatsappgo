@@ -555,6 +555,19 @@ ApplicationWindow {
         return expandedMessages.indexOf(String(messageId || "")) >= 0
     }
 
+    // Pressing one of a received question's answers. The daemon checks the
+    // choice against the question it stored, so a wrong identifier is refused
+    // there rather than sent to whoever asked.
+    function answerPrompt(messageId, choiceId) {
+        if (!messageId || !choiceId || !backend.selectedChat.jid)
+            return
+        promptAnswerRequest.run("message.answer_prompt", {
+            chat_jid: String(backend.selectedChat.jid),
+            message_id: String(messageId),
+            choice_id: String(choiceId)
+        })
+    }
+
     function toggleMessageExpanded(messageId) {
         const id = String(messageId || "")
         if (id === "")
@@ -2406,6 +2419,7 @@ ApplicationWindow {
                             }
                             bodyExpanded: window.isMessageExpanded(modelData.id)
                             onReadMoreToggled: messageId => window.toggleMessageExpanded(messageId)
+                            onPromptAnswered: (messageId, choiceId) => window.answerPrompt(messageId, choiceId)
                             navigationHighlighted: String(modelData.id || "") === window.highlightedMessageId
                             selectionActive: window.messageSelectionActive
                             selected: window.messageSelectionActive && window.isMessageSelected(modelData.id)
@@ -4121,6 +4135,17 @@ ApplicationWindow {
     GroupInvitationDialog { id: joinGroupDialog; client: backend }
     PollCreationDialog { id: pollCreationDialog; client: backend }
     InteractiveMessageDialog { id: interactiveMessageDialog; client: backend }
+    FeatureRequest {
+        id: promptAnswerRequest
+        objectName: "promptAnswerRequest"
+        client: backend
+        onFinished: (result, error) => {
+            if (error) {
+                window.transientError = error
+                errorTimer.restart()
+            }
+        }
+    }
 
     WhatsAppDialog {
         id: textStatusDialog

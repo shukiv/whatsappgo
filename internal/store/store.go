@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS metadata (
 	if err := s.ensureColumn(ctx, "chats", "last_seen", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail", "mentions"} {
+	for _, column := range []string{"link_url", "link_title", "link_description", "link_thumbnail", "mentions", "prompt"} {
 		if err := s.ensureColumn(ctx, "messages", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
@@ -528,11 +528,11 @@ const mergeAliasMessagesSQL = `INSERT INTO messages
  (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,
  media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,starred,
- forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once,mentions)
+ forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once,mentions,prompt)
  SELECT id,?,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,
  media_mime,media_name,media_path,media_thumbnail,media_size,delivered_at,read_at,played_at,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,starred,
- forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once,mentions
+ forwarding_score,contact_name,contact_phone,contact_count,latitude,longitude,gif_playback,reply_view_once,mentions,prompt
  FROM messages WHERE chat_jid=?
  ON CONFLICT(chat_jid,id) DO UPDATE SET
  sender_jid=COALESCE(NULLIF(messages.sender_jid,''),excluded.sender_jid),
@@ -548,6 +548,11 @@ const mergeAliasMessagesSQL = `INSERT INTO messages
    WHEN messages.edited THEN messages.mentions WHEN excluded.edited THEN excluded.mentions
    WHEN messages.body='' THEN excluded.mentions
    WHEN messages.body=excluded.body THEN COALESCE(NULLIF(messages.mentions,''),excluded.mentions) ELSE messages.mentions END,
+ -- A question's choices travel with it when two identities for one person are
+ -- merged. Leaving them out here is how the same message would keep its text
+ -- and lose its buttons.
+ prompt=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+   ELSE COALESCE(NULLIF(messages.prompt,''),excluded.prompt) END,
  from_me=MAX(messages.from_me,excluded.from_me),
  status=CASE WHEN messages.status='played' OR excluded.status='played' THEN 'played'
    WHEN messages.status='read' OR excluded.status='read' THEN 'read'
@@ -634,8 +639,8 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messages
-	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,forwarding_score,gif_playback,reply_view_once,mentions)
-	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	 (id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,forwarding_score,gif_playback,reply_view_once,mentions,prompt)
+	 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
  ON CONFLICT(chat_jid,id) DO UPDATE SET
   sender_jid=excluded.sender_jid,sender_name=excluded.sender_name,timestamp=excluded.timestamp,
 	  -- A deletion is a tombstone. History synchronisation redelivers the
@@ -652,6 +657,12 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 	   WHEN messages.edited=1 AND excluded.edited=0 THEN messages.mentions
 	   WHEN messages.body=excluded.body THEN COALESCE(NULLIF(messages.mentions,''),excluded.mentions)
 	   ELSE excluded.mentions END,
+	  -- A deleted message offers nothing, and history redelivering the
+	  -- question must not put its buttons back under a message the sender
+	  -- took away. Otherwise the stored choices stand unless new ones arrive,
+	  -- since history sync carries the question without them.
+	  prompt=CASE WHEN messages.revoked OR excluded.revoked THEN ''
+	   ELSE COALESCE(NULLIF(excluded.prompt,''),messages.prompt) END,
 	  from_me=excluded.from_me,
 	  status=CASE
 	   WHEN messages.status='played' THEN messages.status
@@ -700,7 +711,8 @@ func (s *Store) UpsertMessage(ctx context.Context, msg model.Message, chatTitle 
 		msg.ReplyTo, msg.Edited, msg.Revoked, msg.MediaMIME, msg.MediaName, msg.MediaPath, msg.MediaThumbnail, msg.MediaSize,
 		msg.LinkURL, msg.LinkTitle, msg.LinkDescription, msg.LinkThumbnail, msg.MediaDuration, packWaveform(msg.AudioWaveform),
 		msg.ContactName, msg.ContactPhone, msg.ContactCount, msg.Latitude, msg.Longitude,
-		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt, msg.ForwardingScore, msg.GIFPlayback, msg.ReplyViewOnce, packMentions(msg.Mentions))
+		msg.DeliveredAt, msg.ReadAt, msg.PlayedAt, msg.ForwardingScore, msg.GIFPlayback, msg.ReplyViewOnce,
+		packMentions(msg.Mentions), packPrompt(msg.Prompt))
 	if err != nil {
 		return err
 	}
@@ -1175,7 +1187,7 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
  m.reply_to,m.edited,m.revoked,m.media_mime,m.media_name,m.media_path,m.media_thumbnail,m.media_size,
  m.link_url,m.link_title,m.link_description,m.link_thumbnail,m.media_duration,m.audio_waveform,
  m.contact_name,m.contact_phone,m.contact_count,m.latitude,m.longitude,m.delivered_at,m.read_at,m.played_at,m.starred,m.forwarding_score,
- COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0),m.gif_playback,m.reply_view_once,m.mentions
+ COALESCE(q.body,''),COALESCE(q.kind,''),COALESCE(q.sender_name,''),COALESCE(q.from_me,0),m.gif_playback,m.reply_view_once,m.mentions,m.prompt
  FROM messages m LEFT JOIN messages q ON q.chat_jid=m.chat_jid AND q.id=m.reply_to
  WHERE m.chat_jid=? AND (m.timestamp,m.id)<(?,?) AND m.kind NOT IN ('unknown','')
  AND NOT (m.kind='system' AND m.body='' AND m.revoked=0) ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`, chatJID, before, beforeID, limit+1)
@@ -1186,18 +1198,19 @@ func (s *Store) ListMessagesBefore(ctx context.Context, chatJID string, before i
 	items := make([]model.Message, 0, limit+1)
 	for rows.Next() {
 		var m model.Message
-		var quotedBody, quotedKind, mentions string
+		var quotedBody, quotedKind, mentions, prompt string
 		var waveform []byte
 		if err := rows.Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe,
 			&m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize,
 			&m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 			&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
 			&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore,
-			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe, &m.GIFPlayback, &m.ReplyViewOnce, &mentions); err != nil {
+			&quotedBody, &quotedKind, &m.ReplySender, &m.ReplyFromMe, &m.GIFPlayback, &m.ReplyViewOnce, &mentions, &prompt); err != nil {
 			return model.MessagePage{}, err
 		}
 		m.AudioWaveform = unpackWaveform(waveform)
 		m.Mentions = unpackMentions(mentions)
+		m.Prompt = unpackPrompt(prompt)
 		if m.ReplyTo != "" {
 			m.ReplyPreview = preview(model.Message{Kind: quotedKind, Body: quotedBody})
 			m.ReplyViewOnce = m.ReplyViewOnce || quotedKind == "view_once"
@@ -1293,16 +1306,17 @@ func (s *Store) GetMessage(ctx context.Context, chatJID, messageID string) (mode
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	var m model.Message
 	var waveform []byte
-	var mentions string
+	var mentions, prompt string
 	err := s.db.QueryRowContext(ctx, `SELECT id,chat_jid,sender_jid,sender_name,timestamp,kind,body,from_me,status,
  reply_to,edited,revoked,media_mime,media_name,media_path,media_thumbnail,media_size,
  link_url,link_title,link_description,link_thumbnail,media_duration,audio_waveform,
- contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,starred,forwarding_score,gif_playback,reply_view_once,mentions
+ contact_name,contact_phone,contact_count,latitude,longitude,delivered_at,read_at,played_at,starred,forwarding_score,gif_playback,reply_view_once,mentions,prompt
  FROM messages WHERE chat_jid=? AND id=?`, chatJID, messageID).Scan(&m.ID, &m.ChatJID, &m.SenderJID, &m.SenderName, &m.Timestamp, &m.Kind, &m.Body, &m.FromMe, &m.Status, &m.ReplyTo, &m.Edited, &m.Revoked, &m.MediaMIME, &m.MediaName, &m.MediaPath, &m.MediaThumbnail, &m.MediaSize, &m.LinkURL, &m.LinkTitle, &m.LinkDescription, &m.LinkThumbnail, &m.MediaDuration, &waveform,
 		&m.ContactName, &m.ContactPhone, &m.ContactCount, &m.Latitude, &m.Longitude,
-		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore, &m.GIFPlayback, &m.ReplyViewOnce, &mentions)
+		&m.DeliveredAt, &m.ReadAt, &m.PlayedAt, &m.Starred, &m.ForwardingScore, &m.GIFPlayback, &m.ReplyViewOnce, &mentions, &prompt)
 	m.AudioWaveform = unpackWaveform(waveform)
 	m.Mentions = unpackMentions(mentions)
+	m.Prompt = unpackPrompt(prompt)
 	if err == nil {
 		m = s.ResolveMentionNames(ctx, m)
 	}

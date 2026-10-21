@@ -109,12 +109,17 @@ func (c *Client) SendButtonPrompt(ctx context.Context, req gateway.ButtonPromptR
 	if err != nil {
 		return model.Message{}, err
 	}
-	// The stored message keeps the question only. This client does not draw the
-	// buttons yet, so showing the prompt text is honest about what was sent
-	// rather than inventing a row of controls nobody here can press.
+	// The stored message carries its choices, so a question this account asked
+	// shows the same answers here that the reader is looking at. They are not
+	// pressable on this side: the asker is not the one being asked.
+	offered := make([]model.MessageChoice, 0, len(prompt.Buttons))
+	for _, button := range prompt.Buttons {
+		offered = append(offered, model.MessageChoice{ID: button.ID, Title: button.Title})
+	}
 	msg := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(),
 		Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: prompt.Text, FromMe: true,
-		Status: "sent", ReplyTo: req.ReplyTo}
+		Status: "sent", ReplyTo: req.ReplyTo,
+		Prompt: &model.MessagePrompt{Footer: prompt.Footer, Choices: offered}}
 	// Remembering what was offered is what lets an answer be checked against
 	// the question rather than merely against this account having sent it.
 	_ = c.store.RecordPromptChoices(ctx, msg.ChatJID, msg.ID, buttonChoiceIDs(prompt))
@@ -254,9 +259,16 @@ func (c *Client) SendListPrompt(ctx context.Context, req gateway.ListPromptReque
 	if err != nil {
 		return model.Message{}, err
 	}
+	offered := make([]model.MessageChoice, 0, model.MaxPromptRows)
+	for _, section := range prompt.Sections {
+		for _, row := range section.Rows {
+			offered = append(offered, model.MessageChoice{ID: row.ID, Title: row.Title, Description: row.Description})
+		}
+	}
 	msg := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(),
 		Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: prompt.Text, FromMe: true,
-		Status: "sent", ReplyTo: req.ReplyTo}
+		Status: "sent", ReplyTo: req.ReplyTo,
+		Prompt: &model.MessagePrompt{Footer: prompt.Footer, Label: prompt.ButtonText, Choices: offered}}
 	_ = c.store.RecordPromptChoices(ctx, msg.ChatJID, msg.ID, listChoiceIDs(prompt))
 	return c.withReplyPreview(ctx, msg), nil
 }

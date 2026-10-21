@@ -1613,6 +1613,23 @@ func messageFromEvent(evt *waEvents.Message) model.Message {
 			m.ReplyTo = msg.GetProtocolMessage().GetKey().GetID()
 		}
 	}
+	// A question with tappable answers, in any of the four shapes WhatsApp has
+	// for one. It is read after the switch rather than inside it so that the
+	// kinds above keep whatever they already decided: an interactive message
+	// can carry a picture or a document as well as the question, and the
+	// reader must get both rather than one of them. Only a message the switch
+	// could make nothing of becomes text here, which is what a question with
+	// buttons under it is.
+	if text, prompt, ok := promptFromMessage(msg); ok {
+		m.Prompt = prompt
+		if m.Kind == "" {
+			m.Kind = "text"
+			m.Body = text
+		} else if m.Body == "" {
+			m.Body = text
+		}
+		applyContext(&m, promptContext(msg))
+	}
 	if m.Kind == "" {
 		// Key distribution and other transport-only envelopes aren't visible
 		// chat messages. Keeping them created blank bubbles and generic previews.

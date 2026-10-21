@@ -35,6 +35,19 @@ use them; a rebuild does not replace an already running process.
   a still image, so a wall of animated stickers looked like a wall of static
   ones. Only stickers that actually animate get a decoder; the rest keep their
   picture.
+- **A question with tappable answers now appears in the conversation, and you
+  can press one.** Until now it did not appear at all: WhatsApp has four shapes
+  for such a question, and this client read the four shapes an *answer* arrives
+  in and none of the four a *question* arrives in, so a received prompt had no
+  kind and was thrown away before it was stored. A prompt visible on the phone
+  was therefore missing from WhatsAppGo entirely, rather than showing without
+  its buttons. All four shapes are now read, the choices are drawn under the
+  message the way WhatsApp draws them, and pressing one sends the answer. A
+  question this account asked is shown with its answers too, greyed: the asker
+  is not the one being asked. The choice pressed is checked against the
+  question as it was stored before anything goes out, so a caller cannot answer
+  with something the question never offered. A template's link and dial buttons
+  are left out, since they answer nothing.
 - **Animated stickers on Windows:** the Windows build now carries the libwebp
   library that decodes them, so an animated sticker moves there as it does
   elsewhere. Every published Windows ZIP and installer was built without it and

@@ -162,6 +162,31 @@ type Message struct {
 	LinkTitle       string `json:"link_title,omitempty"`
 	LinkDescription string `json:"link_description,omitempty"`
 	LinkThumbnail   string `json:"link_thumbnail,omitempty"`
+
+	// A question with tappable answers, when the message carries one. It is a
+	// pointer because the overwhelming majority of messages are not questions
+	// and every one of them would otherwise carry an empty object.
+	Prompt *MessagePrompt `json:"prompt,omitempty"`
+}
+
+// MessagePrompt is a question somebody asked with tappable answers, as it
+// arrived. WhatsApp has four shapes for this and they are flattened to one
+// here, because the only thing a reader needs to know is what was asked and
+// what may be pressed.
+type MessagePrompt struct {
+	// Footer is the small print under the question.
+	Footer string `json:"footer,omitempty"`
+	// Label names the button that opens a list of choices rather than showing
+	// them. Empty when the choices are buttons shown under the question.
+	Label   string          `json:"label,omitempty"`
+	Choices []MessageChoice `json:"choices"`
+}
+
+// MessageChoice is one answer a question offered.
+type MessageChoice struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
 }
 
 // LinkPreview is resolved only while composing a message. Thumbnail uses the

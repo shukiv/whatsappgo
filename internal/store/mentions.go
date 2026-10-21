@@ -71,3 +71,26 @@ func (s *Store) ResolveMentionNames(ctx context.Context, m model.Message) model.
 	}
 	return m
 }
+
+// A received question's choices travel with the message rather than in a table
+// of their own. A side table hanging off the chat is what left the earlier
+// wording of edited messages behind when a conversation was cleared; a column
+// cannot outlive its row.
+func packPrompt(prompt *model.MessagePrompt) string {
+	if prompt == nil || len(prompt.Choices) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(prompt)
+	return string(data)
+}
+
+func unpackPrompt(data string) *model.MessagePrompt {
+	if data == "" {
+		return nil
+	}
+	var prompt model.MessagePrompt
+	if err := json.Unmarshal([]byte(data), &prompt); err != nil || len(prompt.Choices) == 0 {
+		return nil
+	}
+	return &prompt
+}

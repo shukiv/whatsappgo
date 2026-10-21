@@ -71,6 +71,7 @@ They use the existing owner-only local transport and active profile.
 | `status.audience_contacts` | none | Audience `type` and resolved `people`; read-only. |
 | `message.send_buttons` | `chat_jid`, `text`, `footer`, `buttons`, `reply_to` | Sent message. 1–3 buttons, each with a distinct `id` (≤256 characters) and a `title` (≤20). Text ≤1024, footer ≤60. A tap arrives as `message.tapped`. Read the warning below before using it. |
 | `message.send_list` | `chat_jid`, `text`, `footer`, `button_text`, `sections`, `reply_to` | Sent message. One button (`button_text` ≤20) opens up to 10 choices in all, across up to 10 sections. Each choice needs a distinct `id` (≤256) and `title` (≤24), and may carry a `description` (≤72); a section heading is ≤24. Text ≤4096. A tap arrives as `message.tapped`. Same warning as above. |
+| `message.answer_prompt` | `chat_jid`, `message_id`, `choice_id` | Sent message. Presses one of the answers a **received** question offered. The choice is checked against that question as it was stored: a `choice_id` the question did not carry is refused, and so is a question this account asked itself. Arrives at the asker as a reply carrying the chosen title, which is what a tap from a phone looks like. |
 
 `message.tapped` identifies the `chat_jid`, the `message_id` of the prompt that was
 tapped, the `selected_id` of the chosen button, its `selected_title`, the
@@ -117,25 +118,36 @@ identical answers apart.
 cannot overwrite a newer vote. Revoked/view-once messages never expose these
 details. API clients must not automatically retry sends after an uncertain reply.
 
-## Tappable prompts are accepted, not proven to draw
+## Tappable prompts draw on Android, and this client now shows them too
 
 `message.send_buttons` sends the only shape a linked device can send at all: an
 interactive message carrying a native flow, with the stanza node WhatsApp's
 servers require beside it. The legacy `ButtonsMessage` and `ListMessage` shapes
 are refused outright for a linked device, so they are not used here.
 
-Half of the question is now answered. On 2026-10-21 a prompt sent this way was
-**accepted** by WhatsApp from an ordinary linked account: the call returned a
-message id and a `sent` status, with no 405 and no 479, which means the stanza
-node above is not rejected. That result is reported from the session that ran
-the send, not observed in this repository.
+This is now established rather than hoped for. On 2026-10-21 a prompt sent this
+way was accepted by WhatsApp from an ordinary linked account - a message id and
+a `sent` status, no 405 and no 479 - and the account holder photographed the
+result on an Android phone: the question, its footer, and two pressable rows
+below it. A press arrived back as `message.tapped`. Both halves are therefore
+observed, the second one first-hand.
 
-What is still **not** established is whether the message draws buttons on the
-reader's phone. An accepted send and a visible row of buttons are different
-things, and this is exactly the second outcome: the server took the message, and
-the reader may still be looking at one with no buttons. Reports from other
-projects through October 2026 say quick-reply buttons sent this way render on
-Android, iOS and Web, but those are other people's reports, several from forks.
+Whether it draws on iOS and on WhatsApp Web is still **not** established here.
+Reports from other projects through October 2026 say it renders on all three,
+but only Android has been seen from this project.
+
+Receiving one is a separate matter, and was broken until 2026-10-21. WhatsApp
+has four shapes for a question with tappable answers, and this client mapped the
+four shapes an *answer* arrives in and none of the four a *question* arrives in,
+so a received prompt had no kind and was dropped before it was stored: it was
+absent from the conversation rather than merely undrawn. All four are now read -
+the interactive native flow for both quick replies and lists, and the legacy
+buttons, list and hydrated-template shapes - and the choices arrive on the
+message as `prompt`, with its `footer`, its `label` when the choices sit behind
+a button, and a `choices` array of `id`, `title` and `description`. A link or
+dial button on a template is deliberately left out: it answers nothing, and
+drawing it as a choice would offer to send something that is not an answer.
+Press one with `message.answer_prompt`.
 
 This is also not an official interface. The stanza declares the sender a third
 party, which is accurate and deliberate, and sending unofficial message shapes
@@ -146,7 +158,7 @@ through `poll.updated`.
 ## Where a message may be sent
 
 `message.send`, `message.send_media`, `message.send_contact`, `message.send_buttons`,
-`message.send_list`, `message.forward` and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
+`message.send_list`, `message.answer_prompt`, `message.forward` and `sticker.send` write to a person (`@s.whatsapp.net` or `@lid`) or a group
 (`@g.us`). Every other address is refused.
 
 This matters for a bot that answers what it receives. A status update arrives

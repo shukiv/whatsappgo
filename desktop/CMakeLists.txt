@@ -640,6 +640,8 @@ if(BUILD_TESTING)
     # started running this suite.
     set_tests_properties(desktop-schedule-send desktop-channel-posts desktop-voice-seek
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_test(NAME desktop-prompt-choices COMMAND whatsappgo --prompt-choices-test)
+    set_tests_properties(desktop-prompt-choices PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_test(NAME desktop-sticker-grid COMMAND whatsappgo --sticker-grid-test)
     add_test(NAME desktop-sticker-animation COMMAND whatsappgo --sticker-animation-test)
     set_tests_properties(desktop-sticker-animation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

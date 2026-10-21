@@ -326,6 +326,8 @@ int main(int argc, char *argv[])
     parser.addOption(messageInteractionTestOption);
     QCommandLineOption messageHistoryTestOption(QStringLiteral("message-history-test"), QStringLiteral("Verify every earlier version of a message is offered and listed"));
     parser.addOption(messageHistoryTestOption);
+    QCommandLineOption promptChoicesTestOption(QStringLiteral("prompt-choices-test"), QStringLiteral("Verify a received question draws its answers and reports the one pressed"));
+    parser.addOption(promptChoicesTestOption);
     QCommandLineOption scheduleSendTestOption(QStringLiteral("schedule-send-test"), QStringLiteral("Verify the moment a scheduled message is given"));
     parser.addOption(scheduleSendTestOption);
     QCommandLineOption channelPostsTestOption(QStringLiteral("channel-posts-test"), QStringLiteral("Verify a followed channel opens onto its posts and offers no composer"));
@@ -577,6 +579,7 @@ int main(int argc, char *argv[])
     const bool messageInteractionTest = parser.isSet(messageInteractionTestOption);
     const bool scheduleSendTest = parser.isSet(scheduleSendTestOption);
     const bool messageHistoryTest = parser.isSet(messageHistoryTestOption);
+    const bool promptChoicesTest = parser.isSet(promptChoicesTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
     const bool styleDetectionTest = parser.isSet(styleDetectionTestOption);
     const bool fileUrlTest = parser.isSet(fileUrlTestOption);
@@ -610,7 +613,7 @@ int main(int argc, char *argv[])
     const auto screenshotRemoveAccount = parser.value(removeProfileOption);
     const auto screenshotConversationSearch = parser.value(conversationSearchOption);
     const auto screenshotChat = parser.value(screenshotChatOption);
-    const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || messageHistoryTest || scheduleSendTest || clipboardImageTest
+    const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || messageHistoryTest || promptChoicesTest || scheduleSendTest || clipboardImageTest
         || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest || channelRowTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
@@ -1948,6 +1951,173 @@ QtObject {
                                  .arg(uncovered.isEmpty() ? QStringLiteral("none") : uncovered.join(QLatin1Char(',')));
         return robotoPresent && resolved == QStringLiteral("Roboto") && styles.size() >= 3
                 && uncovered.isEmpty()
+            ? EXIT_SUCCESS
+            : EXIT_FAILURE;
+    }
+    if (promptChoicesTest) {
+        // A question somebody else asked with tappable answers. The phone drew
+        // one of these on 2026-10-21 and this client showed nothing at all,
+        // because the daemon never mapped the shape; now that it does, the
+        // bubble has to draw the answers and say which one was pressed.
+        QQmlComponent component(&engine);
+        component.setData(R"QML(
+            import QtQuick
+            import QtQuick.Controls
+            import org.whatsappgo
+            ApplicationWindow {
+                id: harness
+                width: 900
+                height: 700
+                visible: true
+                property var askedMessage
+                property var ownMessage
+                property var plainMessage
+                property string pressedMessage: ""
+                property string pressedChoice: ""
+                MessageDelegate {
+                    objectName: "askedDelegate"
+                    width: 800
+                    modelData: harness.askedMessage
+                    onPromptAnswered: (messageId, choiceId) => {
+                        harness.pressedMessage = messageId; harness.pressedChoice = choiceId
+                    }
+                }
+                MessageDelegate {
+                    objectName: "ownDelegate"
+                    width: 800
+                    y: 220
+                    modelData: harness.ownMessage
+                    onPromptAnswered: (messageId, choiceId) => {
+                        harness.pressedMessage = "own:" + messageId; harness.pressedChoice = choiceId
+                    }
+                }
+                MessageDelegate {
+                    objectName: "plainDelegate"
+                    width: 800
+                    y: 440
+                    modelData: harness.plainMessage
+                }
+            }
+        )QML", QUrl(QStringLiteral("qrc:/prompt-choices-test.qml")));
+        const QVariantMap prompt{
+            {QStringLiteral("footer"), QStringLiteral("from the agent")},
+            {QStringLiteral("choices"), QVariantList{
+                QVariantMap{{QStringLiteral("id"), QStringLiteral("yes")},
+                            {QStringLiteral("title"), QStringLiteral("Approve")}},
+                QVariantMap{{QStringLiteral("id"), QStringLiteral("no")},
+                            {QStringLiteral("title"), QStringLiteral("Cancel")},
+                            {QStringLiteral("description"), QStringLiteral("nothing happens")}},
+            }},
+        };
+        const QVariantMap asked{
+            {QStringLiteral("id"), QStringLiteral("question-1")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("Approve?")},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch()},
+            {QStringLiteral("prompt"), prompt},
+        };
+        QVariantMap own = asked;
+        own[QStringLiteral("id")] = QStringLiteral("question-2");
+        own[QStringLiteral("from_me")] = true;
+        const QVariantMap plain{
+            {QStringLiteral("id"), QStringLiteral("plain-1")},
+            {QStringLiteral("kind"), QStringLiteral("text")},
+            {QStringLiteral("body"), QStringLiteral("just a message")},
+            {QStringLiteral("from_me"), false},
+            {QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch()},
+        };
+        std::unique_ptr<QObject> harness(component.create());
+        if (!harness) {
+            qWarning().noquote() << component.errorString();
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        harness->setProperty("askedMessage", asked);
+        harness->setProperty("ownMessage", own);
+        harness->setProperty("plainMessage", plain);
+        QCoreApplication::processEvents();
+
+        auto *window = qobject_cast<QQuickWindow *>(harness.get());
+        if (!window)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto collect = [](auto &&self, QQuickItem *parent, const QString &name,
+                                QList<QQuickItem *> &found) -> void {
+            if (parent == nullptr)
+                return;
+            if (parent->objectName() == name)
+                found.append(parent);
+            for (auto *child : parent->childItems())
+                self(self, child, name, found);
+        };
+        const auto within = [&](const QString &delegateName, const QString &name) {
+            QList<QQuickItem *> delegates;
+            collect(collect, window->contentItem(), delegateName, delegates);
+            QList<QQuickItem *> found;
+            for (auto *delegate : delegates)
+                collect(collect, delegate, name, found);
+            return found;
+        };
+
+        const auto titles = within(QStringLiteral("askedDelegate"), QStringLiteral("promptChoiceTitle"));
+        QStringList drawn;
+        for (auto *title : titles)
+            drawn << title->property("text").toString();
+        const auto descriptions = within(QStringLiteral("askedDelegate"), QStringLiteral("promptChoiceDescription"));
+        int shownDescriptions = 0;
+        for (auto *description : descriptions) {
+            if (description->property("visible").toBool())
+                ++shownDescriptions;
+        }
+        const auto footers = within(QStringLiteral("askedDelegate"), QStringLiteral("promptFooter"));
+        const bool footerShown = !footers.isEmpty() && footers.first()->property("visible").toBool()
+            && footers.first()->property("text").toString() == QStringLiteral("from the agent");
+        const auto plainChoices = within(QStringLiteral("plainDelegate"), QStringLiteral("promptChoiceTitle"));
+
+        // A question this account asked is drawn but not pressable: the asker
+        // is not the one being asked, and the daemon refuses it anyway.
+        const auto ownAreas = within(QStringLiteral("ownDelegate"), QStringLiteral("promptChoiceArea"));
+        bool ownPressable = false;
+        for (auto *area : ownAreas)
+            ownPressable = ownPressable || area->property("enabled").toBool();
+
+        // Pressed the way a pointer would, not by calling the handler: a row
+        // that draws but cannot be reached by a click is the failure this is
+        // here to catch.
+        const auto areas = within(QStringLiteral("askedDelegate"), QStringLiteral("promptChoiceArea"));
+        if (areas.size() != 2) {
+            qWarning().noquote() << QStringLiteral("pressable rows = %1, want 2").arg(areas.size());
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        const auto sendMouse = [window](QEvent::Type type, const QPointF &scenePosition,
+                                        Qt::MouseButton button, Qt::MouseButtons buttons) {
+            QMouseEvent event(type, scenePosition, window->mapToGlobal(scenePosition.toPoint()),
+                              button, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &event);
+            QCoreApplication::processEvents();
+        };
+        auto *second = areas.at(1);
+        const QPointF centre = second->mapToScene(QPointF(second->width() / 2.0, second->height() / 2.0));
+        sendMouse(QEvent::MouseButtonPress, centre, Qt::LeftButton, Qt::LeftButton);
+        sendMouse(QEvent::MouseButtonRelease, centre, Qt::LeftButton, Qt::NoButton);
+        QCoreApplication::processEvents();
+        const auto pressedMessage = harness->property("pressedMessage").toString();
+        const auto pressedChoice = harness->property("pressedChoice").toString();
+
+        qInfo().noquote() << QStringLiteral("prompt: drawn=%1 descriptions=%2 footer=%3 plain=%4 ownPressable=%5 pressed=%6/%7")
+                                 .arg(drawn.join(QLatin1Char(','))).arg(shownDescriptions).arg(footerShown)
+                                 .arg(plainChoices.size()).arg(ownPressable).arg(pressedMessage, pressedChoice);
+        return
+            drawn == QStringList{QStringLiteral("Approve"), QStringLiteral("Cancel")}
+            // Only the choice that carries one shows a description.
+            && shownDescriptions == 1
+            && footerShown
+            // An ordinary message grows no controls.
+            && plainChoices.isEmpty()
+            && !ownPressable
+            // The press names the question and the choice, which is what the
+            // daemon needs to check one against the other.
+            && pressedMessage == QStringLiteral("question-1")
+            && pressedChoice == QStringLiteral("no")
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
     }

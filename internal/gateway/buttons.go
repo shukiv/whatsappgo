@@ -29,3 +29,17 @@ type ListPromptRequest struct {
 type ListPromptSender interface {
 	SendListPrompt(context.Context, ListPromptRequest) (model.Message, error)
 }
+
+// PromptAnswerRequest presses one of the answers a received question offered.
+type PromptAnswerRequest struct {
+	ChatJID   string
+	MessageID string
+	ChoiceID  string
+}
+
+// PromptAnswerSender is implemented by a gateway that can answer a question
+// somebody else asked. It is optional for the same reason the prompt senders
+// are: a gateway that cannot do it should still be a gateway.
+type PromptAnswerSender interface {
+	SendPromptAnswer(ctx context.Context, req PromptAnswerRequest) (model.Message, error)
+}
