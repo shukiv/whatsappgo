@@ -81,15 +81,18 @@ repeated answer can be told from a redelivered one.
 an answer is written by whoever sent it, including which message it claims to
 answer and which button it claims was pressed, so anyone able to write into a
 conversation can send something shaped like an answer to a question nobody asked
-them. `verified` is `1` only when the question is a message this account itself
-sent, in that same conversation. An answer that fails the check still arrives,
-marked `0`, because a dropped answer is the failure this event exists to end and
-an answer to a prompt older than this device's history is unproven rather than
-forged. A caller acting on an answer - approving something, say - must require
-`verified=1`, and must still decide for itself whether `sender_jid` is the
-person it asked: in a group, every member can see the question and press the
-button. The button set is not stored, so `selected_id` is not checked against
-the question's own choices. The title travels beside the
+them. `verified` is `1` only when the quoted message is a question this account itself
+asked in that same conversation **and** `selected_id` is one of the choices that
+question offered. The choices are recorded when the prompt is sent, so an
+ordinary message of ours cannot be quoted and answered, and a genuine prompt
+cannot be answered with an identifier it never put on the screen. An answer that
+fails the check still arrives, marked `0`, because a dropped answer is the
+failure this event exists to end and an answer to a prompt older than this
+device's history is unproven rather than forged. A caller acting on an answer -
+approving something, say - must require `verified=1`, and must still decide for
+itself whether `sender_jid` is the person it asked: in a group, every member can
+see the question and press the button. A prompt sent by some other client, or
+before this daemon recorded choices, answers `0` for the same reason. The title travels beside the
 identifier because the identifier comes out of a JSON document whose key
 WhatsApp documents nowhere, while the title is a plain field in every answer
 shape: where `selected_id` is empty, `selected_title` still says which button was

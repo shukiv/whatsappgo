@@ -298,3 +298,30 @@ func TestAListIsSentAsASingleSelectNativeFlow(t *testing.T) {
 		t.Fatalf("first row = %#v", first)
 	}
 }
+
+// An answer comes back naming an identifier, so an identifier is what has to
+// be remembered. Remembering titles instead would accept an answer naming a
+// choice the question never offered.
+func TestAQuestionRemembersItsChoiceIdentifiers(t *testing.T) {
+	buttons, err := model.NewButtonPrompt("Approve?", "", []model.PromptButton{
+		{ID: "yes", Title: "Approve"}, {ID: "no", Title: "Reject"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buttonChoiceIDs(buttons); len(got) != 2 || got[0] != "yes" || got[1] != "no" {
+		t.Fatalf("button choices = %#v", got)
+	}
+	list, err := model.NewListPrompt("Which day?", "", "Choose", []model.PromptSection{
+		{Title: "This week", Rows: []model.PromptRow{{ID: "mon", Title: "Monday"}}},
+		{Title: "Next week", Rows: []model.PromptRow{{ID: "tue", Title: "Tuesday"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Across every section, since an answer names one identifier out of all of
+	// them rather than one per section.
+	if got := listChoiceIDs(list); len(got) != 2 || got[0] != "mon" || got[1] != "tue" {
+		t.Fatalf("list choices = %#v", got)
+	}
+}

@@ -128,6 +128,13 @@ CREATE TRIGGER IF NOT EXISTS revoke_poll_votes AFTER UPDATE OF revoked,kind ON m
  WHEN NEW.revoked=1 OR NEW.kind='view_once' BEGIN
  DELETE FROM poll_votes WHERE chat_jid=NEW.chat_jid AND poll_id=NEW.id;
 END;
+CREATE TABLE IF NOT EXISTS prompt_choices (
+  chat_jid TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  choice_id TEXT NOT NULL,
+  PRIMARY KEY (chat_jid, message_id, choice_id),
+  FOREIGN KEY (chat_jid) REFERENCES chats(jid) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS message_revisions (
   chat_jid TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -1396,6 +1403,7 @@ func (s *Store) DeleteChat(ctx context.Context, chatJID string) error {
 		// keys are enforced. Saying it here keeps the deletion a property of
 		// the statement rather than of the connection's settings.
 		`DELETE FROM message_revisions WHERE chat_jid=?`,
+		`DELETE FROM prompt_choices WHERE chat_jid=?`,
 		`DELETE FROM messages WHERE chat_jid=?`,
 		`DELETE FROM chat_aliases WHERE canonical_jid=? OR alias_jid=?`,
 		`DELETE FROM chats WHERE jid=?`,
@@ -2070,6 +2078,7 @@ func (s *Store) ClearChatMessages(ctx context.Context, chatJID string) error {
 		// conversation left them behind, because this table hangs off the chat
 		// row rather than the message rows, and the chat row is kept here.
 		`DELETE FROM message_revisions WHERE chat_jid=?`,
+		`DELETE FROM prompt_choices WHERE chat_jid=?`,
 		`DELETE FROM messages WHERE chat_jid=?`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, chatJID); err != nil {
@@ -2709,4 +2718,53 @@ func (s *Store) UpdateMediaPath(ctx context.Context, chatJID, messageID, path st
 	chatJID = s.canonicalChatJID(ctx, chatJID)
 	_, err := s.db.ExecContext(ctx, `UPDATE messages SET media_path=? WHERE chat_jid=? AND id=?`, path, chatJID, messageID)
 	return err
+}
+
+// RecordPromptChoices remembers which answers a question offered. An answer
+// can then be checked against the question it claims to answer, rather than
+// only against the fact that this account sent something with that id: without
+// this, any message of ours could be quoted and answered with any identifier.
+func (s *Store) RecordPromptChoices(ctx context.Context, chatJID, messageID string, choiceIDs []string) error {
+	if chatJID == "" || messageID == "" || len(choiceIDs) == 0 {
+		return nil
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, choice := range choiceIDs {
+		if choice == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO prompt_choices (chat_jid,message_id,choice_id) VALUES (?,?,?)`,
+			chatJID, messageID, choice); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// PromptOffersChoice reports whether a question asked in this conversation
+// offered this answer. A question whose choices were never recorded - one sent
+// before they were kept, or by another client - answers false, so an answer to
+// it is treated as unproven rather than as proven.
+func (s *Store) PromptOffersChoice(ctx context.Context, chatJID, messageID, choiceID string) (bool, error) {
+	if chatJID == "" || messageID == "" || choiceID == "" {
+		return false, nil
+	}
+	chatJID = s.canonicalChatJID(ctx, chatJID)
+	var found int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM prompt_choices WHERE chat_jid=? AND message_id=? AND choice_id=?`,
+		chatJID, messageID, choiceID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

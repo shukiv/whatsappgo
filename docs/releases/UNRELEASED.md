@@ -76,11 +76,13 @@ use them; a rebuild does not replace an already running process.
   message carrying a native flow, because the legacy list shape is refused for
   a linked device.
 - **An answer now says whether it can be trusted.** `message.tapped` carries
-  `verified`, which is `1` only when the question is a message this account
-  itself sent in that same conversation. Everything in an answer is written by
-  whoever sent it, including which message it claims to answer, so without this
-  anyone able to write into a conversation could send something shaped like an
-  approval. An answer that fails the check still arrives, marked `0`.
+  `verified`, which is `1` only when the quoted message is a question this
+  account itself asked in that same conversation and the choice is one that
+  question offered. Everything in an answer is written by whoever sent it,
+  including which message it claims to answer and which button it claims was
+  pressed, so without this anyone able to write into a conversation could send
+  something shaped like an approval. An answer that fails the check still
+  arrives, marked `0`.
 - **Clearing a conversation now takes the earlier wording of an edited message
   with it.** Those are kept against the conversation rather than the message
   rows, and clearing keeps the conversation, so until now they survived a clear

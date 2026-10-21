@@ -85,6 +85,10 @@ func TestATapReachesTheSocket(t *testing.T) {
 	}, "", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.RecordPromptChoices(context.Background(),
+		types.NewJID("123", types.DefaultUserServer).String(), "prompt1", []string{"yes", "no"}); err != nil {
+		t.Fatal(err)
+	}
 	c.handleMessage(incoming("tap1", &waE2E.Message{TemplateButtonReplyMessage: &waE2E.TemplateButtonReplyMessage{
 		SelectedID:          proto.String("yes"),
 		SelectedDisplayText: proto.String("Yes, I see them"),
@@ -120,25 +124,60 @@ func TestATapIsOnlyVerifiedAgainstAQuestionThisAccountAsked(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		prompt  *model.Message
+		offered []string
 		replyTo string
 		want    string
 	}{
 		{"answers a question this account asked", &model.Message{
 			ID: "prompt1", ChatJID: chat, SenderJID: chat, Timestamp: 1, Kind: "text",
 			Body: "Approve?", FromMe: true, Status: "sent",
-		}, "prompt1", "1"},
+		}, []string{"yes", "no"}, "prompt1", "1"},
+		// A question this account asked is not a licence to answer it with
+		// anything: the choice has to be one the question put on the screen.
+		{"answers with a choice the question never offered", &model.Message{
+			ID: "prompt1", ChatJID: chat, SenderJID: chat, Timestamp: 1, Kind: "text",
+			Body: "Approve?", FromMe: true, Status: "sent",
+		}, []string{"no", "later"}, "prompt1", "0"},
+		// An ordinary message of ours is not a question. Without this, anything
+		// this account ever sent could be quoted and answered.
+		{"answers an ordinary message of ours", &model.Message{
+			ID: "chat1", ChatJID: chat, SenderJID: chat, Timestamp: 1, Kind: "text",
+			Body: "see you then", FromMe: true, Status: "sent",
+		}, nil, "chat1", "0"},
 		// Someone writing into the conversation can name a message this account
 		// never sent, or one it only received.
 		{"answers a message this account received", &model.Message{
 			ID: "theirs1", ChatJID: chat, SenderJID: chat, Timestamp: 1, Kind: "text",
 			Body: "Approve?", Status: "received",
-		}, "theirs1", "0"},
-		{"answers a message nobody here has", nil, "unknown1", "0"},
-		{"answers nothing at all", nil, "", "0"},
+		}, []string{"yes"}, "theirs1", "0"},
+		{"answers a message nobody here has", nil, nil, "unknown1", "0"},
+		{"answers nothing at all", nil, nil, "", "0"},
 	} {
+		// Each case needs its own store: these share one in-memory database by
+		// name, so without a subtest the choices recorded by one case would
+		// still be there for the next and a tap would verify against them.
+		t.Run(tc.name, func(t *testing.T) {
+			runTapVerification(t, tc.prompt, tc.offered, tc.replyTo, tc.want)
+		})
+	}
+}
+
+func runTapVerification(t *testing.T, prompt *model.Message, offered []string, quoted, want string) {
+	t.Helper()
+	{
+		tc := struct {
+			name    string
+			prompt  *model.Message
+			offered []string
+			replyTo string
+			want    string
+		}{t.Name(), prompt, offered, quoted, want}
 		c, st, seen := receivingClient(t)
 		if tc.prompt != nil {
 			if err := st.UpsertMessage(context.Background(), *tc.prompt, "Alice", false); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.RecordPromptChoices(context.Background(), tc.prompt.ChatJID, tc.prompt.ID, tc.offered); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -170,6 +209,9 @@ func TestATapCannotBorrowAQuestionFromAnotherChat(t *testing.T) {
 		ID: "prompt1", ChatJID: elsewhere, SenderJID: elsewhere, Timestamp: 1, Kind: "text",
 		Body: "Approve?", FromMe: true, Status: "sent",
 	}, "Someone", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordPromptChoices(context.Background(), elsewhere, "prompt1", []string{"yes"}); err != nil {
 		t.Fatal(err)
 	}
 	c.handleMessage(incoming("tap1", &waE2E.Message{

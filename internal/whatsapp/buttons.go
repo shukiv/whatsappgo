@@ -115,6 +115,9 @@ func (c *Client) SendButtonPrompt(ctx context.Context, req gateway.ButtonPromptR
 	msg := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(),
 		Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: prompt.Text, FromMe: true,
 		Status: "sent", ReplyTo: req.ReplyTo}
+	// Remembering what was offered is what lets an answer be checked against
+	// the question rather than merely against this account having sent it.
+	_ = c.store.RecordPromptChoices(ctx, msg.ChatJID, msg.ID, buttonChoiceIDs(prompt))
 	return c.withReplyPreview(ctx, msg), nil
 }
 
@@ -254,5 +257,28 @@ func (c *Client) SendListPrompt(ctx context.Context, req gateway.ListPromptReque
 	msg := model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(),
 		Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: prompt.Text, FromMe: true,
 		Status: "sent", ReplyTo: req.ReplyTo}
+	_ = c.store.RecordPromptChoices(ctx, msg.ChatJID, msg.ID, listChoiceIDs(prompt))
 	return c.withReplyPreview(ctx, msg), nil
+}
+
+// buttonChoiceIDs and listChoiceIDs name the answers a question offered. They
+// collect identifiers rather than titles: the identifier is what an answer
+// comes back with, and a question checked against its own titles would accept
+// an answer naming a choice it never put on the screen.
+func buttonChoiceIDs(prompt model.ButtonPrompt) []string {
+	choices := make([]string, 0, len(prompt.Buttons))
+	for _, button := range prompt.Buttons {
+		choices = append(choices, button.ID)
+	}
+	return choices
+}
+
+func listChoiceIDs(prompt model.ListPrompt) []string {
+	var choices []string
+	for _, section := range prompt.Sections {
+		for _, choice := range section.Rows {
+			choices = append(choices, choice.ID)
+		}
+	}
+	return choices
 }

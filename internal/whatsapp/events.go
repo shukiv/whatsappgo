@@ -842,9 +842,16 @@ func (c *Client) handleMessage(evt *waEvents.Message) {
 		// sender_jid is the person it asked: in a group, every member can see
 		// the question and press the button.
 		verified := "0"
-		if msg.ReplyTo != "" {
-			if prompt, err := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ReplyTo); err == nil && prompt.FromMe {
-				verified = "1"
+		if msg.ReplyTo != "" && answer.ID != "" {
+			prompt, err := c.store.GetMessage(context.Background(), msg.ChatJID, msg.ReplyTo)
+			if err == nil && prompt.FromMe {
+				// Not merely a message this account sent: a question it asked,
+				// answered with one of the choices that question offered.
+				// Otherwise any message of ours could be quoted and answered
+				// with any identifier the sender cared to invent.
+				if offered, err := c.store.PromptOffersChoice(context.Background(), msg.ChatJID, msg.ReplyTo, answer.ID); err == nil && offered {
+					verified = "1"
+				}
 			}
 		}
 		c.emit(gateway.Event{Name: "message.tapped", Data: map[string]string{

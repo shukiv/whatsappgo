@@ -62,3 +62,37 @@ func TestDeletingAChatTakesEarlierWordingsWithIt(t *testing.T) {
 		t.Fatalf("a deleted conversation still holds earlier wordings: %#v", revisions)
 	}
 }
+
+// The choices a question offered hang off the conversation, like the earlier
+// wordings above, so they go the same way when it is cleared or deleted.
+func TestClearingAChatForgetsTheChoicesItsQuestionsOffered(t *testing.T) {
+	st, ctx := chatWithAnEditedMessage(t, t.Name())
+	if err := st.RecordPromptChoices(ctx, "alice@lid", "m1", []string{"yes", "no"}); err != nil {
+		t.Fatal(err)
+	}
+	offered, err := st.PromptOffersChoice(ctx, "alice@lid", "m1", "yes")
+	if err != nil || !offered {
+		t.Fatalf("the choices were not recorded: %v %v", err, offered)
+	}
+	if err := st.ClearChatMessages(ctx, "alice@lid"); err != nil {
+		t.Fatal(err)
+	}
+	offered, err = st.PromptOffersChoice(ctx, "alice@lid", "m1", "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offered {
+		t.Fatal("a cleared conversation still vouches for a question's choices")
+	}
+}
+
+func TestAQuestionNeverRecordedVouchesForNothing(t *testing.T) {
+	st, ctx := chatWithAnEditedMessage(t, t.Name())
+	offered, err := st.PromptOffersChoice(ctx, "alice@lid", "m1", "yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offered {
+		t.Fatal("a question whose choices were never recorded vouched for one")
+	}
+}
