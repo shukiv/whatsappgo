@@ -145,6 +145,11 @@ public:
     // The address the daemon for this account listens on: a socket path on
     // Unix, a named pipe name on Windows. Mirrors config.SocketAddress.
     static QString socketPathForProfile(const QString &profile);
+    // The methods the interface is allowed to ask for through
+    // FeatureRequest.run(). Public so a test can hold it against what the QML
+    // actually asks for: a method missing from it is dropped without a word,
+    // which is how a pressed answer did nothing at all.
+    static bool supportsInteractiveFeature(const QString &method);
 
     bool daemonConnected() const;
     bool loggedIn() const;

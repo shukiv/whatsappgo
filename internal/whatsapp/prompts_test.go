@@ -2,11 +2,14 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/model"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"google.golang.org/protobuf/proto"
 )
@@ -267,5 +270,29 @@ func TestAnAnswerNeedsAQuestionInThatConversation(t *testing.T) {
 		ChatJID: "1@s.whatsapp.net", MessageID: "missing", ChoiceID: "yes"})
 	if err == nil || err.Error() != "that question is not in this conversation" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// Which refusals mean the stanza was wrong, and which mean something else
+// entirely. Falling back on the wrong one would send the answer twice over a
+// hiccup that a retry of the same shape would have survived.
+func TestOnlyARefusedStanzaFallsBackToText(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "no error at all", err: nil, want: false},
+		{name: "479, an invalid stanza", err: fmt.Errorf("%w %d", whatsmeow.ErrServerReturnedError, 479), want: true},
+		{name: "405, a shape this device may not send", err: fmt.Errorf("%w %d", whatsmeow.ErrServerReturnedError, 405), want: true},
+		{name: "503, the service being away", err: fmt.Errorf("%w %d", whatsmeow.ErrServerReturnedError, 503), want: false},
+		{name: "a server error with no code", err: whatsmeow.ErrServerReturnedError, want: false},
+		{name: "something that never reached the server", err: errors.New("dial unix: connection refused"), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stanzaRefused(tc.err); got != tc.want {
+				t.Fatalf("stanzaRefused(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

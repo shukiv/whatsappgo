@@ -35,6 +35,7 @@
 #include <QIcon>
 #include <QLibraryInfo>
 #include <QDataStream>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
@@ -328,6 +329,8 @@ int main(int argc, char *argv[])
     parser.addOption(messageHistoryTestOption);
     QCommandLineOption promptChoicesTestOption(QStringLiteral("prompt-choices-test"), QStringLiteral("Verify a received question draws its answers and reports the one pressed"));
     parser.addOption(promptChoicesTestOption);
+    QCommandLineOption interactiveMethodsTestOption(QStringLiteral("interactive-methods-test"), QStringLiteral("Verify every method the interface asks for is one the client will send"));
+    parser.addOption(interactiveMethodsTestOption);
     QCommandLineOption scheduleSendTestOption(QStringLiteral("schedule-send-test"), QStringLiteral("Verify the moment a scheduled message is given"));
     parser.addOption(scheduleSendTestOption);
     QCommandLineOption channelPostsTestOption(QStringLiteral("channel-posts-test"), QStringLiteral("Verify a followed channel opens onto its posts and offers no composer"));
@@ -580,6 +583,7 @@ int main(int argc, char *argv[])
     const bool scheduleSendTest = parser.isSet(scheduleSendTestOption);
     const bool messageHistoryTest = parser.isSet(messageHistoryTestOption);
     const bool promptChoicesTest = parser.isSet(promptChoicesTestOption);
+    const bool interactiveMethodsTest = parser.isSet(interactiveMethodsTestOption);
     const bool bundledFontTest = parser.isSet(bundledFontTestOption);
     const bool styleDetectionTest = parser.isSet(styleDetectionTestOption);
     const bool fileUrlTest = parser.isSet(fileUrlTestOption);
@@ -2004,6 +2008,50 @@ QtObject {
                 && uncovered.isEmpty()
             ? EXIT_SUCCESS
             : EXIT_FAILURE;
+    }
+    if (interactiveMethodsTest) {
+        // FeatureRequest.run() hands the method to RpcClient, which drops any
+        // method not on its list and says nothing: no request, no error, no
+        // sign at all. message.answer_prompt was missing from that list, so a
+        // question drew its answers, the press reached the client, and
+        // pressing did nothing whatever. Nothing had held the two sides
+        // together, so this does: every method the QML asks for has to be one
+        // the client will actually send.
+        QStringList requested;
+        QDirIterator qml(QStringLiteral(":/qt/qml/org/whatsappgo/qml"), QStringList{QStringLiteral("*.qml")},
+                         QDir::Files, QDirIterator::Subdirectories);
+        static const QRegularExpression asked(QStringLiteral("\\.run\\(\\s*\"([^\"]+)\""));
+        while (qml.hasNext()) {
+            QFile file(qml.next());
+            if (!file.open(QIODevice::ReadOnly))
+                return WHATSAPPGO_TEST_FAILURE();
+            const auto source = QString::fromUtf8(file.readAll());
+            auto matches = asked.globalMatch(source);
+            while (matches.hasNext())
+                requested << matches.next().captured(1);
+        }
+        requested.removeDuplicates();
+        requested.sort();
+        // An empty list would pass this test while proving nothing, which is
+        // the one result it must not report as success.
+        if (requested.size() < 5) {
+            qInfo().noquote() << QStringLiteral("FAIL: only %1 interactive methods found in the QML; the search is broken")
+                                     .arg(requested.size());
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        bool allSendable = true;
+        for (const auto &method : std::as_const(requested)) {
+            if (!RpcClient::supportsInteractiveFeature(method)) {
+                qInfo().noquote() << QStringLiteral("FAIL: the interface asks for %1, which the client drops without a word")
+                                         .arg(method);
+                allSendable = false;
+            }
+        }
+        if (!allSendable)
+            return WHATSAPPGO_TEST_FAILURE();
+        qInfo().noquote() << QStringLiteral("%1 interactive methods, all sendable: %2")
+                                 .arg(requested.size()).arg(requested.join(QStringLiteral(", ")));
+        return EXIT_SUCCESS;
     }
     if (promptChoicesTest) {
         // A question somebody else asked with tappable answers. The phone drew

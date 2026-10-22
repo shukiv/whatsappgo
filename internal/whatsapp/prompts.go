@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/shukiv/whatsappgo/internal/gateway"
 	"github.com/shukiv/whatsappgo/internal/model"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
@@ -262,6 +265,19 @@ func (c *Client) SendPromptAnswer(ctx context.Context, req gateway.PromptAnswerR
 		},
 	}}
 	resp, err := c.wa.SendMessage(ctx, chat, payload)
+	if stanzaRefused(err) {
+		// WhatsApp refused the stanza, not the account: see stanzaRefused. The
+		// answer still has to reach whoever asked, so it goes as the reply a
+		// press produces anyway - the title of the chosen answer, quoting the
+		// question - which is what the other end reads either way. What is
+		// lost is the machine-readable identifier, so a correspondent that
+		// matches on the identifier rather than the text will not see a press.
+		payload = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:        proto.String(chosen.Title),
+			ContextInfo: c.replyContext(ctx, req.ChatJID, req.MessageID),
+		}}
+		resp, err = c.wa.SendMessage(ctx, chat, payload)
+	}
 	if err != nil {
 		return model.Message{}, err
 	}
@@ -272,4 +288,29 @@ func (c *Client) SendPromptAnswer(ctx context.Context, req gateway.PromptAnswerR
 		Timestamp: resp.Timestamp.UnixMilli(), Kind: "text", Body: chosen.Title, FromMe: true,
 		Status: "sent", ReplyTo: req.MessageID}
 	return c.withReplyPreview(ctx, msg), nil
+}
+
+// stanzaRefused reports whether WhatsApp turned the message away because of
+// the shape of the stanza rather than the account, the recipient or the
+// network.
+//
+// The message itself is end-to-end encrypted, so the server never sees what is
+// in it: all it can judge is the plaintext stanza around it. For an
+// InteractiveResponseMessage the library writes <biz><interactive_response/></biz>
+// with no attributes at all, and that is what comes back refused - 479 is
+// "Invalid stanza sent (smax-invalid)" in WhatsApp's own numbering, which the
+// library records in a comment beside its stanza handlers. The attributes are
+// not reachable from outside the library, and an additional node would add a
+// second <biz> rather than fix the first, so a message refused this way cannot
+// be made acceptable by changing what this project puts in it.
+//
+// 405 is the other refusal of the same kind, which is what a shape a linked
+// device may not send comes back as.
+func stanzaRefused(err error) bool {
+	if err == nil || !errors.Is(err, whatsmeow.ErrServerReturnedError) {
+		return false
+	}
+	fields := strings.Fields(err.Error())
+	code, convErr := strconv.Atoi(fields[len(fields)-1])
+	return convErr == nil && (code == 479 || code == 405)
 }

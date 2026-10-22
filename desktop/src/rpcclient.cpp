@@ -1972,21 +1972,32 @@ void RpcClient::requestGroupInviteLink(const QString &jid, bool reset)
     runGroupAction(jid, QStringLiteral("group.invite_link"), QStringLiteral("invite"), {{QStringLiteral("reset"), reset}});
 }
 
-void RpcClient::requestInteractiveFeature(const QString &token, const QString &method, const QVariantMap &params)
+bool RpcClient::supportsInteractiveFeature(const QString &method)
 {
     static const QSet<QString> allowed = {
         QStringLiteral("poll.info"), QStringLiteral("poll.create"), QStringLiteral("poll.vote"), QStringLiteral("event.info"), QStringLiteral("group.invite_preview"),
         QStringLiteral("group.join_previewed"), QStringLiteral("group.invite_qr"), QStringLiteral("community.info"), QStringLiteral("community.description"),
-        QStringLiteral("community.link"), QStringLiteral("status.audience_contacts")
+        QStringLiteral("community.link"), QStringLiteral("status.audience_contacts"),
+        QStringLiteral("message.answer_prompt")
     };
-    if (token.isEmpty() || token.size() > 128 || !allowed.contains(method)) return;
+    return allowed.contains(method);
+}
+
+void RpcClient::requestInteractiveFeature(const QString &token, const QString &method, const QVariantMap &params)
+{
+    if (token.isEmpty() || token.size() > 128 || !supportsInteractiveFeature(method)) return;
     if (!daemonConnected()) {
         emit interactiveFeatureFinished(token, {}, tr("Connect to the local service and try again."));
         return;
     }
     const auto session = m_attachmentSession;
+    // Answering a question sends a message to whoever asked, so it is held to
+    // the same one-at-a-time rule as the others that change something: the key
+    // is the question, not the answer, because pressing a second answer while
+    // the first is still going is the same double send.
     const bool mutates = method == QStringLiteral("poll.create") || method == QStringLiteral("poll.vote") || method == QStringLiteral("group.join_previewed")
-        || method == QStringLiteral("community.description") || method == QStringLiteral("community.link");
+        || method == QStringLiteral("community.description") || method == QStringLiteral("community.link")
+        || method == QStringLiteral("message.answer_prompt");
     const QString mutationKey = mutates ? QString::number(session) + QLatin1Char('|') + method
         + QLatin1Char('|') + params.value(QStringLiteral("chat_jid")).toString() + QLatin1Char('|') + params.value(QStringLiteral("message_id")).toString() : QString();
     if (mutates && m_interactiveMutations.contains(mutationKey)) {

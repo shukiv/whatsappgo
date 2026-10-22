@@ -6,6 +6,27 @@ use them; a rebuild does not replace an already running process.
 
 ## Fixed
 
+- **A pressed answer that WhatsApp refuses is sent as a reply instead.** The
+  press reached WhatsApp and came back `server returned error 479`, which is
+  "Invalid stanza sent" in WhatsApp's own numbering. The message is encrypted,
+  so the server is not judging what is in it: for a native-flow response the
+  library writes `<biz><interactive_response/></biz>` with no attributes, and
+  that is what is refused. Those attributes cannot be reached from outside the
+  library, and an extra node would add a second `<biz>` rather than mend the
+  first. So a refused press now goes out as the reply it produces anyway — the
+  chosen answer's text, quoting the question — which is what the other end
+  reads either way. What is lost is the identifier behind the answer, so a
+  correspondent that matches on the identifier rather than the words will not
+  see it as a press.
+
+- **Pressing an answer now sends it.** The question drew its answers, the press
+  reached the interface, and nothing happened at all: the client keeps a list
+  of the methods the interface may ask it for, `message.answer_prompt` was not
+  on it, and a method that is not on it is dropped without a request, an error
+  or a word. A new test holds the two sides together — it reads every method
+  the QML asks for out of the shipped interface and fails if the client would
+  drop any of them.
+
 - **The AppImage carries the daemon it was built with.** It shipped only the
   interface, and the interface looks for `whatsappd` beside itself and then on
   `PATH`, so an image installed on a machine that already had a `whatsappd`
