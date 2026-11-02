@@ -4724,10 +4724,14 @@ void RpcClient::fetchStatusAvatar(const QString &jid)
     if (jid.isEmpty() || m_requestedStatusAvatars.contains(jid))
         return;
     m_requestedStatusAvatars.insert(jid);
+    // Nobody asked for this picture: the page asked on their behalf while
+    // drawing a row. One that cannot be fetched leaves a row with initials in
+    // it, which is not worth a red line across the window.
     sendRequest(QStringLiteral("chat.avatar"), {{QStringLiteral("chat_jid"), jid}},
                 [this](const QJsonValue &, const QJsonObject &) {
                     refreshStatuses();
-                });
+                },
+                OnFailure::StayQuiet);
 }
 
 void RpcClient::ensureStatusMedia(const QString &messageId)
