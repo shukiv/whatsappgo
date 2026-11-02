@@ -945,18 +945,31 @@ func (c *Client) RefreshAvatar(ctx context.Context, jidString string) (string, e
 	return c.fetchAvatar(ctx, jidString, true)
 }
 
+// avatarSubject names whose picture is being asked for. A picture belongs to a
+// person, not to one of their phones: asking for 114916346343611:17@lid is
+// answered with "400: bad-request", which the window then drew in red across
+// the conversation. Status senders arrive with the device still on them, so it
+// is dropped here rather than at each of the places that ask.
+func avatarSubject(jidString string) (types.JID, error) {
+	jid, err := types.ParseJID(jidString)
+	if err != nil {
+		return types.JID{}, err
+	}
+	return jid.ToNonAD(), nil
+}
+
 func (c *Client) fetchAvatar(ctx context.Context, jidString string, refresh bool) (string, error) {
+	jid, err := avatarSubject(jidString)
+	if err != nil {
+		return "", err
+	}
 	dir := filepath.Join(c.mediaDir, "avatars")
-	path := filepath.Join(dir, safeName(jidString)+".jpg")
+	path := filepath.Join(dir, safeName(jid.String())+".jpg")
 	if info, err := os.Stat(path); !refresh && err == nil && info.Size() > 0 {
 		if rounded, roundErr := roundedAvatar(path); roundErr == nil {
 			return rounded, nil
 		}
 		return path, nil
-	}
-	jid, err := types.ParseJID(jidString)
-	if err != nil {
-		return "", err
 	}
 	var existingID string
 	fullIDPath := path + ".full-id"
