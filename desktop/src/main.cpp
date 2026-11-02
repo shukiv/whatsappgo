@@ -5291,6 +5291,22 @@ QtObject {
         if (!composer->property("activeFocus").toBool())
             return WHATSAPPGO_TEST_FAILURE();
 
+        // Clicking a row in the list opens a conversation to write in, so the
+        // box takes the cursor on its own. It used to need a second click in
+        // the box before a letter could be typed.
+        if (auto *composerItem = qobject_cast<QQuickItem *>(composer))
+            composerItem->setFocus(false);
+        QCoreApplication::processEvents();
+        if (composer->property("activeFocus").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+        backend.openChat(QStringLiteral("alice@lid"), QStringLiteral("Alice"));
+        // The cursor is handed over a turn of the event loop later, once the
+        // bindings that reveal the box have run.
+        for (int pass = 0; pass < 10 && !composer->property("activeFocus").toBool(); ++pass)
+            QCoreApplication::processEvents();
+        if (!composer->property("activeFocus").toBool())
+            return WHATSAPPGO_TEST_FAILURE();
+
         // A metadata refresh emits selectedChatChanged even without moving to
         // another chat. It must not throw away an in-progress bulk selection.
         backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));

@@ -3474,6 +3474,21 @@ ApplicationWindow {
         }
     }
 
+    // A conversation opened is a conversation about to be written in, so the
+    // cursor goes to the box without a second click, the way WhatsApp Web does
+    // it. A channel has no box to put it in. One turn later, because the box is
+    // revealed by bindings that have not run when this arrives, and a hidden
+    // box cannot hold the cursor.
+    Connections {
+        target: backend
+        function onChatOpened(chatJid) {
+            Qt.callLater(function() {
+                if (String(backend.selectedChat.jid || "") === chatJid && !window.selectedIsChannel)
+                    window.focusComposer()
+            })
+        }
+    }
+
     // Videos and voice notes play inside the window. Handing them to the
     // desktop opened a web browser on systems with no registered player.
     //
