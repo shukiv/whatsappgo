@@ -705,6 +705,74 @@ func TestVCardParsing(t *testing.T) {
 	}
 }
 
+// The card above is the one this program writes. A card written by WhatsApp on
+// a phone groups its properties, and a reader that matched the first letters
+// of the line skipped those: the number went missing, so the shared contact
+// arrived as a name with nothing under it and no button to answer it.
+func TestVCardParsingReadsTheFormsPhonesSend(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		card  string
+		phone string
+		who   string
+	}{
+		{
+			name: "iOS and Android group their properties",
+			card: "BEGIN:VCARD\r\nVERSION:3.0\r\nN:;Andres Milio La S;;;\r\nFN:Andres Milio La S\r\n" +
+				"item1.TEL;waid=573000000000:+57 300 0000000\r\nitem1.X-ABLabel:Mobile\r\nEND:VCARD",
+			phone: "+57 300 0000000",
+			who:   "Andres Milio La S",
+		},
+		{
+			name:  "a grouped name is read too",
+			card:  "BEGIN:VCARD\r\nitem1.FN:Grouped Name\r\nitem1.TEL:+57 300 0000001\r\nEND:VCARD",
+			phone: "+57 300 0000001",
+			who:   "Grouped Name",
+		},
+		{
+			name:  "a lowercase property is the same property",
+			card:  "BEGIN:VCARD\r\nfn:Lower Case\r\ntel;type=CELL:+57 300 0000002\r\nEND:VCARD",
+			phone: "+57 300 0000002",
+			who:   "Lower Case",
+		},
+		{
+			name:  "a number given as a URI is still a number",
+			card:  "BEGIN:VCARD\r\nFN:Uri Number\r\nTEL;VALUE=uri:tel:+573000000003\r\nEND:VCARD",
+			phone: "+573000000003",
+			who:   "Uri Number",
+		},
+		{
+			// Folding removes the line break and the single space that marks
+			// the continuation, so the two halves join with nothing between.
+			name:  "a folded line is one line",
+			card:  "BEGIN:VCARD\r\nFN:Folded Name\r\nitem1.TEL;waid=573000000004:+573000\r\n 000004\r\nEND:VCARD",
+			phone: "+573000000004",
+			who:   "Folded Name",
+		},
+		{
+			name:  "a quoted parameter may hold a colon",
+			card:  "BEGIN:VCARD\r\nFN:Quoted Param\r\nTEL;LABEL=\"home:work\":+57 300 0000005\r\nEND:VCARD",
+			phone: "+57 300 0000005",
+			who:   "Quoted Param",
+		},
+		{
+			name:  "a property that merely starts with the same letters is not it",
+			card:  "BEGIN:VCARD\r\nFN:Telex Only\r\nTELEX:12345\r\nEND:VCARD",
+			phone: "",
+			who:   "Telex Only",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := phoneFromVCard(testCase.card); got != testCase.phone {
+				t.Fatalf("phone = %q, wanted %q", got, testCase.phone)
+			}
+			if got := nameFromVCard(testCase.card); got != testCase.who {
+				t.Fatalf("name = %q, wanted %q", got, testCase.who)
+			}
+		})
+	}
+}
+
 func TestMessageFromEventReadsSharedContact(t *testing.T) {
 	evt := &waEvents.Message{
 		Info: types.MessageInfo{MessageSource: types.MessageSource{Chat: types.NewJID("1", types.DefaultUserServer)}, ID: "c1", Timestamp: time.Unix(1, 0)},
