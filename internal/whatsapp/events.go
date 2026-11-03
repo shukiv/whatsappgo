@@ -1691,35 +1691,60 @@ func setMessageFields(msg *waE2E.Message) []string {
 // phoneFromVCard returns the first telephone number in a shared contact card.
 // A vCard line looks like "TEL;type=CELL;waid=15551234567:+1 555 123 4567", so
 // the number is whatever follows the last colon.
-func phoneFromVCard(card string) string {
-	for _, line := range strings.Split(card, "\n") {
+// vCardValue reads one property out of a contact card. A line is
+// [group "."] name *(";" parameter) ":" value, and WhatsApp's own phone
+// clients write the grouped form - item1.TEL;waid=573000000000:+57 300 0000000
+// - which a reader matching the first letters of the line skips. A shared
+// contact then arrived with no number: nothing to show under the name, and
+// nothing for the Message button to dial, so the card sat there dead.
+//
+// A long line may be folded onto the next one with a leading space or tab, and
+// a parameter may hold a quoted string with a colon in it, so the value starts
+// at the first colon outside quotes rather than at the first or last one.
+func vCardValue(card, property string) string {
+	unfolded := strings.NewReplacer("\r\n ", "", "\r\n\t", "", "\n ", "", "\n\t", "").Replace(card)
+	for _, line := range strings.Split(unfolded, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		if !strings.HasPrefix(strings.ToUpper(line), "TEL") {
+		colon, quoted := -1, false
+		for i, char := range line {
+			if char == '"' {
+				quoted = !quoted
+			} else if char == ':' && !quoted {
+				colon = i
+				break
+			}
+		}
+		if colon < 0 || colon+1 >= len(line) {
 			continue
 		}
-		if colon := strings.LastIndex(line, ":"); colon >= 0 && colon+1 < len(line) {
-			if number := strings.TrimSpace(line[colon+1:]); number != "" {
-				return number
-			}
+		name := line[:colon]
+		if semicolon := strings.IndexByte(name, ';'); semicolon >= 0 {
+			name = name[:semicolon]
+		}
+		// Only a dot before the parameters is a group: a parameter's value may
+		// hold one of its own.
+		if dot := strings.IndexByte(name, '.'); dot >= 0 {
+			name = name[dot+1:]
+		}
+		if !strings.EqualFold(name, property) {
+			continue
+		}
+		// A card may give the number as a tel: URI rather than bare digits.
+		value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line[colon+1:]), "tel:"))
+		if value != "" {
+			return value
 		}
 	}
 	return ""
 }
 
+func phoneFromVCard(card string) string {
+	return vCardValue(card, "TEL")
+}
+
 // nameFromVCard reads the formatted name a contact card carries.
 func nameFromVCard(card string) string {
-	for _, line := range strings.Split(card, "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		if !strings.HasPrefix(strings.ToUpper(line), "FN") {
-			continue
-		}
-		if colon := strings.Index(line, ":"); colon >= 0 && colon+1 < len(line) {
-			if name := strings.TrimSpace(line[colon+1:]); name != "" {
-				return name
-			}
-		}
-	}
-	return ""
+	return vCardValue(card, "FN")
 }
 
 func firstNonNilPoll(msg *waE2E.Message) *waE2E.PollCreationMessage {
