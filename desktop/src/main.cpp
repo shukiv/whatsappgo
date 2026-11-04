@@ -3862,6 +3862,25 @@ QtObject {
                 QStringLiteral("shared contact has no card"));
         require(sharedCardAction != nullptr && sharedCardAction->isVisible(),
                 QStringLiteral("shared contact offers no way to message them"));
+        // WhatsApp Web puts both actions under a rule across the card, each
+        // taking half of it. A card that only offers one of them, or one whose
+        // actions are a different size from each other, is not that card.
+        auto *sharedCardSave = qobject_cast<QQuickItem *>(contactDelegate->findChild<QObject *>(QStringLiteral("contactSaveAction")));
+        require(sharedCardSave != nullptr && sharedCardSave->isVisible(),
+                QStringLiteral("shared contact offers no way to keep them"));
+        require(sharedCardAction->isEnabled() && sharedCardSave->isEnabled(),
+                QStringLiteral("shared contact with a number refuses both of its actions"));
+        require(qAbs(sharedCardAction->width() - sharedCardSave->width()) < 1.0,
+                QStringLiteral("the two contact actions are not the same width"));
+        // Both sit in a row of their own, so their own y is that row's: the
+        // question is where they are on the card, which is what the reader
+        // sees.
+        const auto messageOnCard = sharedCardAction->mapToItem(sharedCard, QPointF(0, 0));
+        const auto saveOnCard = sharedCardSave->mapToItem(sharedCard, QPointF(0, 0));
+        require(messageOnCard.y() > sharedCard->height() / 2
+                    && qAbs(messageOnCard.y() - saveOnCard.y()) < 1.0
+                    && saveOnCard.x() > messageOnCard.x(),
+                QStringLiteral("the contact actions are not side by side under the name"));
         require(contactFallback == nullptr || !contactFallback->isVisible(),
                 QStringLiteral("shared contact still shows the plain attachment row"));
 
