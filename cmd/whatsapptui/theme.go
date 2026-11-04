@@ -13,6 +13,9 @@ var (
 	styleMuted    = lipgloss.NewStyle().Foreground(colourMuted)
 	styleDanger   = lipgloss.NewStyle().Foreground(colourDanger)
 	styleSelected = lipgloss.NewStyle().Background(colourSelect).Bold(true)
-	stylePane     = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).
+	// The line the desktop client draws across a conversation where the
+	// messages nobody has read yet begin.
+	styleUnread = lipgloss.NewStyle().Foreground(colourBrand)
+	stylePane   = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).
 			BorderForeground(colourSelect)
 )

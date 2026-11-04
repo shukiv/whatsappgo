@@ -44,6 +44,9 @@ func (d *daemon) Close() {
 // call is the one way this program reaches WhatsApp. Every feature is a method
 // on the daemon, so nothing here needs to know what a message is.
 func (d *daemon) call(ctx context.Context, method string, params any, into any) error {
+	if d == nil || d.calls == nil {
+		return errNoDaemon
+	}
 	if params == nil {
 		params = map[string]any{}
 	}
