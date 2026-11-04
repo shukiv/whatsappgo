@@ -27,6 +27,9 @@ type status struct {
 	LoggedIn bool   `json:"logged_in"`
 	State    string `json:"state"`
 	UserName string `json:"user_name"`
+	// Which account this is, which is how a reaction left from here is told
+	// apart from everybody else's.
+	UserJID string `json:"user_jid"`
 }
 
 // Messages the interface reacts to. Every one of them is something that
@@ -78,6 +81,9 @@ type app struct {
 	editing     string
 	typing      bool
 	typingToken int
+
+	// The prompt laid over the conversation, when there is one.
+	chooser *chooser
 
 	loadingOlder   bool
 	waitingHistory bool
@@ -161,6 +167,10 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
 			a.upsert(msg.message)
 		}
+	case revisionsMsg:
+		return a, a.showRevisions([]model.MessageRevision(msg))
+	case starredMsg:
+		return a, a.showStarred([]model.Message(msg))
 	case typingMsg:
 		// Only the last keystroke's wait reports anything.
 		if int(msg) == a.typingToken {
@@ -296,12 +306,19 @@ func (a *app) key(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyCtrlC {
 		return tea.Quit
 	}
+	// A prompt has the keyboard while it is up, so that j and k move through
+	// it rather than through what is behind it.
+	if a.chooser != nil {
+		return a.chooserKey(msg)
+	}
 	if a.composing {
 		return a.composerKey(msg)
 	}
 	switch msg.String() {
 	case "q":
 		return tea.Quit
+	case "?":
+		return a.help()
 	case "tab":
 		if a.focus == paneChats {
 			a.focus = paneConversation
@@ -366,6 +383,20 @@ func (a *app) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return a.replyToSelected()
 	case "e":
 		return a.editSelected()
+	case "x":
+		return a.reactPrompt()
+	case "s":
+		return a.toggleStar()
+	case "p":
+		return a.pinPrompt()
+	case "f":
+		return a.forwardPrompt()
+	case "d":
+		return a.deletePrompt()
+	case "v":
+		return a.revisions()
+	case "S":
+		return a.starred()
 	case "ctrl+r":
 		return a.refreshOpen()
 	}
@@ -442,6 +473,9 @@ func (a *app) chatList(width int) string {
 // message box below. The newest message sits at the bottom, as it does in the
 // desktop client, and the window holds whichever message the keyboard is on.
 func (a *app) conversation(width, height int) string {
+	if a.chooser != nil {
+		return a.chooserLines(width, height)
+	}
 	lines, from, to := a.conversationLines(width)
 	box := a.composerLines(width)
 	room := max(1, height-1-len(box))
@@ -465,6 +499,9 @@ func (a *app) footer() string {
 		// answer can carry an account's own text inside it.
 		return styleDanger.Render(safeLine(a.failure))
 	}
+	if a.chooser != nil {
+		return styleMuted.Render("enter choose · j/k move · 1-9 pick · esc back")
+	}
 	if a.composing {
 		if a.editing != "" || a.replyTo != "" {
 			return styleMuted.Render("enter send · esc drop the answer · tab list · ctrl+c quit")
@@ -472,7 +509,7 @@ func (a *app) footer() string {
 		return styleMuted.Render("enter send · esc stop typing · tab list · ctrl+c quit")
 	}
 	if a.focus == paneConversation {
-		return styleMuted.Render("i write · r answer · e change · j/k move · g older · h list · q quit")
+		return styleMuted.Render("i write · r answer · x react · s keep · d delete · ? keys · q quit")
 	}
-	return styleMuted.Render("enter open · j/k move · tab pane · r refresh · q quit")
+	return styleMuted.Render("enter open · j/k move · tab pane · r refresh · ? keys · q quit")
 }

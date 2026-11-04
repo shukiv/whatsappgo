@@ -146,23 +146,23 @@ covers it.
 ## message (19)
 
 - [ ] `message.answer_prompt` — Press one of the answers a received question offered; the choice must be one that question carried
-- [ ] `message.delete` — Delete a message for everyone
+- [x] `message.delete` — Delete a message for everyone
 - [ ] `message.download` — Download and cache message media
 - [x] `message.edit` — Edit a sent text message
-- [ ] `message.forward` — Forward a message into another conversation
+- [x] `message.forward` — Forward a message into another conversation
 - [x] `message.get` — One stored message with its reactions and quoted line
-- [ ] `message.pin` — Pin a message for 24 hours, 7 days, or 30 days
+- [x] `message.pin` — Pin a message for 24 hours, 7 days, or 30 days
 - [ ] `message.played` — Mark an incoming voice or video message as played
-- [ ] `message.react` — Add or remove a reaction
-- [ ] `message.revisions` — List the earlier versions of a message, including one that was deleted
+- [x] `message.react` — Add or remove a reaction
+- [x] `message.revisions` — List the earlier versions of a message, including one that was deleted
 - [ ] `message.schedule` — Write a message now and send it at a given time, while this app is running
 - [x] `message.send` — Send a text message
 - [ ] `message.send_buttons` — Ask a question with up to 3 tappable answers; taps arrive as message.tapped
 - [ ] `message.send_contact` — Send one reviewed name and international phone number as a contact card
 - [ ] `message.send_list` — Ask a question with up to 10 tappable choices behind one button; taps arrive as message.tapped
 - [ ] `message.send_media` — Send media; document=true preserves file semantics regardless of MIME type
-- [ ] `message.star` — Star or unstar a message for the account
-- [ ] `message.unpin` — Remove the pinned message from a chat
+- [x] `message.star` — Star or unstar a message for the account
+- [x] `message.unpin` — Remove the pinned message from a chat
 - [ ] `message.unschedule` — Drop a message that has not been sent yet
 
 ## messages (5)
@@ -171,7 +171,7 @@ covers it.
 - [ ] `messages.on_date` — Find the first locally stored message within a calendar day
 - [ ] `messages.scheduled` — List messages waiting to be sent; an empty chat_jid lists every conversation
 - [ ] `messages.search` — Search local message text
-- [ ] `messages.starred` — List starred messages, optionally scoped to chat_jid
+- [x] `messages.starred` — List starred messages, optionally scoped to chat_jid
 
 ## notifications (3)
 

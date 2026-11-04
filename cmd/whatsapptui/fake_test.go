@@ -222,3 +222,9 @@ func (c askedCall) texts(key string) []string {
 	}
 	return found
 }
+
+// event is an announcement as the daemon delivers one, with its payload as
+// JSON rather than as a Go value.
+func event(name string, data map[string]any) rpc.Event {
+	return rpc.Event{Version: 1, Event: name, Data: data}
+}
