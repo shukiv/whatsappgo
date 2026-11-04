@@ -115,8 +115,14 @@ func (a *app) send() tea.Cmd {
 		})
 	}
 	params := map[string]any{"chat_jid": chat, "text": text, "reply_to": a.replyTo}
+	// The preview goes only when the page it was resolved for is still named
+	// in the message, which is the check the window makes too.
+	if a.preview.URL != "" && strings.Contains(text, a.preview.URL) {
+		params["link_preview"] = a.preview
+	}
 	a.input.SetValue("")
 	a.replyTo = ""
+	a.previewFor, a.preview = "", model.LinkPreview{}
 	return tea.Batch(a.reportTyping(false), func() tea.Msg {
 		var sent model.Message
 		if err := a.daemon.call(a.ctx, "message.send", params, &sent); err != nil {
@@ -152,7 +158,14 @@ func (a *app) editSelected() tea.Cmd {
 // composerLines are the rows at the foot of the conversation: what the message
 // will answer or change, and the box itself.
 func (a *app) composerLines(width int) []string {
-	lines := make([]string, 0, 2)
+	lines := make([]string, 0, 3)
+	if a.preview.Title != "" || a.preview.URL != "" {
+		shown := safeLine(a.preview.Title)
+		if shown == "" {
+			shown = safeLine(a.preview.URL)
+		}
+		lines = append(lines, styleMuted.Render(fitLine("link: "+shown, width)))
+	}
 	switch {
 	case a.editing != "":
 		lines = append(lines, styleMuted.Render(fitLine("changing: "+a.quoted(a.editing), width)))

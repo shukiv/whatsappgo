@@ -141,6 +141,7 @@ func (a *app) chatMenu() tea.Cmd {
 			run: flag("chat.set_read", chat.UnreadCount > 0)},
 		{label: "what is in this conversation", run: func() tea.Cmd { return a.chatInfo(chat) }},
 		{label: "what has been shared in it", run: func() tea.Cmd { return a.sharedPrompt(chat) }},
+		{label: "open its picture", run: func() tea.Cmd { return a.openAvatar(chat) }},
 		{label: "the lists it is on", run: func() tea.Cmd { return a.labelsPrompt(chat) }},
 		{label: "how long messages live", run: func() tea.Cmd { return a.disappearingPrompt(chat) }},
 		{label: "write it to a file", run: func() tea.Cmd { return a.exportPrompt(chat, false) }},
