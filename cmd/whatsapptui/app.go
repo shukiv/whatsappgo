@@ -86,6 +86,11 @@ type app struct {
 	typing      bool
 	typingToken int
 
+	// The page named in what is being written, and what the daemon said
+	// about it, so the message carries the preview the window would send.
+	previewFor string
+	preview    model.LinkPreview
+
 	// The prompts laid over the conversation, when there are any: one of
 	// several, or something to type.
 	chooser *chooser
@@ -182,6 +187,22 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
 			a.upsert(msg.message)
 		}
+	case openedMsg:
+		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
+			a.upsert(msg.message)
+			return a, a.handOverMedia(msg.message, msg.play)
+		}
+	case handedOverMsg:
+		a.failure = "Opened " + safeLine(msg.what) + " in another program."
+	case contactsMsg:
+		return a, a.showContacts(msg)
+	case stickersMsg:
+		return a, a.showStickers(msg)
+	case previewMsg:
+		// Only while that page is still named in what is being written.
+		if a.previewFor == msg.address && strings.Contains(a.input.Value(), msg.address) {
+			a.preview = msg.preview
+		}
 	case countsMsg:
 		a.unreadEverywhere, a.archivedChats = msg.unread, msg.archived
 	case infoMsg:
@@ -218,9 +239,12 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case starredMsg:
 		return a, a.showStarred([]model.Message(msg))
 	case typingMsg:
-		// Only the last keystroke's wait reports anything.
+		// Only the last keystroke's wait reports anything. The same pause is
+		// when a page named in the message is looked up, for the same reason:
+		// not on every letter struck.
 		if int(msg) == a.typingToken {
-			return a, a.reportTyping(a.composing && strings.TrimSpace(a.input.Value()) != "")
+			return a, tea.Batch(a.reportTyping(a.composing && strings.TrimSpace(a.input.Value()) != ""),
+				a.linkPreview(a.input.Value()))
 		}
 	case eventMsg:
 		// Whatever the announcement asks for, listening goes on: a client
@@ -443,6 +467,10 @@ func (a *app) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return a.replyToSelected()
 	case "e":
 		return a.editSelected()
+	case "o":
+		return a.openSelected()
+	case "a":
+		return a.attachMenu()
 	case "x":
 		return a.reactPrompt()
 	case "s":
@@ -585,7 +613,7 @@ func (a *app) footer() string {
 		return styleMuted.Render("enter send · esc stop typing · tab list · ctrl+c quit")
 	}
 	if a.focus == paneConversation {
-		return styleMuted.Render("i write · r answer · x react · s keep · d delete · ? keys · q quit")
+		return styleMuted.Render("i write · o open · a attach · r answer · x react · ? keys · q quit")
 	}
 	return styleMuted.Render("enter open · m menu · / find · A archive · ? keys · q quit")
 }
