@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -106,3 +109,69 @@ func TestAFailureIsShown(t *testing.T) {
 type errRefused struct{}
 
 func (errRefused) Error() string { return "daemon refused" }
+
+// Nobody reading this window wrote what is in it. A contact picks their own
+// push name and a message carries whatever was typed at the other end, and a
+// terminal obeys some of those characters instead of printing them: an escape
+// sequence clears the window, retitles it, or asks the terminal a question
+// whose answer comes back as if it had been typed. None of it may reach the
+// terminal, and what is left must still read as the name.
+func TestWhatTheAccountSendsCannotDriveTheTerminal(t *testing.T) {
+	nasty := "Alice\x1b[2J\x1b]0;owned\x07\x1b[31m"
+	view := drive(t, chatsMsg([]model.Chat{{
+		JID:                "972500000001@s.whatsapp.net",
+		Title:              nasty,
+		LastMessagePreview: "see you\x1b[1;1Hthere\u202eelif.txt",
+	}}), failureMsg{err: errRefused{}}).View()
+	for _, order := range []string{"\x1b[2J", "\x1b]0;", "\x07", "\x1b[31m", "\x1b[1;1H", "\u202e"} {
+		if strings.Contains(view, order) {
+			t.Fatalf("the window passed %q through to the terminal:\n%q", order, view)
+		}
+	}
+	if !strings.Contains(view, "Alice") {
+		t.Fatalf("cleaning the name removed the name:\n%q", view)
+	}
+}
+
+// A line that does not fit is cut by the room the terminal gives each
+// character, not by bytes. A byte cut shows up two ways: between the bytes of
+// one character, which leaves a broken character, and in a row that stops far
+// short of the width it was given, because it counted bytes as though each
+// were a column.
+func TestARowTooLongIsCutByWidthAndNotMidCharacter(t *testing.T) {
+	current := drive(t, chatsMsg([]model.Chat{
+		// Three bytes and two columns per character, so a byte cut lands
+		// inside a character and fills barely two thirds of the row.
+		{JID: "972500000001@s.whatsapp.net", Title: strings.Repeat("日本語", 20), UnreadCount: 7},
+		{JID: "972500000002@s.whatsapp.net", Title: strings.Repeat("שוקי וקנין ", 12)},
+		{JID: "972500000003@s.whatsapp.net", Title: "Bob Example"},
+	}))
+	list := current.chatList(30)
+	if !utf8.ValidString(list) {
+		t.Fatalf("a row was cut in the middle of a character: %q", list)
+	}
+	rows := strings.Split(list, "\n")
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, wanted 3: %q", len(rows), list)
+	}
+	for _, row := range rows {
+		if width := ansi.StringWidth(row); width > 28 {
+			t.Fatalf("a row is %d columns wide in a 30-column list: %q", width, row)
+		}
+	}
+	// The two overlong names fill the row they were given. A row that stops
+	// well short of it was cut by bytes rather than by columns.
+	for _, row := range rows[:2] {
+		if width := ansi.StringWidth(row); width < 26 {
+			t.Fatalf("an overlong name was cut back to %d of 28 columns: %q", width, row)
+		}
+	}
+	// A name that fits is not cut at all.
+	if !strings.Contains(rows[2], "Bob Example") || strings.Contains(rows[2], "…") {
+		t.Fatalf("a name that fits was cut: %q", rows[2])
+	}
+	// What is waiting is the part that must survive the cut.
+	if !strings.Contains(list, "(7)") {
+		t.Fatalf("the unread count fell off the end of the row: %q", list)
+	}
+}

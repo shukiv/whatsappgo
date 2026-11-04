@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 	"github.com/shukiv/whatsappgo/internal/rpc"
@@ -167,11 +168,11 @@ func (a *app) View() string {
 }
 
 func (a *app) header() string {
-	where := a.status.State
+	where := safeLine(a.status.State)
 	if where == "" {
 		where = "connecting"
 	}
-	who := a.status.UserName
+	who := safeLine(a.status.UserName)
 	if who == "" {
 		who = a.profile
 	}
@@ -184,16 +185,17 @@ func (a *app) chatList(width int) string {
 	}
 	lines := make([]string, 0, len(a.chats))
 	for i, chat := range a.chats {
-		title := chat.Title
+		title := safeLine(chat.Title)
 		if title == "" {
-			title = chat.JID
+			title = safeLine(chat.JID)
 		}
-		if len(title) > width-2 {
-			title = title[:max(0, width-3)] + "…"
-		}
+		unread := ""
 		if chat.UnreadCount > 0 {
-			title += fmt.Sprintf(" (%d)", chat.UnreadCount)
+			unread = fmt.Sprintf(" (%d)", chat.UnreadCount)
 		}
+		// How many are waiting is the one part of a row that must not be the
+		// part that falls off the end, so the name gives up the room for it.
+		title = fitLine(title, width-2-ansi.StringWidth(unread)) + unread
 		if i == a.selected && a.focus == paneChats {
 			lines = append(lines, styleSelected.Render(title))
 			continue
@@ -208,12 +210,14 @@ func (a *app) conversation() string {
 	if !ok {
 		return styleMuted.Render("Pick a conversation")
 	}
-	return styleTitle.Render(chat.Title) + "\n" + styleMuted.Render(chat.LastMessagePreview)
+	return styleTitle.Render(safeLine(chat.Title)) + "\n" + styleMuted.Render(safeLine(chat.LastMessagePreview))
 }
 
 func (a *app) footer() string {
 	if a.failure != "" {
-		return styleDanger.Render(a.failure)
+		// What went wrong is often quoted back from the daemon, and a daemon
+		// answer can carry an account's own text inside it.
+		return styleDanger.Render(safeLine(a.failure))
 	}
 	return styleMuted.Render("tab switch · j/k move · r refresh · q quit")
 }
