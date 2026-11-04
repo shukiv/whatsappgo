@@ -6,6 +6,12 @@ use them; a rebuild does not replace an already running process.
 
 ## Fixed
 
+- "Share a contact" opens on the people who have names. The list is sorted by
+  name, and anyone not in the address book has none - WhatsApp substitutes a
+  masked `+972∙∙∙∙∙∙∙10`, a bare number, or a dot - so those filled all
+  hundred rows and the named contacts were never reached. They now sort last,
+  and are listed by their number rather than by the stand-in.
+
 - A contact somebody shares now arrives with its number. WhatsApp's phone
   clients write the vCard's number as a grouped property, which the reader
   skipped, so the card had a name and nothing else on it. A conversation
