@@ -79,7 +79,9 @@ func TestReachingTheTopAsksForOlderMessagesThenForHistory(t *testing.T) {
 	}}
 	fake := newFakeDaemon().answer("messages.list", first, older)
 
-	current := driveFake(t, fake, aliceChat(), press("enter"))
+	// Opening leaves the keyboard in the message box, so it is handed back to
+	// the conversation before the keys that move through it.
+	current := driveFake(t, fake, aliceChat(), press("enter"), press("esc"))
 	fake.forget()
 	current = pump(t, current, press("g"))
 

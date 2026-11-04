@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -129,6 +130,13 @@ func pump(t *testing.T, current *app, messages ...tea.Msg) *app {
 		if msg == nil {
 			return
 		}
+		// A test that wants to drive an action rather than a key hands the
+		// work over directly, and it is run the way the program's own loop
+		// would run it.
+		if work, ok := msg.(doMsg); ok {
+			run(work.cmd)
+			return
+		}
 		updated, next := current.Update(msg)
 		app, ok := updated.(*app)
 		if !ok {
@@ -144,7 +152,19 @@ func pump(t *testing.T, current *app, messages ...tea.Msg) *app {
 		if steps++; steps > 200 {
 			t.Fatal("the window kept giving itself work to do and never settled")
 		}
-		msg := cmd()
+		// Some of what the window gives itself to do is a wait: the pause
+		// before typing is reported, the cursor's blink, the next
+		// announcement. None of those belong to the keystroke being driven
+		// here, so anything that does not answer at once is left alone. A
+		// test that wants one drives its message itself.
+		answered := make(chan tea.Msg, 1)
+		go func() { answered <- cmd() }()
+		var msg tea.Msg
+		select {
+		case msg = <-answered:
+		case <-time.After(50 * time.Millisecond):
+			return
+		}
 		if batch, ok := msg.(tea.BatchMsg); ok {
 			for _, each := range batch {
 				run(each)
@@ -167,6 +187,11 @@ func driveFake(t *testing.T, fake *fakeDaemon, messages ...tea.Msg) *app {
 	current.width, current.height = 90, 24
 	return pump(t, current, messages...)
 }
+
+// doMsg carries work for the pump to run, and never reaches Update.
+type doMsg struct{ cmd tea.Cmd }
+
+func do(cmd tea.Cmd) tea.Msg { return doMsg{cmd: cmd} }
 
 func press(key string) tea.Msg {
 	switch key {

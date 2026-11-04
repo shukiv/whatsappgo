@@ -61,7 +61,7 @@ covers it.
 - [x] `chat.read` — Send receipts and clear the local unread count
 - [ ] `chat.set_read` — Mark a chat read or unread across linked devices
 - [ ] `chat.shared` — Page through a chat's media, documents, or links
-- [ ] `chat.typing` — Set composing or paused presence
+- [x] `chat.typing` — Set composing or paused presence
 
 ## chats (5)
 
@@ -148,7 +148,7 @@ covers it.
 - [ ] `message.answer_prompt` — Press one of the answers a received question offered; the choice must be one that question carried
 - [ ] `message.delete` — Delete a message for everyone
 - [ ] `message.download` — Download and cache message media
-- [ ] `message.edit` — Edit a sent text message
+- [x] `message.edit` — Edit a sent text message
 - [ ] `message.forward` — Forward a message into another conversation
 - [x] `message.get` — One stored message with its reactions and quoted line
 - [ ] `message.pin` — Pin a message for 24 hours, 7 days, or 30 days
@@ -156,7 +156,7 @@ covers it.
 - [ ] `message.react` — Add or remove a reaction
 - [ ] `message.revisions` — List the earlier versions of a message, including one that was deleted
 - [ ] `message.schedule` — Write a message now and send it at a given time, while this app is running
-- [ ] `message.send` — Send a text message
+- [x] `message.send` — Send a text message
 - [ ] `message.send_buttons` — Ask a question with up to 3 tappable answers; taps arrive as message.tapped
 - [ ] `message.send_contact` — Send one reviewed name and international phone number as a contact card
 - [ ] `message.send_list` — Ask a question with up to 10 tappable choices behind one button; taps arrive as message.tapped
