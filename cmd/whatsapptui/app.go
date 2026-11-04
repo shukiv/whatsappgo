@@ -66,6 +66,10 @@ type app struct {
 	unreadFrom   string
 	unreadCount  int
 
+	// What the list is showing, when it is not simply the conversations:
+	// a search, or the archive.
+	listing string
+
 	// Which message the keys act on, and the first row of the conversation
 	// that is on screen. The window follows the keyboard: whichever message
 	// it is on stays visible.
@@ -82,8 +86,19 @@ type app struct {
 	typing      bool
 	typingToken int
 
-	// The prompt laid over the conversation, when there is one.
+	// The prompts laid over the conversation, when there are any: one of
+	// several, or something to type.
 	chooser *chooser
+	prompt  *asking
+
+	// The two numbers the desktop client keeps above its list.
+	unreadEverywhere int
+	archivedChats    int
+
+	// A message being gone back to, and how many pages have been read
+	// looking for it.
+	seeking      string
+	seekingPages int
 
 	loadingOlder   bool
 	waitingHistory bool
@@ -101,7 +116,7 @@ func newApp(ctx context.Context, d socket, profile string) *app {
 }
 
 func (a *app) Init() tea.Cmd {
-	return tea.Batch(a.loadStatus(), a.loadChats(), a.nextEvent())
+	return tea.Batch(a.loadStatus(), a.loadChats(), a.counts(), a.nextEvent())
 }
 
 func (a *app) loadStatus() tea.Cmd {
@@ -167,6 +182,37 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
 			a.upsert(msg.message)
 		}
+	case countsMsg:
+		a.unreadEverywhere, a.archivedChats = msg.unread, msg.archived
+	case infoMsg:
+		return a, a.showInfo(model.ChatInfo(msg))
+	case sharedMsg:
+		return a, a.showShared(msg)
+	case labelsMsg:
+		return a, a.showLabels(msg)
+	case foundChatsMsg:
+		a.chats = msg.chats
+		a.selected = 0
+		a.listing = msg.query
+	case onDateMsg:
+		if msg.chat != a.open.JID || msg.messageID == "" {
+			a.failure = "Nothing was said on that day in this conversation."
+			return a, nil
+		}
+		a.focus = paneConversation
+		a.composing = false
+		a.input.Blur()
+		return a, a.seek(msg.messageID)
+	case exportedMsg:
+		a.failure = "Written to " + msg.path
+	case replaceFileMsg:
+		return a, a.exportPrompt(msg.chat, true)
+	case closeOpenMsg:
+		a.open, a.messages = model.Chat{}, nil
+		a.cursor, a.top = 0, 0
+		a.focus = paneChats
+		a.composing = false
+		a.input.Blur()
 	case revisionsMsg:
 		return a, a.showRevisions([]model.MessageRevision(msg))
 	case starredMsg:
@@ -210,6 +256,9 @@ func (a *app) page(msg pageMsg) tea.Cmd {
 	a.nextBefore, a.nextBeforeID = msg.page.NextBefore, msg.page.NextBeforeID
 	if msg.mode == pageOpen {
 		return a.acknowledgeOpen()
+	}
+	if a.seeking != "" {
+		return a.seek(a.seeking)
 	}
 	if !a.hasMore {
 		// The daemon has served everything it holds. Whether the account has
@@ -308,6 +357,9 @@ func (a *app) key(msg tea.KeyMsg) tea.Cmd {
 	}
 	// A prompt has the keyboard while it is up, so that j and k move through
 	// it rather than through what is behind it.
+	if a.prompt != nil {
+		return a.promptKey(msg)
+	}
 	if a.chooser != nil {
 		return a.chooserKey(msg)
 	}
@@ -319,6 +371,10 @@ func (a *app) key(msg tea.KeyMsg) tea.Cmd {
 		return tea.Quit
 	case "?":
 		return a.help()
+	case "m":
+		return a.chatMenu()
+	case "/":
+		return a.searchPrompt()
 	case "tab":
 		if a.focus == paneChats {
 			a.focus = paneConversation
@@ -352,7 +408,11 @@ func (a *app) chatsKey(msg tea.KeyMsg) tea.Cmd {
 			return tea.Batch(a.openChat(chat), a.enterComposer())
 		}
 	case "r":
-		return tea.Batch(a.loadStatus(), a.loadChats())
+		return tea.Batch(a.loadStatus(), a.loadChats(), a.counts())
+	case "A":
+		return a.archived()
+	case "M":
+		return a.markAllReadPrompt()
 	}
 	return nil
 }
@@ -437,7 +497,17 @@ func (a *app) header() string {
 	if who == "" {
 		who = a.profile
 	}
-	return styleTitle.Render("WhatsAppGo") + styleMuted.Render(fmt.Sprintf("  %s  ·  %s", who, where))
+	said := fmt.Sprintf("  %s  ·  %s", who, where)
+	if a.unreadEverywhere > 0 {
+		said += fmt.Sprintf("  ·  %s waiting", plural(a.unreadEverywhere, "message", "messages"))
+	}
+	if a.archivedChats > 0 {
+		said += fmt.Sprintf("  ·  %d archived", a.archivedChats)
+	}
+	if a.listing != "" {
+		said += "  ·  " + safeLine(a.listing)
+	}
+	return styleTitle.Render("WhatsAppGo") + styleMuted.Render(said)
 }
 
 func (a *app) chatList(width int) string {
@@ -473,6 +543,9 @@ func (a *app) chatList(width int) string {
 // message box below. The newest message sits at the bottom, as it does in the
 // desktop client, and the window holds whichever message the keyboard is on.
 func (a *app) conversation(width, height int) string {
+	if a.prompt != nil {
+		return a.promptLines(width)
+	}
 	if a.chooser != nil {
 		return a.chooserLines(width, height)
 	}
@@ -499,6 +572,9 @@ func (a *app) footer() string {
 		// answer can carry an account's own text inside it.
 		return styleDanger.Render(safeLine(a.failure))
 	}
+	if a.prompt != nil {
+		return styleMuted.Render("enter accept · esc back")
+	}
 	if a.chooser != nil {
 		return styleMuted.Render("enter choose · j/k move · 1-9 pick · esc back")
 	}
@@ -511,5 +587,5 @@ func (a *app) footer() string {
 	if a.focus == paneConversation {
 		return styleMuted.Render("i write · r answer · x react · s keep · d delete · ? keys · q quit")
 	}
-	return styleMuted.Render("enter open · j/k move · tab pane · r refresh · ? keys · q quit")
+	return styleMuted.Render("enter open · m menu · / find · A archive · ? keys · q quit")
 }
