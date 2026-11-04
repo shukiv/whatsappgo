@@ -46,30 +46,30 @@ covers it.
 
 ## chat (16)
 
-- [ ] `chat.archive` — Archive or restore a chat
+- [x] `chat.archive` — Archive or restore a chat
 - [ ] `chat.avatar` — Fetch and cache a chat avatar
-- [ ] `chat.clear` — Empty a conversation on every device without removing it
-- [ ] `chat.delete` — Delete a chat on every linked device and locally
-- [ ] `chat.disappearing` — Set the disappearing-message timer for a chat, in seconds (0 turns it off)
-- [ ] `chat.export` — Write a conversation to a text file
-- [ ] `chat.favorite` — Add or remove a chat from Favorites
-- [ ] `chat.info` — Get contact metadata and shared-content counts
-- [ ] `chat.label` — Add a chat to a list or remove it
-- [ ] `chat.labels` — List the lists a chat belongs to
-- [ ] `chat.mute` — Mute or unmute a chat; duration_seconds 0 mutes until undone
-- [ ] `chat.pin` — Pin or unpin a chat
+- [x] `chat.clear` — Empty a conversation on every device without removing it
+- [x] `chat.delete` — Delete a chat on every linked device and locally
+- [x] `chat.disappearing` — Set the disappearing-message timer for a chat, in seconds (0 turns it off)
+- [x] `chat.export` — Write a conversation to a text file
+- [x] `chat.favorite` — Add or remove a chat from Favorites
+- [x] `chat.info` — Get contact metadata and shared-content counts
+- [x] `chat.label` — Add a chat to a list or remove it
+- [x] `chat.labels` — List the lists a chat belongs to
+- [x] `chat.mute` — Mute or unmute a chat; duration_seconds 0 mutes until undone
+- [x] `chat.pin` — Pin or unpin a chat
 - [x] `chat.read` — Send receipts and clear the local unread count
-- [ ] `chat.set_read` — Mark a chat read or unread across linked devices
-- [ ] `chat.shared` — Page through a chat's media, documents, or links
+- [x] `chat.set_read` — Mark a chat read or unread across linked devices
+- [x] `chat.shared` — Page through a chat's media, documents, or links
 - [x] `chat.typing` — Set composing or paused presence
 
 ## chats (5)
 
-- [ ] `chats.archived_count` — Count archived chats
+- [x] `chats.archived_count` — Count archived chats
 - [x] `chats.list` — List or search chats
-- [ ] `chats.mark_all_read` — Clear the unread state of every conversation
-- [ ] `chats.search` — Search conversations by title (served, not advertised by rpc.discover)
-- [ ] `chats.unread_count` — Count unread messages in visible chats
+- [x] `chats.mark_all_read` — Clear the unread state of every conversation
+- [x] `chats.search` — Search conversations by title (served, not advertised by rpc.discover)
+- [x] `chats.unread_count` — Count unread messages in visible chats
 
 ## communities (1)
 
@@ -132,7 +132,7 @@ covers it.
 
 ## labels (1)
 
-- [ ] `labels.list` — List the account's chat lists
+- [x] `labels.list` — List the account's chat lists
 
 ## link (2)
 
@@ -168,7 +168,7 @@ covers it.
 ## messages (5)
 
 - [x] `messages.list` — Page through one chat's messages
-- [ ] `messages.on_date` — Find the first locally stored message within a calendar day
+- [x] `messages.on_date` — Find the first locally stored message within a calendar day
 - [ ] `messages.scheduled` — List messages waiting to be sent; an empty chat_jid lists every conversation
 - [ ] `messages.search` — Search local message text
 - [x] `messages.starred` — List starred messages, optionally scoped to chat_jid

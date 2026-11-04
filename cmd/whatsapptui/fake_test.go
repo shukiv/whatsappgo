@@ -21,7 +21,7 @@ type fakeDaemon struct {
 	mutex    sync.Mutex
 	asked    []askedCall
 	answers  map[string][]any
-	failures map[string]error
+	failures map[string][]error
 	stream   chan rpc.Event
 	hushed   sync.Once
 }
@@ -32,7 +32,7 @@ type askedCall struct {
 }
 
 func newFakeDaemon() *fakeDaemon {
-	return &fakeDaemon{answers: map[string][]any{}, failures: map[string]error{},
+	return &fakeDaemon{answers: map[string][]any{}, failures: map[string][]error{},
 		stream: make(chan rpc.Event, 8)}
 }
 
@@ -46,12 +46,22 @@ func (f *fakeDaemon) answer(method string, results ...any) *fakeDaemon {
 	return f
 }
 
+// refuse queues a refusal, one per call, so a method can be made to fail once
+// and then work - which is what being asked to replace a file looks like.
+func (f *fakeDaemon) refuse(method string, errs ...error) *fakeDaemon {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	f.failures[method] = append(f.failures[method], errs...)
+	return f
+}
+
 func (f *fakeDaemon) call(_ context.Context, method string, params any, into any) error {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	f.asked = append(f.asked, askedCall{method: method, params: asMap(params)})
-	if err := f.failures[method]; err != nil {
-		return err
+	if queued := f.failures[method]; len(queued) > 0 {
+		f.failures[method] = queued[1:]
+		return queued[0]
 	}
 	queued := f.answers[method]
 	if len(queued) == 0 || into == nil {

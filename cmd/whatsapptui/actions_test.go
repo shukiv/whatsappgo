@@ -144,8 +144,13 @@ func TestDeletingAMessageAsksFirstAndKeepsItByDefault(t *testing.T) {
 	if current.chooser == nil || current.chooser.cursor != 0 {
 		t.Fatalf("the prompt starts on %v", current.chooser)
 	}
-	if !strings.Contains(current.View(), "cannot be undone") {
-		t.Fatalf("the prompt does not say what it does:\n%s", current.View())
+	// On screen the warning is wrapped to the pane, so it is checked where it
+	// is said rather than by which row it lands on.
+	if !strings.Contains(current.chooser.hint, "cannot be undone") {
+		t.Fatalf("the prompt does not say what it does: %v", current.chooser)
+	}
+	if !strings.Contains(current.View(), "Delete this message") {
+		t.Fatalf("the prompt is not on screen:\n%s", current.View())
 	}
 	current = pump(t, current, press("enter"))
 	if deleted := fake.calls("message.delete"); len(deleted) != 0 {

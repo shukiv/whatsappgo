@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 )
@@ -43,6 +45,18 @@ type (
 	revisionsMsg []model.MessageRevision
 	starredMsg   []model.Message
 )
+
+// wrapped lays a line out over as many rows as it takes.
+func wrapped(text string, width int, style lipgloss.Style) []string {
+	if width < 8 {
+		width = 8
+	}
+	lines := strings.Split(ansi.Wordwrap(text, width, " -"), "\n")
+	for at, line := range lines {
+		lines[at] = style.Render(line)
+	}
+	return lines
+}
 
 func (a *app) chooserKey(msg tea.KeyMsg) tea.Cmd {
 	switch key := msg.String(); key {
@@ -316,11 +330,14 @@ func (a *app) help() tea.Cmd {
 	return a.ask("Keys", "", 0, items...)
 }
 
-// chooserLines draws the prompt where the conversation was.
+// chooserLines draws the prompt where the conversation was. The title and what
+// it says about itself are wrapped rather than cut: what a prompt warns about
+// is the part the reader most needs whole, and a prompt about something that
+// cannot be undone says so in more characters than a narrow pane holds.
 func (a *app) chooserLines(width, height int) string {
-	rows := []string{styleTitle.Render(fitLine(a.chooser.title, width))}
+	rows := wrapped(a.chooser.title, width, styleTitle)
 	if a.chooser.hint != "" {
-		rows = append(rows, styleMuted.Render(fitLine(a.chooser.hint, width)))
+		rows = append(rows, wrapped(a.chooser.hint, width, styleMuted)...)
 	}
 	rows = append(rows, "")
 	// A long list - every conversation, every kept message - is windowed on
