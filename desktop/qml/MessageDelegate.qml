@@ -1231,23 +1231,35 @@ Item {
                 }
             }
 
-            // A shared contact, shown as a card rather than a bare line.
+            // A shared contact, drawn the way WhatsApp Web draws one: the name
+            // beside their picture, and under a rule the two things that can
+            // be done with a contact somebody sent - write to them, or keep
+            // them. The number itself is not shown; WhatsApp Web does not show
+            // it either, and the name is what the card is about.
             Rectangle {
                 id: contactCard
                 objectName: "contactCard"
                 visible: root.contactKind
-                readonly property real naturalWidth: Math.max(contactNameLabel.implicitWidth,
-                    contactPhoneLabel.implicitWidth) + 74
+                readonly property bool several: Number(root.modelData.contact_count || 0) > 1
+                // Wide enough for the name, and never so narrow that the two
+                // actions under it are squeezed. Measured against what the
+                // labels ask for, never against what they are given, which
+                // would bind the card's width to itself.
+                readonly property real naturalWidth: Math.max(
+                    Math.max(contactNameLabel.implicitWidth, contactPhoneLabel.implicitWidth) + 74,
+                    contactAction.implicitWidth + contactSaveAction.implicitWidth + 16)
                 width: root.contentWidth
-                height: visible ? 62 : 0
+                height: visible ? 62 + 1 + contactActions.height : 0
                 radius: 6
+                clip: true
                 color: root.modelData.from_me ? Qt.darker(Theme.outgoingBubble, 1.06) : Theme.replyBackground
 
                 Avatar {
                     id: contactAvatar
                     anchors.left: parent.left
                     anchors.leftMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.top: parent.top
+                    anchors.topMargin: 10
                     width: 42
                     height: 42
                     diameter: 42
@@ -1258,9 +1270,9 @@ Item {
                 Column {
                     anchors.left: contactAvatar.right
                     anchors.leftMargin: 10
-                    anchors.right: contactAction.left
-                    anchors.rightMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: contactAvatar.verticalCenter
                     spacing: 1
                     Label {
                         id: contactNameLabel
@@ -1274,32 +1286,84 @@ Item {
                     Label {
                         id: contactPhoneLabel
                         width: parent.width
-                        visible: root.contactPhone !== "" || Number(root.modelData.contact_count || 0) > 1
-                        text: Number(root.modelData.contact_count || 0) > 1
-                            ? qsTr("%1 contacts").arg(root.modelData.contact_count)
-                            : root.contactPhone
+                        // One card for several contacts says how many. A single
+                        // contact says nothing here: WhatsApp Web shows the
+                        // name alone.
+                        visible: contactCard.several
+                        text: contactCard.several ? qsTr("%1 contacts").arg(root.modelData.contact_count) : ""
                         color: Theme.textMuted
                         font.pixelSize: root.metaFontSize
                         elide: Text.ElideRight
                     }
                 }
 
-                ToolButton {
-                    id: contactAction
-                    objectName: "contactAction"
+                Rectangle {
+                    anchors.bottom: contactActions.top
+                    anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.rightMargin: 4
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: root.contactPhone !== ""
-                    width: visible ? 66 : 0
-                    height: 30
-                    flat: true
-                    text: qsTr("Message")
-                    font.pixelSize: root.metaFontSize
-                    Accessible.name: qsTr("Message %1").arg(root.contactName)
-                    // The resolver wants digits, not the punctuation a vCard
-                    // uses to make a number readable.
-                    onClicked: backend.startChat(root.contactPhone.replace(/[^0-9]/g, ""))
+                    height: 1
+                    color: Theme.border
+                }
+
+                Row {
+                    id: contactActions
+                    anchors.bottom: parent.bottom
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 38
+
+                    // Both are offered whatever the card carries, as WhatsApp
+                    // Web offers them, and both refuse a card with no number
+                    // rather than dialling nothing.
+                    ToolButton {
+                        id: contactAction
+                        objectName: "contactAction"
+                        width: (parent.width - 1) / 2
+                        height: parent.height
+                        flat: true
+                        enabled: root.contactPhone !== ""
+                        text: qsTr("Message")
+                        font.pixelSize: root.metaFontSize
+                        contentItem: Label {
+                            text: contactAction.text
+                            font: contactAction.font
+                            color: contactAction.enabled ? Theme.primary : Theme.textMuted
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        Accessible.name: qsTr("Message %1").arg(root.contactName)
+                        // The resolver wants digits, not the punctuation a
+                        // vCard uses to make a number readable.
+                        onClicked: backend.startChat(root.contactPhone.replace(/[^0-9]/g, ""))
+                    }
+
+                    Rectangle {
+                        width: 1
+                        height: parent.height
+                        color: Theme.border
+                    }
+
+                    ToolButton {
+                        id: contactSaveAction
+                        objectName: "contactSaveAction"
+                        width: (parent.width - 1) / 2
+                        height: parent.height
+                        flat: true
+                        enabled: root.contactPhone !== ""
+                        text: qsTr("Save contact")
+                        font.pixelSize: root.metaFontSize
+                        contentItem: Label {
+                            text: contactSaveAction.text
+                            font: contactSaveAction.font
+                            color: contactSaveAction.enabled ? Theme.primary : Theme.textMuted
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        Accessible.name: qsTr("Save %1").arg(root.contactName)
+                        onClicked: backend.saveContact(root.contactPhone, root.contactName)
+                    }
                 }
             }
 

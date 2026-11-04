@@ -367,6 +367,7 @@ public:
     Q_INVOKABLE QVariantMap messageById(const QString &messageId) const;
 	Q_INVOKABLE void markMediaPlayed(const QString &messageId);
     Q_INVOKABLE void startChat(const QString &phone);
+    Q_INVOKABLE void saveContact(const QString &phone, const QString &name);
     Q_INVOKABLE void setTyping(bool typing);
     Q_INVOKABLE void startPairing();
     Q_INVOKABLE void pairPhone(const QString &phone);

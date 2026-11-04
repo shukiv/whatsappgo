@@ -3594,6 +3594,32 @@ void RpcClient::startChat(const QString &phone)
                 });
 }
 
+// Keeping a shared contact is the second thing WhatsApp Web offers for one,
+// beside writing to them. The daemon resolves the number and files the name
+// under it; the chat list is asked again afterwards because a number already
+// talked to is drawn by the name it has just been given.
+void RpcClient::saveContact(const QString &phone, const QString &name)
+{
+    // A vCard writes its numbers for people to read, and the resolver wants
+    // digits. Everything else in the field is punctuation, and a field that
+    // holds no digits at all is nothing to look up.
+    QString digits;
+    for (const QChar character : phone) {
+        if (character.isDigit())
+            digits.append(character);
+    }
+    if (digits.isEmpty() || digits.size() > 20)
+        return;
+    setBusy(true);
+    sendRequest(QStringLiteral("contact.save"),
+                {{QStringLiteral("phone"), digits}, {QStringLiteral("name"), name.left(128)}},
+                [this](const QJsonValue &, const QJsonObject &error) {
+                    setBusy(false);
+                    if (error.isEmpty())
+                        refreshChats();
+                });
+}
+
 void RpcClient::setTyping(bool typing)
 {
     if (!m_selectedChat.isEmpty())
