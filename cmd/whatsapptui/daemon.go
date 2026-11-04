@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/shukiv/whatsappgo/internal/rpc"
@@ -14,6 +15,10 @@ import (
 type daemon struct {
 	calls  *rpc.Client
 	events *rpc.Client
+
+	// Held for the whole of one request, because the connection carries one
+	// at a time. See call.
+	asking sync.Mutex
 }
 
 func dialDaemon(ctx context.Context, address string) (*daemon, error) {
@@ -43,6 +48,16 @@ func (d *daemon) Close() {
 
 // call is the one way this program reaches WhatsApp. Every feature is a method
 // on the daemon, so nothing here needs to know what a message is.
+//
+// One request at a time, which the lock is for. The connection carries one:
+// rpc.Client writes through a single encoder, reads through a single decoder,
+// and its reader loop throws away any answer whose id is not the one it is
+// waiting for. Two requests at once over it therefore both corrupt the reader
+// and steal each other's answers. This interface asks for several things at
+// once as a matter of course - the account and the conversation list when it
+// starts, a page and a receipt when a conversation opens - and each of those
+// runs on a goroutine of its own, so without this they raced on the first
+// screen the program ever drew.
 func (d *daemon) call(ctx context.Context, method string, params any, into any) error {
 	if d == nil || d.calls == nil {
 		return errNoDaemon
@@ -50,6 +65,10 @@ func (d *daemon) call(ctx context.Context, method string, params any, into any) 
 	if params == nil {
 		params = map[string]any{}
 	}
+	d.asking.Lock()
+	defer d.asking.Unlock()
+	// The wait for the connection is not part of the time the daemon is given
+	// to answer, so a queued request still gets its full budget.
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	raw, err := d.calls.Call(callCtx, method, params)
