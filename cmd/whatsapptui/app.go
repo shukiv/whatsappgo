@@ -40,7 +40,7 @@ type (
 
 type app struct {
 	ctx     context.Context
-	daemon  *daemon
+	daemon  socket
 	profile string
 
 	width, height int
@@ -50,11 +50,38 @@ type app struct {
 	selected      int
 	failure       string
 
+	// The open conversation, and the page of it that has been read. The
+	// generation counts how many times a conversation has been opened, so an
+	// answer about one the reader has left can be recognised and dropped.
+	open         model.Chat
+	generation   int
+	messages     []model.Message
+	hasMore      bool
+	nextBefore   int64
+	nextBeforeID string
+	unreadFrom   string
+	unreadCount  int
+
+	// Where the window onto the conversation sits, counted in rows up from
+	// the newest message, and how much there was to look at when it was last
+	// drawn - which is what tells the keyboard when it has reached the top.
+	scroll   int
+	rendered int
+	room     int
+
+	loadingOlder   bool
+	waitingHistory bool
+	askedHistory   map[string]bool
+
 	events <-chan rpc.Event
 }
 
-func newApp(ctx context.Context, d *daemon, profile string) *app {
-	return &app{ctx: ctx, daemon: d, profile: profile, width: 80, height: 24}
+func newApp(ctx context.Context, d socket, profile string) *app {
+	if d == nil {
+		d = noDaemon{}
+	}
+	return &app{ctx: ctx, daemon: d, profile: profile, width: 80, height: 24,
+		askedHistory: map[string]bool{}}
 }
 
 func (a *app) Init() tea.Cmd {
@@ -78,6 +105,15 @@ func (a *app) loadChats() tea.Cmd {
 			return failureMsg{err}
 		}
 		return chatsMsg(chats)
+	}
+}
+
+// quiet makes a call whose answer the window has no use for. A read receipt
+// that the daemon turned down is not something to put in front of the reader.
+func (a *app) quiet(method string, params map[string]any) tea.Cmd {
+	return func() tea.Msg {
+		_ = a.daemon.call(a.ctx, method, params, nil)
+		return nil
 	}
 }
 
@@ -108,19 +144,124 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.selected = max(0, len(a.chats)-1)
 		}
 	case failureMsg:
-		a.failure = msg.err.Error()
-	case eventMsg:
-		// A conversation changed or a message arrived: ask for the list
-		// again rather than guessing what moved, and keep listening.
-		switch msg.Event {
-		case "chat.updated", "message.upsert":
-			return a, tea.Batch(a.loadChats(), a.nextEvent())
+		a.failure = safeLine(msg.err.Error())
+	case pageMsg:
+		return a, a.page(msg)
+	case oneMessageMsg:
+		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
+			a.upsert(msg.message)
 		}
-		return a, a.nextEvent()
+	case eventMsg:
+		// Whatever the announcement asks for, listening goes on: a client
+		// that stops after one goes quiet for the rest of the session.
+		return a, tea.Batch(a.announcement(rpc.Event(msg)), a.nextEvent())
 	case tea.KeyMsg:
 		return a, a.key(msg)
 	}
 	return a, nil
+}
+
+// page takes a page of messages that arrived, if it is still about the
+// conversation that asked for it.
+func (a *app) page(msg pageMsg) tea.Cmd {
+	if msg.generation != a.generation || msg.chat != a.open.JID {
+		return nil
+	}
+	switch msg.mode {
+	case pageOpen, pageReset:
+		a.messages = msg.page.Messages
+		a.unreadFrom, a.unreadCount = msg.page.FirstUnreadID, msg.page.UnreadCount
+		a.scroll = 0
+	case pageOlder:
+		a.loadingOlder, a.waitingHistory = false, false
+		a.prepend(msg.page.Messages)
+	}
+	a.hasMore = msg.page.HasMore
+	a.nextBefore, a.nextBeforeID = msg.page.NextBefore, msg.page.NextBeforeID
+	if msg.mode == pageOpen {
+		return a.acknowledgeOpen()
+	}
+	if !a.hasMore {
+		// The daemon has served everything it holds. Whether the account has
+		// more is a question only the account can answer.
+		return a.requestHistory()
+	}
+	return nil
+}
+
+// announcement is what the daemon says happened, which is the same stream the
+// desktop client follows, so both windows answer to the same moment.
+func (a *app) announcement(evt rpc.Event) tea.Cmd {
+	switch evt.Event {
+	case "message.upsert":
+		var message model.Message
+		if !eventData(evt, &message) || message.ChatJID != a.open.JID || a.open.JID == "" {
+			return a.loadChats()
+		}
+		a.upsert(message)
+		return tea.Batch(a.acknowledgeIncoming(message), a.loadChats())
+	case "message.receipt":
+		var receipt struct {
+			ChatJID   string   `json:"chat_jid"`
+			IDs       []string `json:"message_ids"`
+			Status    string   `json:"status"`
+			Timestamp int64    `json:"timestamp"`
+		}
+		if eventData(evt, &receipt) && receipt.ChatJID == a.open.JID && a.open.JID != "" {
+			a.applyReceipt(receipt.IDs, receipt.Status, receipt.Timestamp)
+		}
+		return a.loadChats()
+	case "message.revoked", "message.reaction", "message.edited", "message.pinned":
+		var about struct {
+			ChatJID   string `json:"chat_jid"`
+			MessageID string `json:"message_id"`
+		}
+		if eventData(evt, &about) && about.ChatJID == a.open.JID && a.open.JID != "" {
+			return a.refreshOne(about.MessageID)
+		}
+	case "message.starred":
+		var about struct {
+			ChatJID   string `json:"chat_jid"`
+			MessageID string `json:"message_id"`
+			Starred   bool   `json:"starred"`
+		}
+		// A star set on the phone reaches the window only as this, so the open
+		// conversation has to answer to it and not only to its own keys.
+		if eventData(evt, &about) && about.ChatJID == a.open.JID && a.open.JID != "" {
+			a.applyStar(about.MessageID, about.Starred)
+		}
+	case "chat.updated", "chat.deleted", "chat.cleared", "directory.synced", "labels.updated":
+		return a.loadChats()
+	case "history.synced":
+		var synced struct {
+			ChatJIDs []string `json:"chat_jids"`
+		}
+		asks := []tea.Cmd{a.loadChats()}
+		if eventData(evt, &synced) && a.open.JID != "" {
+			for _, jid := range synced.ChatJIDs {
+				if jid == a.open.JID {
+					asks = append(asks, a.refreshOpen())
+					break
+				}
+			}
+		}
+		if a.waitingHistory && a.open.JID != "" && !a.loadingOlder {
+			// The page this was asked for is now the daemon's to serve.
+			a.waitingHistory, a.loadingOlder = false, true
+			asks = append(asks, a.loadPage(a.open.JID, a.generation, a.nextBefore, a.nextBeforeID, pageSize, pageOlder))
+		}
+		return tea.Batch(asks...)
+	case "connection.changed", "pairing.success", "profile.changed":
+		return a.loadStatus()
+	case "daemon.error":
+		var about struct {
+			Message string `json:"message"`
+		}
+		if eventData(evt, &about) && about.Message != "" {
+			a.failure = safeLine(about.Message)
+		}
+	}
+	return nil
 }
 
 func (a *app) key(msg tea.KeyMsg) tea.Cmd {
@@ -133,18 +274,64 @@ func (a *app) key(msg tea.KeyMsg) tea.Cmd {
 		} else {
 			a.focus = paneChats
 		}
+		return nil
+	}
+	if a.focus == paneChats {
+		return a.chatsKey(msg)
+	}
+	return a.conversationKey(msg)
+}
+
+func (a *app) chatsKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
 	case "down", "j":
-		if a.focus == paneChats && a.selected < len(a.chats)-1 {
+		if a.selected < len(a.chats)-1 {
 			a.selected++
 		}
 	case "up", "k":
-		if a.focus == paneChats && a.selected > 0 {
+		if a.selected > 0 {
 			a.selected--
+		}
+	case "enter", "l", "right":
+		if chat, ok := a.selectedChat(); ok {
+			return a.openChat(chat)
 		}
 	case "r":
 		return tea.Batch(a.loadStatus(), a.loadChats())
 	}
 	return nil
+}
+
+func (a *app) conversationKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "h", "left", "esc":
+		a.focus = paneChats
+	case "up", "k":
+		if a.scroll < max(0, a.rendered-1) {
+			a.scroll++
+		}
+		if a.atOldest() {
+			return a.loadOlder()
+		}
+	case "down", "j":
+		if a.scroll > 0 {
+			a.scroll--
+		}
+	case "g", "home":
+		a.scroll = max(0, a.rendered-a.room)
+		return a.loadOlder()
+	case "G", "end":
+		a.scroll = 0
+	case "r":
+		return a.refreshOpen()
+	}
+	return nil
+}
+
+// atOldest is true when the window onto the conversation has reached the top
+// of what is loaded, which is when older messages are worth asking for.
+func (a *app) atOldest() bool {
+	return a.scroll >= max(0, a.rendered-a.room)
 }
 
 // selectedChat is the conversation the keyboard is on, if there is one.
@@ -160,9 +347,14 @@ func (a *app) View() string {
 	if listWidth < 24 {
 		listWidth = 24
 	}
+	if listWidth > a.width-20 {
+		listWidth = max(12, a.width-20)
+	}
+	paneWidth := max(12, a.width-listWidth-1)
+	paneHeight := max(1, a.height-2)
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		stylePane.Width(listWidth).Height(a.height-2).Render(a.chatList(listWidth)),
-		lipgloss.NewStyle().Width(a.width-listWidth-1).Height(a.height-2).Render(a.conversation()),
+		stylePane.Width(listWidth).Height(paneHeight).Render(a.chatList(listWidth)),
+		lipgloss.NewStyle().Width(paneWidth).Height(paneHeight).Render(a.conversation(paneWidth, paneHeight)),
 	)
 	return strings.Join([]string{a.header(), body, a.footer()}, "\n")
 }
@@ -187,7 +379,7 @@ func (a *app) chatList(width int) string {
 	for i, chat := range a.chats {
 		title := safeLine(chat.Title)
 		if title == "" {
-			title = safeLine(chat.JID)
+			title = safeLine(shortJID(chat.JID))
 		}
 		unread := ""
 		if chat.UnreadCount > 0 {
@@ -196,21 +388,30 @@ func (a *app) chatList(width int) string {
 		// How many are waiting is the one part of a row that must not be the
 		// part that falls off the end, so the name gives up the room for it.
 		title = fitLine(title, width-2-ansi.StringWidth(unread)) + unread
-		if i == a.selected && a.focus == paneChats {
+		switch {
+		case i == a.selected && a.focus == paneChats:
 			lines = append(lines, styleSelected.Render(title))
-			continue
+		case chat.JID == a.open.JID && a.open.JID != "":
+			lines = append(lines, styleTitle.Render(title))
+		default:
+			lines = append(lines, title)
 		}
-		lines = append(lines, title)
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (a *app) conversation() string {
-	chat, ok := a.selectedChat()
-	if !ok {
-		return styleMuted.Render("Pick a conversation")
+// conversation draws the open conversation into the room there is for it. The
+// newest message sits at the bottom, as it does in the desktop client, and
+// scrolling moves that window up through what has been loaded.
+func (a *app) conversation(width, height int) string {
+	a.room = max(1, height-1)
+	lines := a.conversationLines(width)
+	if a.scroll > max(0, len(lines)-1) {
+		a.scroll = max(0, len(lines)-1)
 	}
-	return styleTitle.Render(safeLine(chat.Title)) + "\n" + styleMuted.Render(safeLine(chat.LastMessagePreview))
+	end := max(0, len(lines)-a.scroll)
+	start := max(0, end-a.room)
+	return strings.Join(append([]string{a.conversationTitle(width)}, lines[start:end]...), "\n")
 }
 
 func (a *app) footer() string {
@@ -219,5 +420,8 @@ func (a *app) footer() string {
 		// answer can carry an account's own text inside it.
 		return styleDanger.Render(safeLine(a.failure))
 	}
-	return styleMuted.Render("tab switch · j/k move · r refresh · q quit")
+	if a.focus == paneConversation {
+		return styleMuted.Render("j/k scroll · g older · G newest · h list · r reload · q quit")
+	}
+	return styleMuted.Render("enter open · j/k move · tab pane · r refresh · q quit")
 }

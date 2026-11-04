@@ -60,3 +60,14 @@ func fitLine(text string, cells int) string {
 	}
 	return ansi.Truncate(text, cells, "…")
 }
+
+// safeText is safeLine for something written as more than one line. A message
+// is typed with the line breaks its sender chose and they are part of what was
+// said, so the breaks stay and every line is cleaned on its own.
+func safeText(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for index, line := range lines {
+		lines[index] = safeLine(line)
+	}
+	return strings.Trim(strings.Join(lines, "\n"), "\n")
+}
