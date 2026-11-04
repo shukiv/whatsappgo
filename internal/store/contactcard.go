@@ -27,9 +27,13 @@ func (s *Store) ShareableContacts(ctx context.Context, query string) ([]model.Co
 	   AND a.alias_jid LIKE '%@s.whatsapp.net' ORDER BY a.alias_jid LIMIT 1),'') END AS phone_jid
 	 FROM chats c WHERE c.is_group=0 AND (c.jid LIKE '%@lid' OR c.jid LIKE '%@s.whatsapp.net')
 	 AND NOT EXISTS (SELECT 1 FROM chat_aliases a WHERE a.alias_jid=c.jid)
-	) SELECT jid,name,avatar_path,phone_jid FROM candidates
+	) SELECT jid,name,avatar_path,phone_jid,
+	 CASE WHEN TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name,
+	  '+',''),'-',''),' ',''),'(',''),')',''),'.',''),char(8729),''),char(8226),''),char(183),''))
+	  GLOB '*[^0-9]*' THEN 0 ELSE 1 END AS unnamed
+	FROM candidates
 	WHERE phone_jid<>'' AND (name LIKE ? ESCAPE '\' OR phone_jid LIKE ? ESCAPE '\')
-	ORDER BY name COLLATE NOCASE, jid LIMIT 100`, like, phoneLike)
+	ORDER BY unnamed, name COLLATE NOCASE, jid LIMIT 100`, like, phoneLike)
 	if err != nil {
 		return nil, err
 	}
@@ -38,11 +42,17 @@ func (s *Store) ShareableContacts(ctx context.Context, query string) ([]model.Co
 	for rows.Next() {
 		var contact model.Contact
 		var phoneJID string
-		if err := rows.Scan(&contact.JID, &contact.Name, &contact.AvatarPath, &phoneJID); err != nil {
+		var unnamed int
+		if err := rows.Scan(&contact.JID, &contact.Name, &contact.AvatarPath, &phoneJID, &unnamed); err != nil {
 			return nil, err
 		}
 		contact.Phone = "+" + strings.TrimSuffix(phoneJID, "@s.whatsapp.net")
-		if contact.Name == "" || contact.Name == contact.JID || contact.Name == strings.SplitN(contact.JID, "@", 2)[0] {
+		// Somebody who is not in the address book has no name here, and what
+		// stands in for one is worse than the number: WhatsApp hands out a
+		// masked "+972∙∙∙∙∙∙∙10", a bare string of digits, or a single dot.
+		// The number is what this list is for, so show that.
+		if unnamed == 1 || contact.Name == "" || contact.Name == contact.JID ||
+			contact.Name == strings.SplitN(contact.JID, "@", 2)[0] {
 			contact.Name = contact.Phone
 		}
 		if _, err := model.NewContactCard(contact.Name, contact.Phone); err == nil {
