@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -62,12 +63,21 @@ type app struct {
 	unreadFrom   string
 	unreadCount  int
 
-	// Where the window onto the conversation sits, counted in rows up from
-	// the newest message, and how much there was to look at when it was last
-	// drawn - which is what tells the keyboard when it has reached the top.
-	scroll   int
-	rendered int
-	room     int
+	// Which message the keys act on, and the first row of the conversation
+	// that is on screen. The window follows the keyboard: whichever message
+	// it is on stays visible.
+	cursor int
+	top    int
+
+	// The message box, and what the message in it is for. Typing is reported
+	// to the other person, which is why the window remembers what it last
+	// said about it.
+	input       textinput.Model
+	composing   bool
+	replyTo     string
+	editing     string
+	typing      bool
+	typingToken int
 
 	loadingOlder   bool
 	waitingHistory bool
@@ -81,7 +91,7 @@ func newApp(ctx context.Context, d socket, profile string) *app {
 		d = noDaemon{}
 	}
 	return &app{ctx: ctx, daemon: d, profile: profile, width: 80, height: 24,
-		askedHistory: map[string]bool{}}
+		askedHistory: map[string]bool{}, input: newComposer()}
 }
 
 func (a *app) Init() tea.Cmd {
@@ -151,6 +161,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
 			a.upsert(msg.message)
 		}
+	case typingMsg:
+		// Only the last keystroke's wait reports anything.
+		if int(msg) == a.typingToken {
+			return a, a.reportTyping(a.composing && strings.TrimSpace(a.input.Value()) != "")
+		}
 	case eventMsg:
 		// Whatever the announcement asks for, listening goes on: a client
 		// that stops after one goes quiet for the rest of the session.
@@ -171,10 +186,15 @@ func (a *app) page(msg pageMsg) tea.Cmd {
 	case pageOpen, pageReset:
 		a.messages = msg.page.Messages
 		a.unreadFrom, a.unreadCount = msg.page.FirstUnreadID, msg.page.UnreadCount
-		a.scroll = 0
+		// A conversation opens at its newest message, as it does in the
+		// desktop client.
+		a.cursor, a.top = max(0, len(a.messages)-1), 0
 	case pageOlder:
 		a.loadingOlder, a.waitingHistory = false, false
-		a.prepend(msg.page.Messages)
+		// Older messages go in above, so the message the keyboard was on is
+		// now further down the conversation. It must not be left pointing at
+		// a different one.
+		a.cursor += a.prepend(msg.page.Messages)
 	}
 	a.hasMore = msg.page.HasMore
 	a.nextBefore, a.nextBeforeID = msg.page.NextBefore, msg.page.NextBeforeID
@@ -198,7 +218,13 @@ func (a *app) announcement(evt rpc.Event) tea.Cmd {
 		if !eventData(evt, &message) || message.ChatJID != a.open.JID || a.open.JID == "" {
 			return a.loadChats()
 		}
+		wasNewest := a.cursor == len(a.messages)-1
 		a.upsert(message)
+		// Somebody reading the newest message follows the conversation as it
+		// arrives; somebody who had scrolled back stays where they were.
+		if wasNewest {
+			a.cursor = len(a.messages) - 1
+		}
 		return tea.Batch(a.acknowledgeIncoming(message), a.loadChats())
 	case "message.receipt":
 		var receipt struct {
@@ -265,8 +291,16 @@ func (a *app) announcement(evt rpc.Event) tea.Cmd {
 }
 
 func (a *app) key(msg tea.KeyMsg) tea.Cmd {
+	// Control-C always quits. While the message box has the keyboard, every
+	// other key is part of a message - including q.
+	if msg.Type == tea.KeyCtrlC {
+		return tea.Quit
+	}
+	if a.composing {
+		return a.composerKey(msg)
+	}
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "q":
 		return tea.Quit
 	case "tab":
 		if a.focus == paneChats {
@@ -294,7 +328,11 @@ func (a *app) chatsKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "enter", "l", "right":
 		if chat, ok := a.selectedChat(); ok {
-			return a.openChat(chat)
+			// Opening a conversation leaves the keyboard in the message box,
+			// which is where the desktop client leaves it: clicking a
+			// conversation in the sidebar is usually the start of answering
+			// it.
+			return tea.Batch(a.openChat(chat), a.enterComposer())
 		}
 	case "r":
 		return tea.Batch(a.loadStatus(), a.loadChats())
@@ -307,31 +345,31 @@ func (a *app) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	case "h", "left", "esc":
 		a.focus = paneChats
 	case "up", "k":
-		if a.scroll < max(0, a.rendered-1) {
-			a.scroll++
+		// Moving off the top of what is loaded is what asks for more.
+		if a.cursor > 0 {
+			a.cursor--
+			return nil
 		}
-		if a.atOldest() {
-			return a.loadOlder()
-		}
+		return a.loadOlder()
 	case "down", "j":
-		if a.scroll > 0 {
-			a.scroll--
+		if a.cursor < len(a.messages)-1 {
+			a.cursor++
 		}
 	case "g", "home":
-		a.scroll = max(0, a.rendered-a.room)
+		a.cursor = 0
 		return a.loadOlder()
 	case "G", "end":
-		a.scroll = 0
+		a.cursor = max(0, len(a.messages)-1)
+	case "i", "enter":
+		return a.enterComposer()
 	case "r":
+		return a.replyToSelected()
+	case "e":
+		return a.editSelected()
+	case "ctrl+r":
 		return a.refreshOpen()
 	}
 	return nil
-}
-
-// atOldest is true when the window onto the conversation has reached the top
-// of what is loaded, which is when older messages are worth asking for.
-func (a *app) atOldest() bool {
-	return a.scroll >= max(0, a.rendered-a.room)
 }
 
 // selectedChat is the conversation the keyboard is on, if there is one.
@@ -400,18 +438,25 @@ func (a *app) chatList(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-// conversation draws the open conversation into the room there is for it. The
-// newest message sits at the bottom, as it does in the desktop client, and
-// scrolling moves that window up through what has been loaded.
+// conversation draws the open conversation, with the title above it and the
+// message box below. The newest message sits at the bottom, as it does in the
+// desktop client, and the window holds whichever message the keyboard is on.
 func (a *app) conversation(width, height int) string {
-	a.room = max(1, height-1)
-	lines := a.conversationLines(width)
-	if a.scroll > max(0, len(lines)-1) {
-		a.scroll = max(0, len(lines)-1)
+	lines, from, to := a.conversationLines(width)
+	box := a.composerLines(width)
+	room := max(1, height-1-len(box))
+	// Start at the bottom, then move only as far as it takes to show the
+	// message the keyboard is on.
+	a.top = max(0, len(lines)-room)
+	if to >= 0 && to < a.top {
+		a.top = from
 	}
-	end := max(0, len(lines)-a.scroll)
-	start := max(0, end-a.room)
-	return strings.Join(append([]string{a.conversationTitle(width)}, lines[start:end]...), "\n")
+	end := min(len(lines), a.top+room)
+	rows := append([]string{a.conversationTitle(width)}, lines[a.top:end]...)
+	for len(rows) < height-len(box) {
+		rows = append(rows, "")
+	}
+	return strings.Join(append(rows, box...), "\n")
 }
 
 func (a *app) footer() string {
@@ -420,8 +465,14 @@ func (a *app) footer() string {
 		// answer can carry an account's own text inside it.
 		return styleDanger.Render(safeLine(a.failure))
 	}
+	if a.composing {
+		if a.editing != "" || a.replyTo != "" {
+			return styleMuted.Render("enter send · esc drop the answer · tab list · ctrl+c quit")
+		}
+		return styleMuted.Render("enter send · esc stop typing · tab list · ctrl+c quit")
+	}
 	if a.focus == paneConversation {
-		return styleMuted.Render("j/k scroll · g older · G newest · h list · r reload · q quit")
+		return styleMuted.Render("i write · r answer · e change · j/k move · g older · h list · q quit")
 	}
 	return styleMuted.Render("enter open · j/k move · tab pane · r refresh · q quit")
 }

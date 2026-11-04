@@ -56,14 +56,21 @@ type (
 // conversations must not tell two hundred people that their messages were
 // read.
 func (a *app) openChat(chat model.Chat) tea.Cmd {
+	// Whatever was said about typing belonged to the conversation being left,
+	// and is taken back there before this one is opened.
+	stopped := a.reportTyping(false)
 	a.generation++
 	a.open = chat
 	a.messages = nil
 	a.hasMore, a.nextBefore, a.nextBeforeID = false, 0, ""
 	a.unreadFrom, a.unreadCount = "", 0
-	a.scroll, a.loadingOlder, a.waitingHistory = 0, false, false
+	a.cursor, a.top = 0, 0
+	a.loadingOlder, a.waitingHistory = false, false
+	// A half-written answer belonged to the other conversation too.
+	a.replyTo, a.editing = "", ""
+	a.input.SetValue("")
 	a.focus = paneConversation
-	return a.loadPage(chat.JID, a.generation, 0, "", pageSize, pageOpen)
+	return tea.Batch(stopped, a.loadPage(chat.JID, a.generation, 0, "", pageSize, pageOpen))
 }
 
 // loadPage asks for one page of a conversation. The generation it was asked in
@@ -231,13 +238,13 @@ func (a *app) upsert(message model.Message) {
 	a.messages = append(a.messages, message)
 }
 
-// prepend puts an older page in front of what is on screen. Ids already here
-// are not added a second time: a page can overlap the one above it when
-// messages share a timestamp, and a conversation showing the same message
-// twice is a fault the reader sees.
-func (a *app) prepend(older []model.Message) {
+// prepend puts an older page in front of what is on screen and says how many
+// of it were new. Ids already here are not added a second time: a page can
+// overlap the one above it when messages share a timestamp, and a conversation
+// showing the same message twice is a fault the reader sees.
+func (a *app) prepend(older []model.Message) int {
 	if len(older) == 0 {
-		return
+		return 0
 	}
 	here := make(map[string]bool, len(a.messages))
 	for _, message := range a.messages {
@@ -250,6 +257,16 @@ func (a *app) prepend(older []model.Message) {
 		}
 	}
 	a.messages = append(grown, a.messages...)
+	return len(grown)
+}
+
+// selectedMessage is the message the keyboard is on, which is what the keys
+// that act on one message act on.
+func (a *app) selectedMessage() (model.Message, bool) {
+	if a.cursor < 0 || a.cursor >= len(a.messages) {
+		return model.Message{}, false
+	}
+	return a.messages[a.cursor], true
 }
 
 // applyReceipt moves the marks beside the messages the receipt names. A
@@ -293,59 +310,77 @@ func (a *app) conversationTitle(width int) string {
 }
 
 // conversationLines is the whole loaded conversation, oldest first, one
-// terminal row per entry. The window onto it is taken in View, because how
-// much of it is on screen is a question about the terminal rather than about
-// the conversation.
-func (a *app) conversationLines(width int) []string {
+// terminal row per entry, with the rows the message the keyboard is on
+// occupies. The window onto it is taken in View, because how much of it is on
+// screen is a question about the terminal rather than about the conversation,
+// and the window has to hold that message wherever it is.
+func (a *app) conversationLines(width int) (lines []string, from, to int) {
 	if a.open.JID == "" {
-		return []string{styleMuted.Render("Open a conversation with enter")}
+		return []string{styleMuted.Render("Open a conversation with enter")}, 0, 0
 	}
 	if len(a.messages) == 0 {
 		if a.waitingHistory || a.loadingOlder {
-			return []string{styleMuted.Render("Asking for messages…")}
+			return []string{styleMuted.Render("Asking for messages…")}, 0, 0
 		}
-		return []string{styleMuted.Render("No messages here yet")}
+		return []string{styleMuted.Render("No messages here yet")}, 0, 0
 	}
 	group := strings.HasSuffix(a.open.JID, "@g.us")
-	lines := make([]string, 0, len(a.messages)*2+1)
+	lines = make([]string, 0, len(a.messages)*2+1)
 	switch {
 	case a.waitingHistory:
 		lines = append(lines, styleMuted.Render("asking the account for older messages…"))
 	case a.hasMore:
 		lines = append(lines, styleMuted.Render("older messages above"))
 	}
-	for _, message := range a.messages {
+	for index, message := range a.messages {
 		if message.ID != "" && message.ID == a.unreadFrom && a.unreadCount > 0 {
 			lines = append(lines, styleUnread.Render(fmt.Sprintf("── %s ──",
 				plural(a.unreadCount, "unread message", "unread messages"))))
 		}
-		lines = append(lines, a.messageLines(message, group, width)...)
+		here := index == a.cursor
+		if here {
+			from = len(lines)
+		}
+		lines = append(lines, a.messageLines(message, group, width, here)...)
+		if here {
+			to = len(lines) - 1
+		}
 	}
-	a.rendered = len(lines)
-	return lines
+	return lines, from, to
 }
 
-// The gutter holds the clock, so what was said lines up under itself.
-const gutter = "      "
+// The gutter holds the mark for the message the keyboard is on, and the clock,
+// so what was said lines up under itself.
+const (
+	gutter = "       "
+	marker = "▌"
+)
 
-func (a *app) messageLines(message model.Message, group bool, width int) []string {
+func (a *app) messageLines(message model.Message, group bool, width int, selected bool) []string {
 	room := width - len(gutter)
 	if room < 8 {
 		room = 8
 	}
-	head := styleMuted.Render(stamp(message.Timestamp)) + " " + styleTitle.Render(a.who(message, group))
+	// Which message the keys act on has to be visible without colour, since a
+	// terminal may have none.
+	edge := " "
+	if selected {
+		edge = styleTitle.Render(marker)
+	}
+	head := edge + styleMuted.Render(stamp(message.Timestamp)) + " " + styleTitle.Render(a.who(message, group))
 	if marks := messageMarks(message); marks != "" {
 		head += " " + styleMuted.Render(marks)
 	}
 	lines := []string{head}
+	run := func(text string) { lines = append(lines, edge+gutter[1:]+text) }
 	if quoted := replyLine(message); quoted != "" {
-		lines = append(lines, gutter+styleMuted.Render(fitLine(quoted, room)))
+		run(styleMuted.Render(fitLine(quoted, room)))
 	}
 	for _, line := range strings.Split(ansi.Wordwrap(messageBody(message), room, " -"), "\n") {
-		lines = append(lines, gutter+line)
+		run(line)
 	}
 	if reactions := reactionLine(message); reactions != "" {
-		lines = append(lines, gutter+styleMuted.Render(fitLine(reactions, room)))
+		run(styleMuted.Render(fitLine(reactions, room)))
 	}
 	return lines
 }
