@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -30,6 +31,45 @@ func drive(t *testing.T, messages ...tea.Msg) *app {
 		current = next
 	}
 	return current
+}
+
+// An account has far more conversations than a window has rows. The list shows
+// as many as fit, the title and the key help stay on screen, and the
+// conversation the keyboard is on is always one of the rows shown.
+func TestALongListFitsTheWindow(t *testing.T) {
+	chats := make([]model.Chat, 200)
+	for i := range chats {
+		chats[i] = model.Chat{JID: fmt.Sprintf("97250%07d@s.whatsapp.net", i), Title: fmt.Sprintf("Person %03d", i)}
+	}
+	current := drive(t, chatsMsg(chats))
+	fits := func(view string) {
+		t.Helper()
+		lines := strings.Split(view, "\n")
+		if len(lines) != current.height {
+			t.Fatalf("the window is %d rows tall and was drawn %d rows:\n%s", current.height, len(lines), view)
+		}
+		if !strings.Contains(lines[0], "WhatsAppGo") || !strings.Contains(lines[len(lines)-1], "quit") {
+			t.Fatalf("the title or the key help fell off the window:\n%s", view)
+		}
+	}
+	fits(current.View())
+
+	for range 60 {
+		current = pump(t, current, press("j"))
+	}
+	view := current.View()
+	fits(view)
+	if !strings.Contains(view, "Person 060") || strings.Contains(view, "Person 000") {
+		t.Fatalf("the list did not follow the keyboard down:\n%s", view)
+	}
+	for range 60 {
+		current = pump(t, current, press("k"))
+	}
+	view = current.View()
+	fits(view)
+	if !strings.Contains(view, "Person 000") {
+		t.Fatalf("the list did not follow the keyboard back up:\n%s", view)
+	}
 }
 
 func twoChats() chatsMsg {
@@ -146,7 +186,7 @@ func TestARowTooLongIsCutByWidthAndNotMidCharacter(t *testing.T) {
 		{JID: "972500000002@s.whatsapp.net", Title: strings.Repeat("שוקי וקנין ", 12)},
 		{JID: "972500000003@s.whatsapp.net", Title: "Bob Example"},
 	}))
-	list := current.chatList(30)
+	list := current.chatList(30, 10)
 	if !utf8.ValidString(list) {
 		t.Fatalf("a row was cut in the middle of a character: %q", list)
 	}
