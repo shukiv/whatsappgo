@@ -52,6 +52,7 @@ type app struct {
 	status        status
 	chats         []model.Chat
 	selected      int
+	chatTop       int
 	failure       string
 
 	// The open conversation, and the page of it that has been read. The
@@ -510,7 +511,7 @@ func (a *app) View() string {
 	paneWidth := max(12, a.width-listWidth-1)
 	paneHeight := max(1, a.height-2)
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		stylePane.Width(listWidth).Height(paneHeight).Render(a.chatList(listWidth)),
+		stylePane.Width(listWidth).Height(paneHeight).Render(a.chatList(listWidth, paneHeight)),
 		lipgloss.NewStyle().Width(paneWidth).Height(paneHeight).Render(a.conversation(paneWidth, paneHeight)),
 	)
 	return strings.Join([]string{a.header(), body, a.footer()}, "\n")
@@ -538,12 +539,26 @@ func (a *app) header() string {
 	return styleTitle.Render("WhatsAppGo") + styleMuted.Render(said)
 }
 
-func (a *app) chatList(width int) string {
+// chatList draws as many conversations as the window has rows for. A height
+// sets only how tall the pane is at least, so a list longer than the window
+// would push the title off the top of the screen. It moves only as far as it
+// takes to show the conversation the keyboard is on.
+func (a *app) chatList(width, height int) string {
 	if len(a.chats) == 0 {
 		return styleMuted.Render("No conversations yet")
 	}
-	lines := make([]string, 0, len(a.chats))
-	for i, chat := range a.chats {
+	top := min(a.chatTop, max(0, len(a.chats)-height))
+	switch {
+	case a.selected < top:
+		top = max(0, a.selected)
+	case a.selected >= top+height:
+		top = a.selected - height + 1
+	}
+	a.chatTop = top
+	end := min(len(a.chats), top+height)
+	lines := make([]string, 0, end-top)
+	for i := top; i < end; i++ {
+		chat := a.chats[i]
 		title := safeLine(chat.Title)
 		if title == "" {
 			title = safeLine(shortJID(chat.JID))
