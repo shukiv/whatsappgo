@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shukiv/whatsappgo/internal/model"
@@ -332,7 +334,14 @@ func (a *app) conversationLines(width int) (lines []string, from, to int) {
 	case a.hasMore:
 		lines = append(lines, styleMuted.Render("older messages above"))
 	}
+	lastDay := ""
 	for index, message := range a.messages {
+		if message.Timestamp > 0 {
+			if day := time.UnixMilli(message.Timestamp).Format(time.DateOnly); day != lastDay {
+				lines = append(lines, dayLine(message.Timestamp, width))
+				lastDay = day
+			}
+		}
 		if message.ID != "" && message.ID == a.unreadFrom && a.unreadCount > 0 {
 			lines = append(lines, styleUnread.Render(fmt.Sprintf("── %s ──",
 				plural(a.unreadCount, "unread message", "unread messages"))))
@@ -349,40 +358,82 @@ func (a *app) conversationLines(width int) (lines []string, from, to int) {
 	return lines, from, to
 }
 
-// The gutter holds the mark for the message the keyboard is on, and the clock,
-// so what was said lines up under itself.
-const (
-	gutter = "       "
-	marker = "▌"
-)
-
+// messageLines draws one message as a bubble, the way the window does: what
+// this account sent on the right, what anybody else sent on the left, and the
+// clock and how far it got in the bubble's bottom corner.
+//
+// Which message the keys act on has to be visible without colour, since a
+// terminal may have none, so its bubble is drawn with a heavy line.
 func (a *app) messageLines(message model.Message, group bool, width int, selected bool) []string {
-	room := width - len(gutter)
-	if room < 8 {
-		room = 8
-	}
-	// Which message the keys act on has to be visible without colour, since a
-	// terminal may have none.
-	edge := " "
-	if selected {
-		edge = styleTitle.Render(marker)
-	}
-	head := edge + styleMuted.Render(stamp(message.Timestamp)) + " " + styleTitle.Render(a.who(message, group))
+	// Room for the border and a space either side of the words.
+	const frame = 4
+	// A bubble takes at most three quarters of the pane, as in the window.
+	most := max(8, width*3/4-frame)
+	footer := stamp(message.Timestamp)
 	if marks := messageMarks(message); marks != "" {
-		head += " " + styleMuted.Render(marks)
+		footer += " " + marks
 	}
-	lines := []string{head}
-	run := func(text string) { lines = append(lines, edge+gutter[1:]+text) }
+	footer = fitLine(footer, most)
+
+	var lines []string
+	if group && !message.FromMe {
+		lines = append(lines, styleTitle.Render(fitLine(a.who(message, group), most)))
+	}
 	if quoted := replyLine(message); quoted != "" {
-		run(styleMuted.Render(fitLine(quoted, room)))
+		lines = append(lines, styleMuted.Render(fitLine(quoted, most)))
 	}
-	for _, line := range strings.Split(ansi.Wrap(messageBody(message), room, " -"), "\n") {
-		run(line)
-	}
+	body := strings.Split(ansi.Wrap(messageBody(message), most, " -"), "\n")
+	lines = append(lines, body...)
 	if reactions := reactionLine(message); reactions != "" {
-		run(styleMuted.Render(fitLine(reactions, room)))
+		lines = append(lines, fitLine(reactions, most))
 	}
-	return lines
+
+	inner := ansi.StringWidth(footer)
+	for _, line := range lines {
+		inner = max(inner, ansi.StringWidth(line))
+	}
+	inner = min(inner, most)
+	// Words written right to left start at the bubble's right edge, which is
+	// where somebody reading them looks for the start.
+	for at, line := range lines {
+		if rightToLeft(line) {
+			lines[at] = lipgloss.PlaceHorizontal(inner, lipgloss.Right, line)
+		}
+	}
+	lines = append(lines, lipgloss.PlaceHorizontal(inner, lipgloss.Right, styleMuted.Render(footer)))
+
+	style := styleTheirBubble
+	if message.FromMe {
+		style = styleOwnBubble
+	}
+	if selected {
+		style = style.Border(lipgloss.ThickBorder())
+	}
+	box := style.Width(inner + 2).Render(strings.Join(lines, "\n"))
+	if message.FromMe {
+		box = lipgloss.PlaceHorizontal(width, lipgloss.Right, box)
+	}
+	return strings.Split(box, "\n")
+}
+
+// rightToLeft says whether a line starts in a script written right to left,
+// judged by its first letter, which is how the window decides it too.
+func rightToLeft(line string) bool {
+	for _, char := range ansi.Strip(line) {
+		switch {
+		case unicode.In(char, unicode.Hebrew, unicode.Arabic, unicode.Syriac, unicode.Thaana):
+			return true
+		case unicode.IsLetter(char):
+			return false
+		}
+	}
+	return false
+}
+
+// dayLine names the day the messages under it were sent on, where it changes.
+func dayLine(milliseconds int64, width int) string {
+	day := time.UnixMilli(milliseconds).Format("Monday, 2 January 2006")
+	return lipgloss.PlaceHorizontal(width, lipgloss.Center, styleMuted.Render("── "+day+" ──"))
 }
 
 // who wrote it. A conversation with one other person says their name once, at
