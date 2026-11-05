@@ -18,4 +18,11 @@ var (
 	styleUnread = lipgloss.NewStyle().Foreground(colourBrand)
 	stylePane   = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).
 			BorderForeground(colourSelect)
+	// A message is a bubble with a space inside each side: the account's own
+	// in the window's green, everybody else's in grey. Only the line is
+	// coloured, so the words read on a light terminal and a dark one alike.
+	styleOwnBubble = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
+			BorderForeground(colourBrand).Padding(0, 1)
+	styleTheirBubble = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
+				BorderForeground(colourMuted).Padding(0, 1)
 )
