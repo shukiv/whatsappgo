@@ -12,6 +12,7 @@ mkdir -p "${appdir}/usr/bin" "${tools_dir}" "${project_root}/bin"
 version="$("${project_root}/scripts/version.sh")"
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappd" "${project_root}/cmd/whatsappd"
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsappctl" "${project_root}/cmd/whatsappctl"
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "${project_root}/bin/whatsapptui" "${project_root}/cmd/whatsapptui"
 # Its own build directory, the way packaging/macos/build.sh has one: this
 # configures with an install prefix of /usr and without the tests, neither of
 # which belongs in the tree a developer builds in.
@@ -33,6 +34,11 @@ DESTDIR="${appdir}" cmake --install "${build_dir}"
 # from one tree and must travel together.
 install -Dm755 "${project_root}/bin/whatsappd" "${appdir}/usr/bin/whatsappd"
 install -Dm755 "${project_root}/bin/whatsappctl" "${appdir}/usr/bin/whatsappctl"
+# The terminal client talks to the same daemon, so it travels with it too. The
+# image starts the window; the terminal client is taken out of it with
+#   ./WhatsAppGo-x86_64.AppImage --appimage-extract usr/bin/whatsapptui
+# and run as squashfs-root/usr/bin/whatsapptui.
+install -Dm755 "${project_root}/bin/whatsapptui" "${appdir}/usr/bin/whatsapptui"
 install -Dm644 "${project_root}/packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml" "${appdir}/usr/share/metainfo/org.whatsappgo.Desktop.metainfo.xml"
 
 arch="$(uname -m)"
