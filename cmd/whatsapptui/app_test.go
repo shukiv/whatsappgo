@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
@@ -115,6 +116,91 @@ func TestALongLinkStaysInsideThePane(t *testing.T) {
 					width, strings.Count(current.View(), "\n")+1, current.height, current.View())
 			}
 		}
+	}
+}
+
+// What this account sent is a bubble on the right and what anybody else sent
+// is one on the left, each with its clock inside. The message the keys act on
+// has a heavy line, which shows on a terminal without colour.
+func TestMessagesAreBubblesOnTheirOwnSide(t *testing.T) {
+	current := drive(t)
+	const width = 60
+	theirs := current.messageLines(model.Message{ID: "t1", SenderJID: alice, Timestamp: noon,
+		Kind: "text", Body: "hello"}, false, width, false)
+	ours := current.messageLines(model.Message{ID: "o1", FromMe: true, Timestamp: noon,
+		Kind: "text", Body: "hi", DeliveredAt: noon}, false, width, true)
+
+	if top := ansi.Strip(theirs[0]); !strings.HasPrefix(top, "╭") || !strings.HasSuffix(top, "╮") {
+		t.Fatalf("their bubble does not open at the left edge: %q", top)
+	}
+	if !strings.Contains(ansi.Strip(strings.Join(theirs, "\n")), "│ hello") {
+		t.Fatalf("their words are not inside the bubble:\n%s", strings.Join(theirs, "\n"))
+	}
+	top := ansi.Strip(ours[0])
+	if !strings.HasPrefix(top, " ") || !strings.HasSuffix(top, "┓") || ansi.StringWidth(top) != width {
+		t.Fatalf("our bubble is not against the right edge with a heavy line: %q", top)
+	}
+	clock := false
+	for _, line := range ours[1 : len(ours)-1] {
+		plain := ansi.Strip(line)
+		if strings.Contains(plain, stamp(noon)+" ✓✓") && strings.HasSuffix(plain, "┃") {
+			clock = true
+		}
+	}
+	if !clock {
+		t.Fatalf("the clock and the ticks are not inside our bubble:\n%s", strings.Join(ours, "\n"))
+	}
+}
+
+// Words written right to left start at the bubble's right edge, where somebody
+// reading them looks for the start.
+func TestHebrewStartsAtTheRightOfItsBubble(t *testing.T) {
+	current := drive(t)
+	lines := current.messageLines(model.Message{ID: "h1", SenderJID: alice, Timestamp: noon,
+		Kind: "text", Body: "שלום", Edited: true, Starred: true}, false, 60, false)
+	for _, line := range lines {
+		if plain := ansi.Strip(line); strings.Contains(plain, "שלום") {
+			if !strings.HasSuffix(plain, "שלום │") {
+				t.Fatalf("the Hebrew line does not end against the bubble's right side: %q", plain)
+			}
+			return
+		}
+	}
+	t.Fatalf("the words are not in the bubble:\n%s", strings.Join(lines, "\n"))
+}
+
+// Inside a group each bubble says who wrote it. With one other person the side
+// already says so.
+func TestOnlyAGroupBubbleSaysWhoWroteIt(t *testing.T) {
+	current := drive(t)
+	message := model.Message{ID: "g1", SenderJID: alice, SenderName: "Bob Example", Timestamp: noon,
+		Kind: "text", Body: "hello"}
+	if group := ansi.Strip(strings.Join(current.messageLines(message, true, 60, false), "\n")); !strings.Contains(group, "Bob Example") {
+		t.Fatalf("a group bubble does not say who wrote it:\n%s", group)
+	}
+	if alone := ansi.Strip(strings.Join(current.messageLines(message, false, 60, false), "\n")); strings.Contains(alone, "Bob Example") {
+		t.Fatalf("a bubble from the one other person names them:\n%s", alone)
+	}
+}
+
+// A conversation that runs over more than one day says which day each part of
+// it was on, and the window still holds the whole of the bubble the keys are on.
+func TestAConversationSaysWhichDayAndHoldsTheWholeBubble(t *testing.T) {
+	const day = 24 * 60 * 60 * 1000
+	fake := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{
+		{ID: "d1", ChatJID: alice, SenderJID: alice, Timestamp: noon, Kind: "text", Body: "yesterday"},
+		{ID: "d2", ChatJID: alice, FromMe: true, Timestamp: noon + day, Kind: "text", Body: "today"}}})
+	current := openAlice(t, fake, model.MessagePage{})
+	view := current.View()
+	for _, when := range []int64{noon, noon + day} {
+		if name := time.UnixMilli(when).Format("Monday, 2 January 2006"); !strings.Contains(view, name) {
+			t.Fatalf("the window does not say %q:\n%s", name, view)
+		}
+	}
+	lines, from, to := current.conversationLines(current.width / 2)
+	if !strings.Contains(ansi.Strip(lines[from]), "┏") || !strings.Contains(ansi.Strip(lines[to]), "┗") {
+		t.Fatalf("the rows of the message the keys are on are %d to %d, not its whole bubble:\n%s",
+			from, to, strings.Join(lines, "\n"))
 	}
 }
 
