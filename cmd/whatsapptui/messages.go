@@ -376,7 +376,7 @@ func (a *app) messageLines(message model.Message, group bool, width int, selecte
 	if quoted := replyLine(message); quoted != "" {
 		run(styleMuted.Render(fitLine(quoted, room)))
 	}
-	for _, line := range strings.Split(ansi.Wordwrap(messageBody(message), room, " -"), "\n") {
+	for _, line := range strings.Split(ansi.Wrap(messageBody(message), room, " -"), "\n") {
 		run(line)
 	}
 	if reactions := reactionLine(message); reactions != "" {

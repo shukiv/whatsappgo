@@ -72,6 +72,52 @@ func TestALongListFitsTheWindow(t *testing.T) {
 	}
 }
 
+// A terminal that lays out right-to-left text itself treats a whole row as one
+// paragraph. A Hebrew name at the end of a list cell would run on into the
+// border and the clock beside it and drag them into its own order, so every
+// cell ends with a left-to-right mark before the border.
+func TestAHebrewNameStaysInItsOwnColumn(t *testing.T) {
+	current := drive(t, chatsMsg([]model.Chat{{JID: "972500000009@s.whatsapp.net", Title: "שוקי וקנין"}}))
+	for _, row := range strings.Split(current.View(), "\n") {
+		name := strings.Index(row, "שוקי וקנין")
+		if name < 0 {
+			continue
+		}
+		mark := strings.Index(row[name:], "‎")
+		border := strings.Index(row[name:], "│")
+		if mark < 0 || border < 0 || mark > border {
+			t.Fatalf("nothing holds the name to its column before the border: %q", row)
+		}
+		return
+	}
+	t.Fatalf("the name is not in the list:\n%s", current.View())
+}
+
+// A word longer than the room it has, which is what a link usually is, is cut
+// to fit rather than left to run past the edge of its pane.
+func TestALongLinkStaysInsideThePane(t *testing.T) {
+	for _, link := range []string{
+		"https://ny-executive-podcast-info.simplecast.com/episodes/4582-yaniv-ron-10-12-26-enterprise-cloud-devops-it-architecture-emily",
+		"https://docs.google.com/forms/d/1VFxVu0exAP2-8Qeui0tPcQtxAgIu0X7Sb9PtsT9XllY/" + strings.Repeat("x", 120),
+	} {
+		fake := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{
+			{ID: "l1", ChatJID: alice, SenderJID: alice, Timestamp: noon, Kind: "text", Body: link}}})
+		current := openAlice(t, fake, model.MessagePage{})
+		for width := 60; width <= 170; width++ {
+			current.width = width
+			for _, row := range strings.Split(current.View(), "\n") {
+				if got := ansi.StringWidth(row); got > width {
+					t.Fatalf("a row is %d columns in a %d-column window: %q", got, width, row)
+				}
+			}
+			if strings.Count(current.View(), "\n")+1 != current.height {
+				t.Fatalf("at %d columns the window was drawn %d rows tall, not %d:\n%s",
+					width, strings.Count(current.View(), "\n")+1, current.height, current.View())
+			}
+		}
+	}
+}
+
 func twoChats() chatsMsg {
 	return chatsMsg([]model.Chat{
 		{JID: "972500000001@s.whatsapp.net", Title: "Alice Example", LastMessagePreview: "see you there"},
