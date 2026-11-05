@@ -316,7 +316,11 @@ func (a *app) conversationTitle(width int) string {
 // occupies. The window onto it is taken in View, because how much of it is on
 // screen is a question about the terminal rather than about the conversation,
 // and the window has to hold that message wherever it is.
+//
+// Which message each row belongs to is kept in lineOwners, so a click on a row
+// reaches the message drawn there.
 func (a *app) conversationLines(width int) (lines []string, from, to int) {
+	a.lineOwners = nil
 	if a.open.JID == "" {
 		return []string{styleMuted.Render("Open a conversation with enter")}, 0, 0
 	}
@@ -328,6 +332,12 @@ func (a *app) conversationLines(width int) (lines []string, from, to int) {
 	}
 	group := strings.HasSuffix(a.open.JID, "@g.us")
 	lines = make([]string, 0, len(a.messages)*2+1)
+	owners := make([]int, 0, cap(lines))
+	owned := func(index int) {
+		for len(owners) < len(lines) {
+			owners = append(owners, index)
+		}
+	}
 	switch {
 	case a.waitingHistory:
 		lines = append(lines, styleMuted.Render("asking the account for older messages…"))
@@ -347,14 +357,18 @@ func (a *app) conversationLines(width int) (lines []string, from, to int) {
 				plural(a.unreadCount, "unread message", "unread messages"))))
 		}
 		here := index == a.cursor
+		owned(-1)
 		if here {
 			from = len(lines)
 		}
 		lines = append(lines, a.messageLines(message, group, width, here)...)
+		owned(index)
 		if here {
 			to = len(lines) - 1
 		}
 	}
+	owned(-1)
+	a.lineOwners = owners
 	return lines, from, to
 }
 

@@ -55,6 +55,12 @@ type app struct {
 	chatTop       int
 	failure       string
 
+	// What each row of the conversation pane showed when it was last drawn,
+	// and which message each row of the conversation belongs to, so that a
+	// click goes where a key would have.
+	hits       []hit
+	lineOwners []int
+
 	// The open conversation, and the page of it that has been read. The
 	// generation counts how many times a conversation has been opened, so an
 	// answer about one the reader has left can be recognised and dropped.
@@ -253,6 +259,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(a.announcement(rpc.Event(msg)), a.nextEvent())
 	case tea.KeyMsg:
 		return a, a.key(msg)
+	case tea.MouseMsg:
+		return a, a.mouse(msg)
 	}
 	return a, nil
 }
@@ -500,16 +508,23 @@ func (a *app) selectedChat() (model.Chat, bool) {
 	return a.chats[a.selected], true
 }
 
-func (a *app) View() string {
-	listWidth := a.width / 3
+// layout is how the window is divided: the list, its border, the conversation
+// beside it, and how many rows they have between the title and the key help.
+func (a *app) layout() (listWidth, paneWidth, paneHeight int) {
+	listWidth = a.width / 3
 	if listWidth < 24 {
 		listWidth = 24
 	}
 	if listWidth > a.width-20 {
 		listWidth = max(12, a.width-20)
 	}
-	paneWidth := max(12, a.width-listWidth-1)
-	paneHeight := max(1, a.height-2)
+	paneWidth = max(12, a.width-listWidth-1)
+	paneHeight = max(1, a.height-2)
+	return listWidth, paneWidth, paneHeight
+}
+
+func (a *app) View() string {
+	listWidth, paneWidth, paneHeight := a.layout()
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
 		stylePane.Width(listWidth).Height(paneHeight).Render(anchored(fitted(a.chatList(listWidth, paneHeight), listWidth))),
 		lipgloss.NewStyle().Width(paneWidth).Height(paneHeight).Render(anchored(fitted(a.conversation(paneWidth, paneHeight), paneWidth))),
@@ -592,6 +607,7 @@ func (a *app) chatList(width, height int) string {
 // message box below. The newest message sits at the bottom, as it does in the
 // desktop client, and the window holds whichever message the keyboard is on.
 func (a *app) conversation(width, height int) string {
+	a.hits = nil
 	if a.prompt != nil {
 		return a.promptLines(width)
 	}
@@ -602,15 +618,27 @@ func (a *app) conversation(width, height int) string {
 	box := a.composerLines(width)
 	room := max(1, height-1-len(box))
 	// Start at the bottom, then move only as far as it takes to show the
-	// message the keyboard is on.
+	// message the keyboard is on - all of its bubble, not only its last row.
 	a.top = max(0, len(lines)-room)
-	if to >= 0 && to < a.top {
+	if to >= 0 && from < a.top {
 		a.top = from
 	}
 	end := min(len(lines), a.top+room)
 	rows := append([]string{a.conversationTitle(width)}, lines[a.top:end]...)
+	a.hits = append(a.hits, nothing)
+	for at := a.top; at < end; at++ {
+		shown := nothing
+		if at < len(a.lineOwners) {
+			shown.message = a.lineOwners[at]
+		}
+		a.hits = append(a.hits, shown)
+	}
 	for len(rows) < height-len(box) {
 		rows = append(rows, "")
+		a.hits = append(a.hits, nothing)
+	}
+	for range box {
+		a.hits = append(a.hits, hit{message: -1, item: -1, composer: true})
 	}
 	return strings.Join(append(rows, box...), "\n")
 }

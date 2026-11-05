@@ -347,7 +347,11 @@ func (a *app) chooserLines(width, height int) string {
 	if a.chooser.cursor >= room {
 		start = a.chooser.cursor - room + 1
 	}
+	for range rows {
+		a.hits = append(a.hits, nothing)
+	}
 	for at := start; at < len(a.chooser.items) && at < start+room; at++ {
+		a.hits = append(a.hits, hit{message: -1, item: at})
 		row := fmt.Sprintf(" %s", a.chooser.items[at].label)
 		if at < 9 {
 			row = fmt.Sprintf(" %d %s", at+1, a.chooser.items[at].label)
