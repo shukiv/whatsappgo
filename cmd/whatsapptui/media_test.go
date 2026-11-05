@@ -191,6 +191,103 @@ func TestALinkOffersThePageAndTheFullPreview(t *testing.T) {
 	}
 }
 
+// A link was written by whoever sent it, and the program that opens it picks
+// what to run by the link's scheme. Only the schemes a conversation carries are
+// followed - the same ones the window follows - so a message cannot ask this
+// computer to open a file of its own, mount a share or start a game.
+//
+// None of these would do anything if they did get through: the hosts do not
+// exist and the paths are not there.
+func TestALinkIsOpenedOnlyIfItIsAWebAddress(t *testing.T) {
+	script, _ := recorder(t)
+	for _, address := range []string{
+		"file:///nothing/here",
+		"ssh://nobody@example.invalid",
+		"javascript:void(0)",
+		"smb://example.invalid/share",
+		"steam://nothing",
+		"/nothing/here",
+		"example.com",
+		"--version",
+	} {
+		link := model.Message{ID: "l1", ChatJID: alice, SenderJID: alice, Timestamp: noon,
+			Kind: "text", Body: "look at " + address, LinkURL: address}
+		fake := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{link}})
+		current := openAlice(t, fake, model.MessagePage{})
+		fake.forget()
+
+		current = pump(t, current, press("o"))
+		current = pump(t, current, chooseLabel(t, current, "open the page"))
+		if !strings.Contains(current.View(), "not a web address") {
+			t.Fatalf("opening %q does not say why nothing opened:\n%s", address, current.View())
+		}
+		if asked := fake.calls(""); len(asked) != 0 {
+			t.Fatalf("opening %q asked the daemon for %v", address, asked)
+		}
+	}
+	nothingHandedOver(t, script)
+}
+
+// The addresses a conversation does carry are followed, however the scheme is
+// written, and nothing else is - the same two lists the window is held to.
+func TestOnlyTheSchemesAConversationCarriesAreFollowed(t *testing.T) {
+	for _, address := range []string{
+		"https://example.com/path?q=1",
+		"http://example.com",
+		"HTTPS://example.com",
+		"mailto:someone@example.com",
+		"tel:+15551234567",
+		"geo:32.08,34.78",
+	} {
+		if given, followed := followable(address); !followed || given != address {
+			t.Errorf("%q is not followed (%q, %v)", address, given, followed)
+		}
+	}
+	for _, address := range []string{
+		"file:///nothing/here",
+		" file:///nothing/here",
+		"ssh://nobody@example.invalid",
+		"javascript:void(0)",
+		"smb://example.invalid/share",
+		"steam://nothing",
+		"/nothing/here",
+		"example.com",
+		"--version",
+		"",
+	} {
+		if _, followed := followable(address); followed {
+			t.Errorf("%q is followed", address)
+		}
+	}
+}
+
+// A place is opened as a place on a map, which is an address the window
+// follows too.
+func TestALocationOpensAsAPlaceOnAMap(t *testing.T) {
+	_, taken := recorder(t)
+	place := model.Message{ID: "g1", ChatJID: alice, SenderJID: alice, Timestamp: noon,
+		Kind: "location", Latitude: 32.08, Longitude: 34.78}
+	fake := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{place}})
+	pump(t, openAlice(t, fake, model.MessagePage{}), press("o"))
+	if given := taken(); given != "geo:32.080000,34.780000" {
+		t.Fatalf("the program was given %q", given)
+	}
+}
+
+// nothingHandedOver fails if the opener was started at all. A refused address
+// never starts it, so a short wait is enough for one that wrongly did to have
+// written down what it was given.
+func nothingHandedOver(t *testing.T, script string) {
+	t.Helper()
+	time.Sleep(500 * time.Millisecond)
+	noted := filepath.Join(filepath.Dir(script), "handed-over")
+	if given, err := os.ReadFile(noted); err == nil {
+		t.Fatalf("the program was given %q", given)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("look for what the program was given: %v", err)
+	}
+}
+
 // A file is sent as what it is being sent as, which is the choice the window's
 // attach menu offers for the same file.
 func TestAFileIsSentAsWhateverItIsBeingSentAs(t *testing.T) {

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,7 +151,31 @@ func (a *app) handOverMedia(message model.Message, play bool) tea.Cmd {
 	return tea.Batch(asks...)
 }
 
+// The schemes a conversation legitimately carries, which are the ones the
+// window follows too. A link was written by whoever sent it, and the program
+// it is handed to picks what to run by its scheme - a desktop can register a
+// handler for almost anything - so any other scheme could start a program of
+// the sender's choosing. A path on this computer is not in the list either.
+var followedSchemes = map[string]bool{"http": true, "https": true, "mailto": true, "tel": true, "geo": true}
+
+// followable is the address as it is handed over, and whether it may be.
+func followable(address string) (string, bool) {
+	address = strings.TrimSpace(address)
+	target, err := url.Parse(address)
+	if err != nil {
+		return "", false
+	}
+	return address, followedSchemes[target.Scheme]
+}
+
+// openAddress refuses an address it would not follow before anything is
+// started, so a refused one never reaches another program.
 func (a *app) openAddress(address string) tea.Cmd {
+	address, followed := followable(address)
+	if !followed {
+		a.failure = "That link is not a web address, so it was not opened."
+		return nil
+	}
 	return func() tea.Msg {
 		if err := handOver(address); err != nil {
 			return failureMsg{err}
