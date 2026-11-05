@@ -511,10 +511,16 @@ func (a *app) View() string {
 	paneWidth := max(12, a.width-listWidth-1)
 	paneHeight := max(1, a.height-2)
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		stylePane.Width(listWidth).Height(paneHeight).Render(a.chatList(listWidth, paneHeight)),
-		lipgloss.NewStyle().Width(paneWidth).Height(paneHeight).Render(a.conversation(paneWidth, paneHeight)),
+		stylePane.Width(listWidth).Height(paneHeight).Render(anchored(fitted(a.chatList(listWidth, paneHeight), listWidth))),
+		lipgloss.NewStyle().Width(paneWidth).Height(paneHeight).Render(anchored(fitted(a.conversation(paneWidth, paneHeight), paneWidth))),
 	)
-	return strings.Join([]string{a.header(), body, a.footer()}, "\n")
+	// A line wider than the terminal is wrapped by the terminal, which pushes
+	// every row below it down and the title off the top.
+	return strings.Join([]string{
+		anchored(ansi.Truncate(a.header(), a.width, "…")),
+		body,
+		anchored(ansi.Truncate(a.footer(), a.width, "…")),
+	}, "\n")
 }
 
 func (a *app) header() string {

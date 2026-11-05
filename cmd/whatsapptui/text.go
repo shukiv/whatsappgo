@@ -7,6 +7,33 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// lrm is the left-to-right mark. It takes no room on screen. A terminal that
+// lays out right-to-left text itself treats a whole row as one paragraph, so a
+// Hebrew name at the end of the list column runs on into the spaces, the
+// border and the clock beside it and drags them into its own order. A mark at
+// each end of every cell holds each column to its own side of the row.
+const lrm = "‎"
+
+// fitted cuts every line of a block to the room its pane has. A pane given a
+// line wider than itself wraps it onto a row of its own, the frame comes out
+// taller than the terminal, and the terminal drops the top of the window.
+func fitted(block string, width int) string {
+	lines := strings.Split(block, "\n")
+	for at, line := range lines {
+		lines[at] = ansi.Truncate(line, width, "…")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// anchored puts the mark at both ends of every line of a block.
+func anchored(block string) string {
+	lines := strings.Split(block, "\n")
+	for at, line := range lines {
+		lines[at] = lrm + line + lrm
+	}
+	return strings.Join(lines, "\n")
+}
+
 // safeLine makes a string that came from the account safe to write to a
 // terminal, and fit to live on one row.
 //
