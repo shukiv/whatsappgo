@@ -54,7 +54,10 @@ func run(profile, socket string) error {
 	}
 	defer connection.Close()
 
-	program := tea.NewProgram(newApp(ctx, connection, profile), tea.WithAltScreen(), tea.WithContext(ctx))
+	// The mouse is read as well as the keys: a click on a conversation, a
+	// message or an item of a list does what the keys would do with it.
+	program := tea.NewProgram(newApp(ctx, connection, profile),
+		tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err = program.Run()
 	return err
 }
