@@ -51,7 +51,7 @@ func wrapped(text string, width int, style lipgloss.Style) []string {
 	if width < 8 {
 		width = 8
 	}
-	lines := strings.Split(ansi.Wordwrap(text, width, " -"), "\n")
+	lines := strings.Split(ansi.Wrap(text, width, " -"), "\n")
 	for at, line := range lines {
 		lines[at] = style.Render(line)
 	}
