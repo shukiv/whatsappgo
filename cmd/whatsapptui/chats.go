@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 )
@@ -99,12 +100,20 @@ func (a *app) promptKey(msg tea.KeyMsg) tea.Cmd {
 }
 
 func (a *app) promptLines(width int) string {
-	a.prompt.input.Width = max(8, width-4)
 	rows := wrapped(a.prompt.title, width, styleTitle)
 	if a.prompt.hint != "" {
 		rows = append(rows, wrapped(a.prompt.hint, width, styleMuted)...)
 	}
-	return strings.Join(append(rows, "", a.prompt.input.View()), "\n")
+	rows = append(rows, "")
+	typed := inputRows(a.prompt.input.Value(), a.prompt.input.Position(), max(4, width-2), 3, "", true, lipgloss.NewStyle())
+	for at, row := range typed {
+		prompt := "  "
+		if at == 0 {
+			prompt = "› "
+		}
+		rows = append(rows, prompt+row)
+	}
+	return strings.Join(rows, "\n")
 }
 
 // subjectChat is the conversation the menu acts on: the one that is open, or

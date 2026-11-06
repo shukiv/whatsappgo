@@ -3,9 +3,13 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 )
@@ -95,11 +99,12 @@ func TestOpeningAPictureNotYetFetchedFetchesItFirst(t *testing.T) {
 // A voice note somebody else sent is reported as played once it has been
 // handed to the player, which is the moment it is played.
 func TestOpeningAVoiceNoteReportsItPlayed(t *testing.T) {
-	recorder(t)
+	playerRecorder(t)
 	note, _ := withMedia(t, model.Message{ID: "v1", ChatJID: alice, SenderJID: alice,
 		Timestamp: noon, Kind: "audio", MediaDuration: 12})
 	fake := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{note}})
 	current := openAlice(t, fake, model.MessagePage{})
+	t.Cleanup(current.stopPlaying)
 	pump(t, current, press("o"))
 
 	played := fake.only(t, "message.played")
@@ -111,7 +116,9 @@ func TestOpeningAVoiceNoteReportsItPlayed(t *testing.T) {
 	ours, _ := withMedia(t, model.Message{ID: "v2", ChatJID: alice, FromMe: true,
 		Timestamp: noon, Kind: "audio"})
 	other := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{ours}})
-	pump(t, openAlice(t, other, model.MessagePage{}), press("o"))
+	window := openAlice(t, other, model.MessagePage{})
+	t.Cleanup(window.stopPlaying)
+	pump(t, window, press("o"))
 	if played := other.calls("message.played"); len(played) != 0 {
 		t.Fatalf("our own voice note was reported played: %v", played)
 	}
@@ -288,21 +295,17 @@ func nothingHandedOver(t *testing.T, script string) {
 	}
 }
 
-// A file is sent as what it is being sent as, which is the choice the window's
-// attach menu offers for the same file.
+// A file is sent as the item of the attach menu it was chosen under, which is
+// how the desktop client's attach menu sends it: a document keeps its file.
 func TestAFileIsSentAsWhateverItIsBeingSentAs(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "lease.pdf")
-	if err := os.WriteFile(path, []byte("a lease"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(homeWith(t, "lease.pdf"), "lease.pdf")
 	fake := newFakeDaemon().answer("message.send_media",
 		model.Message{ID: "s1", ChatJID: alice, FromMe: true, Kind: "document", MediaName: "lease.pdf"})
 	current := openAlice(t, fake, aliceMessages())
 
 	current = pump(t, current, press("a"))
-	current = pump(t, current, chooseLabel(t, current, "a file"))
-	current = pump(t, current, typed(path), press("enter"))
-	current = pump(t, current, chooseLabel(t, current, "a file"))
+	current = pump(t, current, chooseLabel(t, current, "Document"))
+	current = pump(t, current, chooseLabel(t, current, "lease.pdf"))
 	current = pump(t, current, typed("the lease"), press("enter"))
 
 	sent := fake.only(t, "message.send_media")
@@ -319,7 +322,9 @@ func TestAFileThatIsNotThereIsNotSent(t *testing.T) {
 	fake := newFakeDaemon()
 	current := openAlice(t, fake, aliceMessages())
 	current = pump(t, current, press("a"))
-	current = pump(t, current, chooseLabel(t, current, "a file"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+	current = pump(t, current, chooseLabel(t, current, "Type a path"))
+	current.prompt.input.SetValue("")
 	current = pump(t, current, typed("/no/such/file.jpg"), press("enter"))
 	if sent := fake.calls("message.send_media"); len(sent) != 0 {
 		t.Fatalf("a file that is not there was sent: %v", sent)
@@ -329,15 +334,16 @@ func TestAFileThatIsNotThereIsNotSent(t *testing.T) {
 	}
 }
 
-// A sticker is sent by reusing the original, which is the only way one can be
-// sent: the message it came in is what goes.
+// A sticker that has passed through the account is sent by reusing the
+// original - the message it came in is what goes. It is found where the
+// desktop client keeps it, beside the emoji.
 func TestAStickerIsSentByReusingTheOriginal(t *testing.T) {
 	fake := newFakeDaemon().answer("media.shared", model.SharedMessagePage{Messages: []model.Message{
 		{ID: "k1", ChatJID: "972500000002@s.whatsapp.net", ChatTitle: "Bob Example",
 			Timestamp: noon, Kind: "sticker"}}})
 	current := openAlice(t, fake, aliceMessages())
-	current = pump(t, current, press("a"))
-	current = pump(t, current, chooseLabel(t, current, "a sticker"))
+	current = pump(t, current, press(":"))
+	current = pump(t, current, tea.KeyMsg{Type: tea.KeyCtrlS})
 	asked := fake.only(t, "media.shared")
 	if asked.text("category") != "stickers" {
 		t.Fatalf("the stickers were asked for as %v", asked.params)
@@ -358,7 +364,7 @@ func TestAContactCardIsPickedFromTheContactsThatHaveANumber(t *testing.T) {
 		answer("message.send_contact", model.Message{ID: "c1", ChatJID: alice, FromMe: true, Kind: "contact"})
 	current := openAlice(t, fake, aliceMessages())
 	current = pump(t, current, press("a"))
-	current = pump(t, current, chooseLabel(t, current, "a contact card"))
+	current = pump(t, current, chooseLabel(t, current, "Contact"))
 	current = pump(t, current, press("1"))
 	sent := fake.only(t, "message.send_contact")
 	contact, _ := sent.params["contact"].(map[string]any)
@@ -408,5 +414,175 @@ func TestAConversationsPictureIsHandedOver(t *testing.T) {
 	}
 	if given := taken(); given != path {
 		t.Fatalf("the program was given %q", given)
+	}
+}
+
+// homeWith makes a home folder holding these files, each holding its own
+// name, and folders for the names that end in a slash.
+func homeWith(t *testing.T, names ...string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, name := range names {
+		path := filepath.Join(home, name)
+		if strings.HasSuffix(name, "/") {
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home
+}
+
+// A file is chosen the way the desktop client's dialog chooses one: from the
+// home folder, folders first, only the kinds of file asked for unless every
+// file is asked for, hidden ones only when asked, and backspace goes back up
+// to the folder just left. The next file is chosen from the same folder.
+func TestAFileIsChosenFromItsFolder(t *testing.T) {
+	home := homeWith(t, "Music/", "readme.txt", "Pictures/beach.jpg", "Pictures/notes.txt", "Pictures/.secret.jpg")
+	fake := newFakeDaemon().answer("message.send_media", model.Message{ID: "s1", ChatJID: alice, FromMe: true})
+	current := pump(t, openAlice(t, fake, aliceMessages()), press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+
+	want := []string{"Type a path…", "📁 ..", "📁 Music/", "📁 Pictures/", "Show every file", "Show hidden files"}
+	if got := menuLabels(current); !slices.Equal(got, want) {
+		t.Fatalf("the home folder shows %v, not %v", got, want)
+	}
+	if !strings.Contains(current.chooser.hint, home) || !strings.Contains(current.chooser.hint, "no photos and videos here") {
+		t.Fatalf("the list says %q", current.chooser.hint)
+	}
+
+	current = pump(t, current, chooseLabel(t, current, "Pictures/"))
+	want = []string{"Type a path…", "📁 ..", "📄 beach.jpg  18 B", "Show every file", "Show hidden files"}
+	if got := menuLabels(current); !slices.Equal(got, want) {
+		t.Fatalf("the pictures show %v, not %v", got, want)
+	}
+	if current.chooser.cursor != 2 {
+		t.Fatalf("a folder opens with the cursor on row %d, not on its first file", current.chooser.cursor)
+	}
+	current = pump(t, current, press("."))
+	if got := menuLabels(current); !slices.Contains(got, "📄 .secret.jpg  20 B") {
+		t.Fatalf("the hidden file is not shown when asked for: %v", got)
+	}
+	current = pump(t, current, chooseLabel(t, current, "Show every file"))
+	if got := menuLabels(current); !slices.Contains(got, "📄 notes.txt  18 B") || !slices.Contains(got, "Show only photos and videos") {
+		t.Fatalf("every file is not shown when asked for: %v", got)
+	}
+
+	current = pump(t, current, tea.KeyMsg{Type: tea.KeyBackspace})
+	if at := current.chooser.cursor; current.chooser.items[at].label != "📁 Pictures/" {
+		t.Fatalf("going up left the cursor on %q", current.chooser.items[at].label)
+	}
+	current = pump(t, current, press("enter"))
+	current = pump(t, current, chooseLabel(t, current, "beach.jpg"))
+	current = pump(t, current, press("enter"))
+	sent := fake.only(t, "message.send_media")
+	if want := filepath.Join(home, "Pictures", "beach.jpg"); sent.text("path") != want || sent.params["document"] != nil {
+		t.Fatalf("the picture went as %v", sent.params)
+	}
+
+	current = pump(t, current, press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+	if !strings.HasPrefix(current.chooser.hint, filepath.Join(home, "Pictures")) {
+		t.Fatalf("the next file is not chosen from the same folder: %q", current.chooser.hint)
+	}
+}
+
+// A path can still be typed, from the folder being looked at, and a folder
+// typed is opened rather than sent.
+func TestAPathCanStillBeTyped(t *testing.T) {
+	home := homeWith(t, "Pictures/beach.jpg")
+	fake := newFakeDaemon().answer("message.send_media", model.Message{ID: "s1", ChatJID: alice, FromMe: true})
+	current := pump(t, openAlice(t, fake, aliceMessages()), press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+	current = pump(t, current, chooseLabel(t, current, "Type a path"))
+	if current.prompt == nil || current.prompt.input.Value() != home+"/" {
+		t.Fatalf("the path does not start from the folder being looked at")
+	}
+	current = pump(t, current, typed("Pictures"), press("enter"))
+	if current.prompt != nil || current.chooser == nil || !strings.HasPrefix(current.chooser.hint, filepath.Join(home, "Pictures")) {
+		t.Fatal("a folder typed was not opened")
+	}
+	current = pump(t, current, chooseLabel(t, current, "Type a path"))
+	current = pump(t, current, typed("beach.jpg"), press("enter"), press("enter"))
+	if sent := fake.only(t, "message.send_media"); sent.text("path") != filepath.Join(home, "Pictures", "beach.jpg") {
+		t.Fatalf("the path typed went as %v", sent.params)
+	}
+}
+
+// A file's name is whatever somebody called it, so it is cleaned before the
+// terminal is given it, while the file sent is the one named.
+func TestAFileNameIsCleanedBeforeItIsShown(t *testing.T) {
+	name := "evil\x1b]0;touch pwned-marker\x07.jpg"
+	home := homeWith(t, "Pictures/")
+	if err := os.WriteFile(filepath.Join(home, "Pictures", name), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeDaemon().answer("message.send_media", model.Message{ID: "s1", ChatJID: alice, FromMe: true})
+	current := pump(t, openAlice(t, fake, aliceMessages()), press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+	current = pump(t, current, chooseLabel(t, current, "Pictures/"))
+	if view := current.View(); strings.Contains(view, "\x1b]") || strings.Contains(view, "\x07") || !strings.Contains(view, "pwned-marker") {
+		t.Fatalf("the name reached the terminal as it is: %q", view)
+	}
+	current = pump(t, current, chooseLabel(t, current, "pwned-marker"), press("enter"))
+	if sent := fake.only(t, "message.send_media"); sent.text("path") != filepath.Join(home, "Pictures", name) {
+		t.Fatalf("the file sent was %q", sent.text("path"))
+	}
+}
+
+// A folder that cannot be read says why, and the list stays where it was.
+func TestAFolderThatCannotBeReadSaysWhy(t *testing.T) {
+	home := homeWith(t, "Locked/")
+	locked := filepath.Join(home, "Locked")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("this user reads any folder")
+	}
+	current := pump(t, openAlice(t, newFakeDaemon(), aliceMessages()), press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Document"))
+	current = pump(t, current, chooseLabel(t, current, "Locked/"))
+	if !strings.Contains(current.failure, "permission denied") || current.chooser == nil ||
+		!strings.HasPrefix(current.chooser.hint, home) || current.chooser.items[current.chooser.cursor].label != "📁 Locked/" {
+		t.Fatalf("an unreadable folder left the list at %v with %q", current.chooser, current.failure)
+	}
+}
+
+// A list of files reads from the left whatever its names are written in: the
+// icon first and the size last, with only a Hebrew name itself turned round.
+func TestAListOfFilesReadsFromTheLeft(t *testing.T) {
+	homeWith(t, "חופשה.jpg")
+	current := pump(t, openAlice(t, newFakeDaemon(), aliceMessages()), press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+	if view := ansi.Strip(current.View()); !strings.Contains(view, "📄 השפוח.jpg  14 B") {
+		t.Fatalf("a Hebrew name turned its row round:\n%s", view)
+	}
+}
+
+// A folder whose name would turn the words around it is not put in the box
+// to be added to, and a name typed there is still taken from that folder.
+func TestAFolderNameThatWouldNotShowAsItIsIsNotPutInTheBox(t *testing.T) {
+	home := homeWith(t, "turn‮marker/beach.jpg")
+	fake := newFakeDaemon().answer("message.send_media", model.Message{ID: "s1", ChatJID: alice, FromMe: true})
+	current := pump(t, openAlice(t, fake, aliceMessages()), press("a"))
+	current = pump(t, current, chooseLabel(t, current, "Photos and videos"))
+	current = pump(t, current, chooseLabel(t, current, "marker/"))
+	current = pump(t, current, chooseLabel(t, current, "Type a path"))
+	if value := current.prompt.input.Value(); value != "" {
+		t.Fatalf("the box was given %q", value)
+	}
+	current = pump(t, current, typed("beach.jpg"), press("enter"), press("enter"))
+	if sent := fake.only(t, "message.send_media"); sent.text("path") != filepath.Join(home, "turn‮marker", "beach.jpg") {
+		t.Fatalf("the name typed went as %q", sent.text("path"))
 	}
 }

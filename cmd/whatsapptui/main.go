@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/shukiv/whatsappgo/internal/config"
 )
@@ -54,10 +55,21 @@ func run(profile, socket string) error {
 	}
 	defer connection.Close()
 
+	// Whether the terminal is light or dark picks the bubbles' colours. The
+	// terminal is asked once, before the program takes the screen over: its
+	// answer arrives on the same input as the keys.
+	lipgloss.HasDarkBackground()
+
 	// The mouse is read as well as the keys: a click on a conversation, a
 	// message or an item of a list does what the keys would do with it.
 	program := tea.NewProgram(newApp(ctx, connection, profile),
 		tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
-	_, err = program.Run()
-	return err
+	return layingOutOurselves(os.Stdout, func() error {
+		final, err := program.Run()
+		// A voice note still playing stops with the window.
+		if window, ok := final.(*app); ok {
+			window.stopPlaying()
+		}
+		return err
+	})
 }

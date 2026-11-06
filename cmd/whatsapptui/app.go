@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -36,10 +37,11 @@ type status struct {
 // happened elsewhere - the daemon answered, the daemon announced, the terminal
 // resized - because the interface itself never blocks.
 type (
-	statusMsg  status
-	chatsMsg   []model.Chat
-	eventMsg   rpc.Event
-	failureMsg struct{ err error }
+	statusMsg       status
+	statusFailedMsg struct{ err error }
+	chatsMsg        []model.Chat
+	eventMsg        rpc.Event
+	failureMsg      struct{ err error }
 )
 
 type app struct {
@@ -87,6 +89,11 @@ type app struct {
 	// to the other person, which is why the window remembers what it last
 	// said about it.
 	input       textinput.Model
+	picker      *emojiPicker
+	recentEmoji []string
+	// The folder the last file was chosen from, where the next choosing
+	// starts.
+	lastFolder  string
 	composing   bool
 	replyTo     string
 	editing     string
@@ -106,6 +113,13 @@ type app struct {
 	// The two numbers the desktop client keeps above its list.
 	unreadEverywhere int
 	archivedChats    int
+
+	// Whether the daemon failed to say how the account is, which turns the
+	// account's disc at the top of the list red.
+	statusFailed bool
+
+	// The voice note playing, if one is.
+	playing playback
 
 	// A message being gone back to, and how many pages have been read
 	// looking for it.
@@ -135,7 +149,7 @@ func (a *app) loadStatus() tea.Cmd {
 	return func() tea.Msg {
 		var s status
 		if err := a.daemon.call(a.ctx, "status.get", nil, &s); err != nil {
-			return failureMsg{err}
+			return statusFailedMsg{err}
 		}
 		return statusMsg(s)
 	}
@@ -181,6 +195,10 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 	case statusMsg:
 		a.status = status(msg)
+		a.statusFailed = false
+	case statusFailedMsg:
+		a.statusFailed = true
+		a.failure = safeLine(msg.err.Error())
 	case chatsMsg:
 		a.chats = []model.Chat(msg)
 		if a.selected >= len(a.chats) {
@@ -198,6 +216,15 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.generation == a.generation && msg.chat == a.open.JID && msg.message.ID != "" {
 			a.upsert(msg.message)
 			return a, a.handOverMedia(msg.message, msg.play)
+		}
+	case playingMsg:
+		// One voice note plays at a time.
+		a.stopPlaying()
+		a.playing = playback{id: msg.id, command: msg.command}
+		return a, listen(msg.command)
+	case playedOutMsg:
+		if a.playing.command == msg.command {
+			a.playing = playback{}
 		}
 	case handedOverMsg:
 		a.failure = "Opened " + safeLine(msg.what) + " in another program."
@@ -396,6 +423,9 @@ func (a *app) key(msg tea.KeyMsg) tea.Cmd {
 	if a.chooser != nil {
 		return a.chooserKey(msg)
 	}
+	if a.picker != nil {
+		return a.pickerKey(msg)
+	}
 	if a.composing {
 		return a.composerKey(msg)
 	}
@@ -480,6 +510,8 @@ func (a *app) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return a.openSelected()
 	case "a":
 		return a.attachMenu()
+	case ":":
+		return a.openEmoji()
 	case "x":
 		return a.reactPrompt()
 	case "s":
@@ -526,7 +558,7 @@ func (a *app) layout() (listWidth, paneWidth, paneHeight int) {
 func (a *app) View() string {
 	listWidth, paneWidth, paneHeight := a.layout()
 	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		stylePane.Width(listWidth).Height(paneHeight).Render(anchored(fitted(a.chatList(listWidth, paneHeight), listWidth))),
+		stylePane.Width(listWidth).Height(paneHeight).Render(anchored(fitted(a.sidebar(listWidth, paneHeight), listWidth))),
 		lipgloss.NewStyle().Width(paneWidth).Height(paneHeight).Render(anchored(fitted(a.conversation(paneWidth, paneHeight), paneWidth))),
 	)
 	// A line wider than the terminal is wrapped by the terminal, which pushes
@@ -543,7 +575,7 @@ func (a *app) header() string {
 	if where == "" {
 		where = "connecting"
 	}
-	who := safeLine(a.status.UserName)
+	who := visual(safeLine(a.status.UserName))
 	if who == "" {
 		who = a.profile
 	}
@@ -568,39 +600,23 @@ func (a *app) chatList(width, height int) string {
 	if len(a.chats) == 0 {
 		return styleMuted.Render("No conversations yet")
 	}
-	top := min(a.chatTop, max(0, len(a.chats)-height))
+	fits := chatsShown(height)
+	top := min(a.chatTop, max(0, len(a.chats)-fits))
 	switch {
 	case a.selected < top:
 		top = max(0, a.selected)
-	case a.selected >= top+height:
-		top = a.selected - height + 1
+	case a.selected >= top+fits:
+		top = a.selected - fits + 1
 	}
 	a.chatTop = top
-	end := min(len(a.chats), top+height)
-	lines := make([]string, 0, end-top)
+	end := min(len(a.chats), top+fits)
+	now := time.Now()
+	lines := make([]string, 0, (end-top)*chatRowHeight)
 	for i := top; i < end; i++ {
-		chat := a.chats[i]
-		title := safeLine(chat.Title)
-		if title == "" {
-			title = safeLine(shortJID(chat.JID))
-		}
-		unread := ""
-		if chat.UnreadCount > 0 {
-			unread = fmt.Sprintf(" (%d)", chat.UnreadCount)
-		}
-		// How many are waiting is the one part of a row that must not be the
-		// part that falls off the end, so the name gives up the room for it.
-		title = fitLine(title, width-2-ansi.StringWidth(unread)) + unread
-		switch {
-		case i == a.selected && a.focus == paneChats:
-			lines = append(lines, styleSelected.Render(title))
-		case chat.JID == a.open.JID && a.open.JID != "":
-			lines = append(lines, styleTitle.Render(title))
-		default:
-			lines = append(lines, title)
-		}
+		lines = append(lines, a.chatRow(a.chats[i], i, width, now)...)
 	}
-	return strings.Join(lines, "\n")
+	// A window too short for even one whole conversation shows what it can.
+	return strings.Join(lines[:min(len(lines), max(1, height))], "\n")
 }
 
 // conversation draws the open conversation, with the title above it and the
@@ -613,6 +629,9 @@ func (a *app) conversation(width, height int) string {
 	}
 	if a.chooser != nil {
 		return a.chooserLines(width, height)
+	}
+	if a.picker != nil {
+		return a.pickerLines(width, height)
 	}
 	lines, from, to := a.conversationLines(width)
 	box := a.composerLines(width)
@@ -637,8 +656,8 @@ func (a *app) conversation(width, height int) string {
 		rows = append(rows, "")
 		a.hits = append(a.hits, nothing)
 	}
-	for range box {
-		a.hits = append(a.hits, hit{message: -1, item: -1, composer: true})
+	for at := range box {
+		a.hits = append(a.hits, hit{message: -1, item: -1, composer: true, bar: at >= len(box)-composerHeight})
 	}
 	return strings.Join(append(rows, box...), "\n")
 }
@@ -653,16 +672,26 @@ func (a *app) footer() string {
 		return styleMuted.Render("enter accept · esc back")
 	}
 	if a.chooser != nil {
+		if a.chooser.footer != "" {
+			return styleMuted.Render(a.chooser.footer)
+		}
 		return styleMuted.Render("enter choose · j/k move · 1-9 pick · esc back")
+	}
+	if a.picker != nil {
+		return styleMuted.Render("enter put it in · arrows move · tab next group · type to search · ctrl+s stickers · esc back")
 	}
 	if a.composing {
 		if a.editing != "" || a.replyTo != "" {
-			return styleMuted.Render("enter send · esc drop the answer · tab list · ctrl+c quit")
+			return styleMuted.Render("enter send · esc drop the answer · ctrl+o attach · ctrl+g emoji · tab list · ctrl+c quit")
 		}
-		return styleMuted.Render("enter send · esc stop typing · tab list · ctrl+c quit")
+		return styleMuted.Render("enter send · esc stop typing · ctrl+o attach · ctrl+g emoji · tab list · ctrl+c quit")
 	}
 	if a.focus == paneConversation {
-		return styleMuted.Render("i write · o open · a attach · r answer · x react · ? keys · q quit")
+		open := "o open"
+		if message, ok := a.selectedMessage(); ok && message.Kind == "audio" {
+			open = pick(a.playing.id == message.ID && a.playing.command != nil, "o stop", "o play")
+		}
+		return styleMuted.Render("i write · " + open + " · a attach · r answer · x react · ? keys · q quit")
 	}
 	return styleMuted.Render("enter open · m menu · / find · A archive · ? keys · q quit")
 }
