@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/shukiv/whatsappgo/internal/model"
 )
@@ -61,6 +62,10 @@ func (a *app) composerKey(msg tea.KeyMsg) tea.Cmd {
 		left := a.leaveComposer()
 		a.focus = paneChats
 		return left
+	case "ctrl+o":
+		return a.attachMenu()
+	case "ctrl+g":
+		return a.openEmoji()
 	}
 	var moved tea.Cmd
 	a.input, moved = a.input.Update(msg)
@@ -150,7 +155,7 @@ func (a *app) editSelected() tea.Cmd {
 		return nil
 	}
 	a.editing, a.replyTo = message.ID, ""
-	a.input.SetValue(safeText(message.Body))
+	a.input.SetValue(editableText(message.Body))
 	a.input.CursorEnd()
 	return a.enterComposer()
 }
@@ -172,8 +177,57 @@ func (a *app) composerLines(width int) []string {
 	case a.replyTo != "":
 		lines = append(lines, styleMuted.Render(fitLine("answering: "+a.quoted(a.replyTo), width)))
 	}
-	a.input.Width = max(8, width-4)
-	return append(lines, a.input.View())
+	return append(lines, a.composerBar(width)...)
+}
+
+// The message bar is three rows of the desktop client's input bar: the
+// paperclip and the face on the left, the words in the middle, and the
+// arrow that sends them on the right once there are any.
+const (
+	composerHeight = 3
+	barLeft        = 7 // " 📎 🙂 "
+	barRight       = 4 // " ➤  "
+)
+
+// composerBar is the bar itself. One row of words sits on its middle row,
+// beside the buttons; more than that fill it from the top.
+func (a *app) composerBar(width int) []string {
+	bar := lipgloss.NewStyle().Background(colourBar)
+	room := max(4, width-barLeft-barRight)
+	words := inputRows(a.input.Value(), a.input.Position(), room, composerHeight, a.input.Placeholder, a.composing, bar)
+	top := 0
+	if len(words) == 1 {
+		top = 1
+	}
+	rows := make([]string, composerHeight)
+	for row := range rows {
+		left, middle, right := spread(bar, barLeft), spread(bar, room), spread(bar, barRight)
+		if row == 1 {
+			left = bar.Render(" 📎 🙂 ")
+			if strings.TrimSpace(a.input.Value()) != "" {
+				right = bar.Foreground(colourBrand).Bold(true).Render(" ➤") + spread(bar, barRight-2)
+			}
+		}
+		if at := row - top; at >= 0 && at < len(words) {
+			middle = words[at]
+		}
+		rows[row] = left + middle + right
+	}
+	return rows
+}
+
+// barButton is what a click at a column of the message bar presses: the
+// paperclip, the face, the arrow, or the words.
+func (a *app) barButton(column, width int) string {
+	switch {
+	case column < 4:
+		return "attach"
+	case column < barLeft:
+		return "emoji"
+	case column >= width-barRight && strings.TrimSpace(a.input.Value()) != "":
+		return "send"
+	}
+	return "words"
 }
 
 // quoted names a message the way the box above it refers to one.

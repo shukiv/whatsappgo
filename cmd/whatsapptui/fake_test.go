@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,21 @@ import (
 
 	"github.com/shukiv/whatsappgo/internal/rpc"
 )
+
+// TestMain gives every test an empty home folder of its own. Choosing a file
+// starts in the home folder, and a test that types into the wrong box would
+// otherwise walk the folders of whoever runs it.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "whatsapptui-home-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Setenv("HOME", home)
+	code := m.Run()
+	os.RemoveAll(home)
+	os.Exit(code)
+}
 
 // fakeDaemon stands in for the socket so a test can read back what the window
 // asked the daemon to do. Several of these calls reach a real account - a read

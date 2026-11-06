@@ -8,6 +8,8 @@ type hit struct {
 	message  int
 	item     int
 	composer bool
+	// One of the message bar's rows, whose buttons are told apart by column.
+	bar bool
 }
 
 var nothing = hit{message: -1, item: -1}
@@ -17,7 +19,7 @@ var nothing = hit{message: -1, item: -1}
 // it, a click on a message puts the keys on it, a click on an item of a list
 // chooses it, and a click on the message box starts typing.
 func (a *app) mouse(msg tea.MouseMsg) tea.Cmd {
-	listWidth, _, paneHeight := a.layout()
+	listWidth, paneWidth, paneHeight := a.layout()
 	// The title is the first row of the window, so the panes start on the
 	// second.
 	row := msg.Y - 1
@@ -26,6 +28,13 @@ func (a *app) mouse(msg tea.MouseMsg) tea.Cmd {
 	}
 	inList := msg.X < listWidth
 	inPane := msg.X > listWidth
+	// The emoji panel answers the mouse itself, by where it drew things.
+	if a.picker != nil && a.chooser == nil {
+		if !inPane {
+			return nil
+		}
+		return a.pickerMouse(msg, row, msg.X-listWidth-1)
+	}
 
 	switch msg.Button {
 	case tea.MouseButtonWheelUp, tea.MouseButtonWheelDown:
@@ -58,8 +67,13 @@ func (a *app) mouse(msg tea.MouseMsg) tea.Cmd {
 		return nil
 	}
 	if inList {
-		at := a.chatTop + row
-		if at >= len(a.chats) {
+		// The account is above the list and does nothing when clicked. Each
+		// conversation is several rows tall, and a click on any of them opens
+		// it; the rows left over below the last whole one are nobody's.
+		account := a.accountRows(listWidth, paneHeight)
+		shown := (row - account) / chatRowHeight
+		at := a.chatTop + shown
+		if row < account || shown >= chatsShown(paneHeight-account) || at >= len(a.chats) {
 			return nil
 		}
 		a.selected = at
@@ -74,13 +88,29 @@ func (a *app) mouse(msg tea.MouseMsg) tea.Cmd {
 	}
 	switch shown := a.hits[row]; {
 	case shown.composer:
+		if shown.bar {
+			switch a.barButton(msg.X-listWidth-1, paneWidth) {
+			case "attach":
+				return a.attachMenu()
+			case "emoji":
+				return a.openEmoji()
+			case "send":
+				return a.send()
+			}
+		}
 		return a.enterComposer()
 	case shown.message >= 0 && shown.message < len(a.messages):
 		a.cursor = shown.message
 		a.focus = paneConversation
+		var left tea.Cmd
 		if a.composing {
-			return a.leaveComposer()
+			left = a.leaveComposer()
 		}
+		// A click on a voice note plays it, and another stops it.
+		if a.messages[shown.message].Kind == "audio" {
+			return tea.Batch(left, a.openSelected())
+		}
+		return left
 	}
 	return nil
 }
