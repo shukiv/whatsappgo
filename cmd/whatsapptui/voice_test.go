@@ -42,7 +42,7 @@ func TestAVoiceNotePlaysHereAndTheSameKeyStopsIt(t *testing.T) {
 		t.Fatalf("the key help does not say o plays the voice note: %q", current.footer())
 	}
 
-	current = pump(t, current, press("o"))
+	current = pumpPatiently(t, current, press("o"))
 	if given := taken(); given != path {
 		t.Fatalf("the player was given %q, not the voice note %q", given, path)
 	}
@@ -70,7 +70,7 @@ func TestAClickOnAVoiceNotePlaysIt(t *testing.T) {
 	taken := playerRecorder(t)
 	current, path := openVoiceNote(t)
 	listWidth, _, _ := current.layout()
-	current = pump(t, current, click(listWidth+10, rowOf(t, current, "voice note")))
+	current = pumpPatiently(t, current, click(listWidth+10, rowOf(t, current, "voice note")))
 	if given := taken(); given != path || current.playing.command == nil {
 		t.Fatalf("a click on the voice note did not play it (the player was given %q)", given)
 	}

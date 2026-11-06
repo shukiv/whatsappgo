@@ -150,9 +150,26 @@ func asMap(params any) map[string]any {
 // sequence an action sets off rather than only its first step.
 func pump(t *testing.T, current *app, messages ...tea.Msg) *app {
 	t.Helper()
+	return pumpWithin(t, current, 50*time.Millisecond, messages...)
+}
+
+// pumpPatiently is pump for a keystroke whose own work starts another program
+// and answers with it, as playing a voice note does. Starting a program can
+// take longer than pump waits on a busy machine, and its answer is what the
+// test is about; what that answer sets off in turn is waited for as briefly
+// as ever.
+func pumpPatiently(t *testing.T, current *app, messages ...tea.Msg) *app {
+	t.Helper()
+	return pumpWithin(t, current, 2*time.Second, messages...)
+}
+
+// pumpWithin is pump waiting this long for the work the messages themselves
+// set off.
+func pumpWithin(t *testing.T, current *app, first time.Duration, messages ...tea.Msg) *app {
+	t.Helper()
 	steps := 0
-	var run func(cmd tea.Cmd)
-	apply := func(msg tea.Msg) {
+	var run func(cmd tea.Cmd, depth int)
+	apply := func(msg tea.Msg, depth int) {
 		if msg == nil {
 			return
 		}
@@ -160,7 +177,7 @@ func pump(t *testing.T, current *app, messages ...tea.Msg) *app {
 		// work over directly, and it is run the way the program's own loop
 		// would run it.
 		if work, ok := msg.(doMsg); ok {
-			run(work.cmd)
+			run(work.cmd, depth)
 			return
 		}
 		updated, next := current.Update(msg)
@@ -169,9 +186,9 @@ func pump(t *testing.T, current *app, messages ...tea.Msg) *app {
 			t.Fatalf("update returned %T, not the app", updated)
 		}
 		current = app
-		run(next)
+		run(next, depth)
 	}
-	run = func(cmd tea.Cmd) {
+	run = func(cmd tea.Cmd, depth int) {
 		if cmd == nil {
 			return
 		}
@@ -183,24 +200,28 @@ func pump(t *testing.T, current *app, messages ...tea.Msg) *app {
 		// announcement. None of those belong to the keystroke being driven
 		// here, so anything that does not answer at once is left alone. A
 		// test that wants one drives its message itself.
+		wait := 50 * time.Millisecond
+		if depth == 0 {
+			wait = first
+		}
 		answered := make(chan tea.Msg, 1)
 		go func() { answered <- cmd() }()
 		var msg tea.Msg
 		select {
 		case msg = <-answered:
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(wait):
 			return
 		}
 		if batch, ok := msg.(tea.BatchMsg); ok {
 			for _, each := range batch {
-				run(each)
+				run(each, depth)
 			}
 			return
 		}
-		apply(msg)
+		apply(msg, depth+1)
 	}
 	for _, msg := range messages {
-		apply(msg)
+		apply(msg, 0)
 	}
 	return current
 }
