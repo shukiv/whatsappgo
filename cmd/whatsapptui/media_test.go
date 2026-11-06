@@ -417,6 +417,30 @@ func TestAConversationsPictureIsHandedOver(t *testing.T) {
 	}
 }
 
+// playerRecorder stands in for the player: it writes down the file it was
+// given and then stays running, as a player does until the note ends, so
+// that stopping it can be seen. It runs with a home of its own.
+func playerRecorder(t *testing.T) (taken func() string) {
+	t.Helper()
+	home := t.TempDir()
+	noted := filepath.Join(home, "played")
+	script := filepath.Join(home, "player")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' \"$1\" > "+noted+"\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WHATSAPPGO_PLAYER", script)
+	t.Setenv("HOME", t.TempDir())
+	return func() string {
+		for attempt := 0; attempt < 200; attempt++ {
+			if given, err := os.ReadFile(noted); err == nil && len(given) > 0 {
+				return string(given)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return ""
+	}
+}
+
 // homeWith makes a home folder holding these files, each holding its own
 // name, and folders for the names that end in a slash.
 func homeWith(t *testing.T, names ...string) string {
