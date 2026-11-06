@@ -105,7 +105,7 @@ func TestOpeningAVoiceNoteReportsItPlayed(t *testing.T) {
 	fake := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{note}})
 	current := openAlice(t, fake, model.MessagePage{})
 	t.Cleanup(current.stopPlaying)
-	pump(t, current, press("o"))
+	current = pumpPatiently(t, current, press("o"))
 
 	played := fake.only(t, "message.played")
 	if played.text("message_id") != "v1" || played.text("sender_jid") != alice {
@@ -118,7 +118,7 @@ func TestOpeningAVoiceNoteReportsItPlayed(t *testing.T) {
 	other := newFakeDaemon().answer("messages.list", model.MessagePage{Messages: []model.Message{ours}})
 	window := openAlice(t, other, model.MessagePage{})
 	t.Cleanup(window.stopPlaying)
-	pump(t, window, press("o"))
+	window = pumpPatiently(t, window, press("o"))
 	if played := other.calls("message.played"); len(played) != 0 {
 		t.Fatalf("our own voice note was reported played: %v", played)
 	}
