@@ -8,7 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -80,7 +82,7 @@ func TestALongListFitsTheWindow(t *testing.T) {
 func TestAHebrewNameStaysInItsOwnColumn(t *testing.T) {
 	current := drive(t, chatsMsg([]model.Chat{{JID: "972500000009@s.whatsapp.net", Title: "שוקי וקנין"}}))
 	for _, row := range strings.Split(current.View(), "\n") {
-		name := strings.Index(row, "שוקי וקנין")
+		name := strings.Index(row, visual("שוקי וקנין"))
 		if name < 0 {
 			continue
 		}
@@ -119,10 +121,11 @@ func TestALongLinkStaysInsideThePane(t *testing.T) {
 	}
 }
 
-// What this account sent is a bubble on the right and what anybody else sent
-// is one on the left, each with its clock inside. The message the keys act on
-// has a heavy line, which shows on a terminal without colour.
+// Messages are bubbles of colour on their own side: everybody else's against
+// the left, the account's own against the right, with the clock and the marks
+// inside at the bottom right, and a mark beside the one the keys are on.
 func TestMessagesAreBubblesOnTheirOwnSide(t *testing.T) {
+	coloured(t)
 	current := drive(t)
 	const width = 60
 	theirs := current.messageLines(model.Message{ID: "t1", SenderJID: alice, Timestamp: noon,
@@ -130,43 +133,61 @@ func TestMessagesAreBubblesOnTheirOwnSide(t *testing.T) {
 	ours := current.messageLines(model.Message{ID: "o1", FromMe: true, Timestamp: noon,
 		Kind: "text", Body: "hi", DeliveredAt: noon}, false, width, true)
 
-	if top := ansi.Strip(theirs[0]); !strings.HasPrefix(top, "╭") || !strings.HasSuffix(top, "╮") {
-		t.Fatalf("their bubble does not open at the left edge: %q", top)
+	if first := ansi.Strip(theirs[0]); !strings.HasPrefix(first, "   hello") {
+		t.Fatalf("their words do not start at the left, inside the bubble: %q", first)
 	}
-	if !strings.Contains(ansi.Strip(strings.Join(theirs, "\n")), "│ hello") {
-		t.Fatalf("their words are not inside the bubble:\n%s", strings.Join(theirs, "\n"))
-	}
-	top := ansi.Strip(ours[0])
-	if !strings.HasPrefix(top, " ") || !strings.HasSuffix(top, "┓") || ansi.StringWidth(top) != width {
-		t.Fatalf("our bubble is not against the right edge with a heavy line: %q", top)
-	}
-	clock := false
-	for _, line := range ours[1 : len(ours)-1] {
-		plain := ansi.Strip(line)
-		if strings.Contains(plain, stamp(noon)+" ✓✓") && strings.HasSuffix(plain, "┃") {
-			clock = true
+	for _, line := range ours {
+		if plain := ansi.Strip(line); ansi.StringWidth(plain) != width || !strings.HasSuffix(plain, " ") {
+			t.Fatalf("our bubble is not against the right edge: %q", plain)
 		}
 	}
-	if !clock {
-		t.Fatalf("the clock and the ticks are not inside our bubble:\n%s", strings.Join(ours, "\n"))
+	for at, line := range ours {
+		if row := strings.TrimLeft(ansi.Strip(line), " "); !strings.HasPrefix(row, "▌ ") || (at == 0 && !strings.HasPrefix(row, "▌  hi")) {
+			t.Fatalf("the message the keys are on is not marked the whole of its height: %q", row)
+		}
+	}
+	if last := ansi.Strip(ours[len(ours)-1]); !strings.HasSuffix(last, stamp(noon)+" ✓✓ ") {
+		t.Fatalf("the clock and the ticks are not inside our bubble at its bottom right: %q", last)
+	}
+	// Each bubble is filled, every row of it: ours in WhatsApp's light green,
+	// theirs in grey.
+	for _, line := range ours {
+		if !strings.Contains(line, "48;2;217;253;211") {
+			t.Fatalf("a row of our bubble is not filled: %q", line)
+		}
+	}
+	for _, line := range theirs {
+		if !strings.Contains(line, "48;2;") || strings.Contains(line, "48;2;217;253;211") {
+			t.Fatalf("a row of their bubble is not filled grey: %q", line)
+		}
 	}
 }
 
-// Words written right to left start at the bubble's right edge, where somebody
-// reading them looks for the start.
+// coloured makes the window write its colours, as it does in a terminal that
+// shows them all, for as long as the test runs.
+func coloured(t *testing.T) {
+	t.Helper()
+	before := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(before) })
+}
+
+// Hebrew is written in the order it reads - the terminal writes from the
+// left, so the window turns it round - and it starts at the bubble's right
+// edge, where somebody reading it looks for the start.
 func TestHebrewStartsAtTheRightOfItsBubble(t *testing.T) {
 	current := drive(t)
 	lines := current.messageLines(model.Message{ID: "h1", SenderJID: alice, Timestamp: noon,
 		Kind: "text", Body: "שלום", Edited: true, Starred: true}, false, 60, false)
 	for _, line := range lines {
-		if plain := ansi.Strip(line); strings.Contains(plain, "שלום") {
-			if !strings.HasSuffix(plain, "שלום │") {
+		if plain := ansi.Strip(line); strings.Contains(plain, "םולש") {
+			if !strings.HasSuffix(plain, "םולש ") {
 				t.Fatalf("the Hebrew line does not end against the bubble's right side: %q", plain)
 			}
 			return
 		}
 	}
-	t.Fatalf("the words are not in the bubble:\n%s", strings.Join(lines, "\n"))
+	t.Fatalf("the words are not in the bubble, turned round to read right to left:\n%s", strings.Join(lines, "\n"))
 }
 
 // Inside a group each bubble says who wrote it. With one other person the side
@@ -198,7 +219,7 @@ func TestAConversationSaysWhichDayAndHoldsTheWholeBubble(t *testing.T) {
 		}
 	}
 	lines, from, to := current.conversationLines(current.width / 2)
-	if !strings.Contains(ansi.Strip(lines[from]), "┏") || !strings.Contains(ansi.Strip(lines[to]), "┗") {
+	if !strings.Contains(ansi.Strip(lines[from]), "▌") || !strings.Contains(ansi.Strip(lines[to]), stamp(noon+day)) {
 		t.Fatalf("the rows of the message the keys are on are %d to %d, not its whole bubble:\n%s",
 			from, to, strings.Join(lines, "\n"))
 	}
@@ -213,7 +234,7 @@ func twoChats() chatsMsg {
 
 func TestTheChatListShowsWhatArrived(t *testing.T) {
 	view := drive(t, twoChats()).View()
-	for _, wanted := range []string{"Alice Example", "Bob Example", "(3)"} {
+	for _, wanted := range []string{"Alice Example", "see you there", "Bob Example", " 3 "} {
 		if !strings.Contains(view, wanted) {
 			t.Fatalf("the window does not show %q:\n%s", wanted, view)
 		}
@@ -323,27 +344,28 @@ func TestARowTooLongIsCutByWidthAndNotMidCharacter(t *testing.T) {
 		t.Fatalf("a row was cut in the middle of a character: %q", list)
 	}
 	rows := strings.Split(list, "\n")
-	if len(rows) != 3 {
-		t.Fatalf("rows = %d, wanted 3: %q", len(rows), list)
+	if len(rows) != 3*chatRowHeight {
+		t.Fatalf("rows = %d, wanted %d: %q", len(rows), 3*chatRowHeight, list)
 	}
 	for _, row := range rows {
-		if width := ansi.StringWidth(row); width > 28 {
+		if width := ansi.StringWidth(row); width != 30 {
 			t.Fatalf("a row is %d columns wide in a 30-column list: %q", width, row)
 		}
 	}
-	// The two overlong names fill the row they were given. A row that stops
-	// well short of it was cut by bytes rather than by columns.
-	for _, row := range rows[:2] {
-		if width := ansi.StringWidth(row); width < 26 {
-			t.Fatalf("an overlong name was cut back to %d of 28 columns: %q", width, row)
+	// The two overlong names fill the room beside the disc. A name that
+	// stops well short of it was cut by bytes rather than by columns.
+	for _, row := range []string{rows[0], rows[chatRowHeight]} {
+		name := strings.TrimRight(ansi.Strip(row), " ")
+		if width := ansi.StringWidth(name); width < 29 || !strings.Contains(name, "…") {
+			t.Fatalf("an overlong name was cut back to %d of 30 columns: %q", width, name)
 		}
 	}
 	// A name that fits is not cut at all.
-	if !strings.Contains(rows[2], "Bob Example") || strings.Contains(rows[2], "…") {
-		t.Fatalf("a name that fits was cut: %q", rows[2])
+	if bob := ansi.Strip(rows[2*chatRowHeight]); !strings.Contains(bob, "Bob Example") || strings.Contains(bob, "…") {
+		t.Fatalf("a name that fits was cut: %q", bob)
 	}
 	// What is waiting is the part that must survive the cut.
-	if !strings.Contains(list, "(7)") {
-		t.Fatalf("the unread count fell off the end of the row: %q", list)
+	if !strings.HasSuffix(ansi.Strip(rows[1]), " 7 ") {
+		t.Fatalf("the unread count fell off the end of the row: %q", ansi.Strip(rows[1]))
 	}
 }

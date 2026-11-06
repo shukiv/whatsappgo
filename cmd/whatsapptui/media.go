@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -113,8 +114,13 @@ func (a *app) openSelected() tea.Cmd {
 
 // openMedia hands the file over, downloading it first if the daemon has not
 // got it yet. A voice note or a video that somebody else sent is reported as
-// played once it has been handed to the player, which is the moment it is.
+// played once it has been handed to the player, which is the moment it is. A
+// voice note already playing is stopped instead.
 func (a *app) openMedia(message model.Message) tea.Cmd {
+	if message.Kind == "audio" && a.playing.command != nil && a.playing.id == message.ID {
+		a.stopPlaying()
+		return nil
+	}
 	play := !message.FromMe && (message.Kind == "audio" || message.Kind == "video")
 	if message.MediaPath != "" {
 		return a.handOverMedia(message, play)
@@ -130,10 +136,11 @@ func (a *app) openMedia(message model.Message) tea.Cmd {
 	}
 }
 
-// handOverMedia is the file itself going to another program.
+// handOverMedia is the file itself going to another program. A voice note is
+// played here, by a player with no window of its own, when there is one.
 func (a *app) handOverMedia(message model.Message, play bool) tea.Cmd {
 	path := message.MediaPath
-	asks := []tea.Cmd{func() tea.Msg {
+	hand := func() tea.Msg {
 		if err := readableFile(path); err != nil {
 			return failureMsg{err}
 		}
@@ -141,7 +148,11 @@ func (a *app) handOverMedia(message model.Message, play bool) tea.Cmd {
 			return failureMsg{err}
 		}
 		return handedOverMsg{what: filepath.Base(path)}
-	}}
+	}
+	if player := quietPlayer(); message.Kind == "audio" && player != nil {
+		hand = playHere(message.ID, path, player)
+	}
+	asks := []tea.Cmd{hand}
 	if play && message.PlayedAt == 0 {
 		asks = append(asks, a.quiet("message.played", map[string]any{
 			"chat_jid": a.open.JID, "sender_jid": message.SenderJID,
@@ -149,6 +160,83 @@ func (a *app) handOverMedia(message model.Message, play bool) tea.Cmd {
 		}))
 	}
 	return tea.Batch(asks...)
+}
+
+// playback is the voice note playing, and the player playing it, which is how
+// the same key stops it.
+type playback struct {
+	id      string
+	command *exec.Cmd
+}
+
+// Answers from the player: it started, and it finished.
+type (
+	playingMsg struct {
+		id      string
+		command *exec.Cmd
+	}
+	playedOutMsg struct{ command *exec.Cmd }
+)
+
+// The players that play a voice note without a window, in the order they are
+// tried, so that listening does not take the reader out of the terminal.
+var quietPlayers = [][]string{
+	{"mpv", "--no-video", "--really-quiet"},
+	{"ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"},
+	{"cvlc", "--play-and-exit", "--quiet"},
+	{"pw-play"},
+	{"paplay"},
+}
+
+func quietPlayer() []string {
+	if set := strings.TrimSpace(os.Getenv("WHATSAPPGO_PLAYER")); set != "" {
+		return []string{set}
+	}
+	for _, player := range quietPlayers {
+		if _, err := exec.LookPath(player[0]); err == nil {
+			return player
+		}
+	}
+	return nil
+}
+
+// playHere starts the player on the file. As with any other program here,
+// the file is an argument and never part of a command line, and what the
+// player writes goes nowhere.
+func playHere(id, path string, player []string) tea.Cmd {
+	return func() tea.Msg {
+		if err := readableFile(path); err != nil {
+			return failureMsg{err}
+		}
+		quiet, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+		if err != nil {
+			return failureMsg{err}
+		}
+		defer quiet.Close()
+		command := exec.Command(player[0], append(player[1:], path)...)
+		command.Stdin, command.Stdout, command.Stderr = quiet, quiet, quiet
+		if err := command.Start(); err != nil {
+			return failureMsg{err}
+		}
+		return playingMsg{id: id, command: command}
+	}
+}
+
+// listen waits for the player to finish, so the note stops showing as
+// playing when it ends on its own.
+func listen(command *exec.Cmd) tea.Cmd {
+	return func() tea.Msg {
+		_ = command.Wait()
+		return playedOutMsg{command: command}
+	}
+}
+
+// stopPlaying stops the voice note that is playing, if one is.
+func (a *app) stopPlaying() {
+	if a.playing.command != nil && a.playing.command.Process != nil {
+		_ = a.playing.command.Process.Kill()
+	}
+	a.playing = playback{}
 }
 
 // The schemes a conversation legitimately carries, which are the ones the
@@ -220,55 +308,124 @@ func (a *app) openAvatar(chat model.Chat) tea.Cmd {
 	}
 }
 
-// attachMenu is what can be put into the conversation besides words.
+// attachMenu is what can be put into the conversation besides words: the
+// desktop client's attach menu, item for item and in its order. What the
+// desktop client cannot do yet, it says so here too.
 func (a *app) attachMenu() tea.Cmd {
 	if a.open.JID == "" {
 		return nil
 	}
-	return a.ask("Put into this conversation", "", 0,
-		choice{label: "a file", run: a.sendFilePrompt},
-		choice{label: "a contact card", run: a.sendContactPrompt},
-		choice{label: "a sticker sent before", run: a.stickerPrompt})
+	notYet := func(what string) func() tea.Cmd {
+		return func() tea.Cmd {
+			a.failure = what + " is not supported yet"
+			return nil
+		}
+	}
+	return a.ask("Attach", "", 0,
+		choice{label: "Document", run: a.sendFilePrompt(browsing{title: "Choose a document"}, "document", true)},
+		choice{label: "Photos and videos", run: a.sendFilePrompt(browsing{title: "Choose a photo or a video",
+			kind: "photos and videos", kinds: photoAndVideoFiles}, "", true)},
+		choice{label: "Camera", run: notYet("Camera")},
+		choice{label: "Audio", run: a.sendFilePrompt(browsing{title: "Choose an audio file",
+			kind: "audio files", kinds: audioFiles}, "", false)},
+		choice{label: "Contact", run: a.sendContactPrompt},
+		choice{label: "Poll", run: a.pollPrompt},
+		choice{label: "Event", run: notYet("Event")},
+		choice{label: "New sticker", run: a.sendFilePrompt(browsing{title: "Choose a picture for the sticker",
+			kind: "JPEG and PNG pictures", kinds: stickerPictures}, "sticker", false)})
 }
 
-// sendFilePrompt asks for a file and then how to send it, because the same
-// file is a picture, a document or a voice note depending on what it is being
-// sent as - which is the choice the window's attach menu offers.
-func (a *app) sendFilePrompt() tea.Cmd {
+// sendFilePrompt has a file chosen and sends it as the item it was asked for
+// under: a document keeps its file, a sticker is made from a picture, and
+// anything else goes as what it is. A document, a photo and a video can carry
+// a caption.
+func (a *app) sendFilePrompt(how browsing, as string, captioned bool) func() tea.Cmd {
+	return func() tea.Cmd {
+		chat, how := a.open.JID, how
+		how.chosen = func(path string) tea.Cmd {
+			if err := readableFile(path); err != nil {
+				a.failure = safeLine(err.Error())
+				return nil
+			}
+			send := func(caption string) tea.Cmd {
+				params := map[string]any{"chat_jid": chat, "path": path, "caption": caption, "reply_to": a.replyTo}
+				if as != "" {
+					params[as] = true
+				}
+				a.replyTo = ""
+				return func() tea.Msg {
+					var sent model.Message
+					if err := a.daemon.call(a.ctx, "message.send_media", params, &sent); err != nil {
+						return failureMsg{err}
+					}
+					return oneMessageMsg{generation: a.generation, chat: chat, message: sent}
+				}
+			}
+			if !captioned {
+				return send("")
+			}
+			return a.type_("A caption?", safeLine(filepath.Base(path)), "", send)
+		}
+		return a.browse(how, a.startFolder(), "")
+	}
+}
+
+// pollPrompt asks for the question and then its options one at a time, as
+// the desktop client's poll dialog does, then whether more than one may be
+// chosen. WhatsApp takes two options to twelve, none twice.
+func (a *app) pollPrompt() tea.Cmd {
 	chat := a.open.JID
-	return a.type_("Which file?", "The whole path to it.", "", func(path string) tea.Cmd {
-		if path == "" {
+	return a.type_("Poll question", "", "", func(question string) tea.Cmd {
+		if question == "" {
 			return nil
 		}
-		if err := readableFile(path); err != nil {
-			a.failure = safeLine(err.Error())
+		return a.pollOption(chat, question, nil)
+	})
+}
+
+const pollMost = 12
+
+func (a *app) pollOption(chat, question string, options []string) tea.Cmd {
+	hint := "an empty one when there are enough"
+	if len(options) < 2 {
+		hint = "a poll has two at the least"
+	}
+	return a.type_(fmt.Sprintf("Option %d", len(options)+1), hint, "", func(option string) tea.Cmd {
+		switch {
+		case option == "" && len(options) < 2:
+			a.failure = "A poll needs at least two options."
 			return nil
+		case option == "":
+			return a.pollAnswers(chat, question, options)
+		case slices.Contains(options, option):
+			a.failure = "That option is in the poll already."
+			return a.pollOption(chat, question, options)
 		}
-		send := func(as string) func() tea.Cmd {
-			return func() tea.Cmd {
-				return a.type_("A caption?", filepath.Base(path), "", func(caption string) tea.Cmd {
-					params := map[string]any{"chat_jid": chat, "path": path, "caption": caption, "reply_to": a.replyTo}
-					if as != "" {
-						params[as] = true
-					}
-					a.replyTo = ""
-					return func() tea.Msg {
-						var sent model.Message
-						if err := a.daemon.call(a.ctx, "message.send_media", params, &sent); err != nil {
-							return failureMsg{err}
-						}
-						return oneMessageMsg{generation: a.generation, chat: chat, message: sent}
-					}
-				})
+		next := append(slices.Clone(options), option)
+		if len(next) == pollMost {
+			return a.pollAnswers(chat, question, next)
+		}
+		return a.pollOption(chat, question, next)
+	})
+}
+
+func (a *app) pollAnswers(chat, question string, options []string) tea.Cmd {
+	send := func(multiple bool) func() tea.Cmd {
+		return func() tea.Cmd {
+			return func() tea.Msg {
+				// The daemon announces the poll it sent, and that announcement
+				// is what puts it in the conversation.
+				if err := a.daemon.call(a.ctx, "poll.create", map[string]any{
+					"chat_jid": chat, "question": question, "options": options, "multiple": multiple}, nil); err != nil {
+					return failureMsg{err}
+				}
+				return nil
 			}
 		}
-		return a.ask("Send it as what?", safeLine(filepath.Base(path)), 0,
-			choice{label: "a picture or a video", run: send("")},
-			choice{label: "a file", run: send("document")},
-			choice{label: "a voice note", run: send("voice")},
-			choice{label: "a moving picture", run: send("gif")},
-			choice{label: "a sticker", run: send("sticker")})
-	})
+	}
+	return a.ask("How many answers may each person choose?", question, 0,
+		choice{label: "One answer", run: send(false)},
+		choice{label: "Several answers", run: send(true)})
 }
 
 // sendContactPrompt picks somebody out of the conversations that have a number

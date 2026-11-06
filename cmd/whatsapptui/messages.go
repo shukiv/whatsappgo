@@ -346,6 +346,11 @@ func (a *app) conversationLines(width int) (lines []string, from, to int) {
 	}
 	lastDay := ""
 	for index, message := range a.messages {
+		// A row of the window's own colour between two bubbles keeps them
+		// apart.
+		if index > 0 {
+			lines = append(lines, "")
+		}
 		if message.Timestamp > 0 {
 			if day := time.UnixMilli(message.Timestamp).Format(time.DateOnly); day != lastDay {
 				lines = append(lines, dayLine(message.Timestamp, width))
@@ -379,55 +384,81 @@ func (a *app) conversationLines(width int) (lines []string, from, to int) {
 // Which message the keys act on has to be visible without colour, since a
 // terminal may have none, so its bubble is drawn with a heavy line.
 func (a *app) messageLines(message model.Message, group bool, width int, selected bool) []string {
-	// Room for the border and a space either side of the words.
+	// Room for the mark that shows which message the keys are on, and for a
+	// space either side of the words.
 	const frame = 4
 	// A bubble takes at most three quarters of the pane, as in the window.
 	most := max(8, width*3/4-frame)
+	paint := paintTheirs
+	if message.FromMe {
+		paint = paintOwn
+	}
+	fill := lipgloss.NewStyle().Background(paint.fill)
+	words, muted := fill.Foreground(paint.words), fill.Foreground(paint.muted)
+
+	// Each row of the bubble, put in the order the terminal shows it, and
+	// whether it was written right to left: those start at the bubble's
+	// right edge, which is where somebody reading them looks for the start.
+	type row struct {
+		text  string
+		style lipgloss.Style
+		right bool
+	}
+	var rows []row
+	line := func(text string, style lipgloss.Style) {
+		rows = append(rows, row{fitLine(text, most), style, rightToLeft(text)})
+	}
+	if group && !message.FromMe {
+		line(a.who(message, group), fill.Foreground(paint.sender).Bold(true))
+	}
+	if quoted := replyLine(message); quoted != "" {
+		line(quoted, muted)
+	}
+	body := messageBody(message)
+	if message.Kind == "audio" && !message.Revoked {
+		// A voice note says it can be played, and that it is playing.
+		body = pick(a.playing.id == message.ID && a.playing.command != nil, "■ ", "▶ ") + body
+	}
+	for _, paragraph := range strings.Split(body, "\n") {
+		rtl := rightToLeft(paragraph)
+		for _, wrapped := range strings.Split(ansi.Wrap(paragraph, most, " -"), "\n") {
+			rows = append(rows, row{visualIn(wrapped, rtl), words, rtl})
+		}
+	}
+	if reactions := reactionLine(message); reactions != "" {
+		line(reactions, words)
+	}
 	footer := stamp(message.Timestamp)
 	if marks := messageMarks(message); marks != "" {
 		footer += " " + marks
 	}
-	footer = fitLine(footer, most)
+	rows = append(rows, row{fitLine(footer, most), muted, true})
 
-	var lines []string
-	if group && !message.FromMe {
-		lines = append(lines, styleTitle.Render(fitLine(a.who(message, group), most)))
-	}
-	if quoted := replyLine(message); quoted != "" {
-		lines = append(lines, styleMuted.Render(fitLine(quoted, most)))
-	}
-	body := strings.Split(ansi.Wrap(messageBody(message), most, " -"), "\n")
-	lines = append(lines, body...)
-	if reactions := reactionLine(message); reactions != "" {
-		lines = append(lines, fitLine(reactions, most))
-	}
-
-	inner := ansi.StringWidth(footer)
-	for _, line := range lines {
-		inner = max(inner, ansi.StringWidth(line))
+	inner := 0
+	for _, r := range rows {
+		inner = max(inner, ansi.StringWidth(r.text))
 	}
 	inner = min(inner, most)
-	// Words written right to left start at the bubble's right edge, which is
-	// where somebody reading them looks for the start.
-	for at, line := range lines {
-		if rightToLeft(line) {
-			lines[at] = lipgloss.PlaceHorizontal(inner, lipgloss.Right, line)
+	side := fill.Render(" ")
+	lines := make([]string, len(rows))
+	for at, r := range rows {
+		align := lipgloss.Left
+		if r.right {
+			align = lipgloss.Right
+		}
+		// A bar beside the message the keys are on, the whole height of it.
+		mark := "  "
+		if selected {
+			mark = styleTitle.Render("▌") + " "
+		}
+		lines[at] = mark + side + r.style.Width(inner).Align(align).Render(r.text) + side
+	}
+	if message.FromMe {
+		for at := range lines {
+			lines[at] = lipgloss.PlaceHorizontal(width, lipgloss.Right, lines[at])
 		}
 	}
-	lines = append(lines, lipgloss.PlaceHorizontal(inner, lipgloss.Right, styleMuted.Render(footer)))
-
-	style := styleTheirBubble
-	if message.FromMe {
-		style = styleOwnBubble
-	}
-	if selected {
-		style = style.Border(lipgloss.ThickBorder())
-	}
-	box := style.Width(inner + 2).Render(strings.Join(lines, "\n"))
-	if message.FromMe {
-		box = lipgloss.PlaceHorizontal(width, lipgloss.Right, box)
-	}
-	return strings.Split(box, "\n")
+	return lines
 }
 
 // rightToLeft says whether a line starts in a script written right to left,

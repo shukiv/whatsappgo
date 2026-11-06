@@ -32,6 +32,13 @@ type chooser struct {
 	hint   string
 	items  []choice
 	cursor int
+	// keys are what a list does beyond choosing, as going up a folder does
+	// while a file is chosen, and footer says what they are.
+	keys   map[string]func() tea.Cmd
+	footer string
+	// leftToRight rows read from the left whatever is in them - an icon, a
+	// name in any script, a size - as a list of files does.
+	leftToRight bool
 }
 
 type choice struct {
@@ -51,14 +58,18 @@ func wrapped(text string, width int, style lipgloss.Style) []string {
 	if width < 8 {
 		width = 8
 	}
+	rtl := rightToLeft(text)
 	lines := strings.Split(ansi.Wrap(text, width, " -"), "\n")
 	for at, line := range lines {
-		lines[at] = style.Render(line)
+		lines[at] = style.Render(visualIn(line, rtl))
 	}
 	return lines
 }
 
 func (a *app) chooserKey(msg tea.KeyMsg) tea.Cmd {
+	if run, ok := a.chooser.keys[msg.String()]; ok {
+		return run()
+	}
 	switch key := msg.String(); key {
 	case "esc", "q":
 		a.chooser = nil
@@ -312,6 +323,7 @@ func (a *app) help() tea.Cmd {
 		"r       answer the message under the cursor",
 		"e       change one of ours",
 		"x       react to one",
+		"a :     attach, emoji (ctrl+o, ctrl+g while writing)",
 		"s       keep one, or stop keeping it",
 		"p       pin one, or unpin it",
 		"f       pass one on to another conversation",
@@ -352,11 +364,16 @@ func (a *app) chooserLines(width, height int) string {
 	}
 	for at := start; at < len(a.chooser.items) && at < start+room; at++ {
 		a.hits = append(a.hits, hit{message: -1, item: at})
-		row := fmt.Sprintf(" %s", a.chooser.items[at].label)
+		// The number stays at the left whichever way the item reads.
+		number := " "
 		if at < 9 {
-			row = fmt.Sprintf(" %d %s", at+1, a.chooser.items[at].label)
+			number = fmt.Sprintf(" %d ", at+1)
 		}
-		row = fitLine(row, width)
+		label, room := a.chooser.items[at].label, width-ansi.StringWidth(number)
+		row := number + fitLine(label, room)
+		if a.chooser.leftToRight {
+			row = number + visualIn(ansi.Truncate(unjoined(label), room, "…"), false)
+		}
 		if at == a.chooser.cursor {
 			row = styleSelected.Render(row)
 		}
