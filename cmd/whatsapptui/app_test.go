@@ -164,12 +164,42 @@ func TestMessagesAreBubblesOnTheirOwnSide(t *testing.T) {
 }
 
 // coloured makes the window write its colours, as it does in a terminal that
-// shows them all, for as long as the test runs.
+// shows them all, for as long as the test runs. The terminal is a light one
+// unless the test says otherwise, whatever the one running the tests is.
 func coloured(t *testing.T) {
 	t.Helper()
-	before := lipgloss.ColorProfile()
+	before, wasDark := lipgloss.ColorProfile(), lipgloss.HasDarkBackground()
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(before) })
+	lipgloss.SetHasDarkBackground(false)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(before)
+		lipgloss.SetHasDarkBackground(wasDark)
+	})
+}
+
+// In a dark terminal our bubbles are WhatsApp's dark green with light words,
+// as the desktop client's dark theme draws them, and theirs a dark grey.
+func TestOurBubblesAreTheDarkGreenInADarkTerminal(t *testing.T) {
+	coloured(t)
+	lipgloss.SetHasDarkBackground(true)
+	current := drive(t)
+	ours := current.messageLines(model.Message{ID: "o1", FromMe: true, Timestamp: noon,
+		Kind: "text", Body: "hi", DeliveredAt: noon}, false, 60, false)
+	theirs := current.messageLines(model.Message{ID: "t1", SenderJID: alice, Timestamp: noon,
+		Kind: "text", Body: "hello"}, false, 60, false)
+	for _, line := range ours {
+		if !strings.Contains(line, "48;2;0;92;75") || strings.Contains(line, "48;2;217;253;211") {
+			t.Fatalf("a row of our bubble is not the dark green: %q", line)
+		}
+	}
+	if !strings.Contains(ours[0], "38;2;233;237;239") {
+		t.Fatalf("our words are not light on the dark green: %q", ours[0])
+	}
+	for _, line := range theirs {
+		if !strings.Contains(line, "48;2;32;44;51") {
+			t.Fatalf("a row of their bubble is not the dark grey: %q", line)
+		}
+	}
 }
 
 // Hebrew is written in the order it reads - the terminal writes from the
