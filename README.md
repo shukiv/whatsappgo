@@ -54,6 +54,13 @@ The checksum line has to print `WhatsAppGo-x86_64.AppImage: OK` before the file
 is worth running. On a system without FUSE, start it with
 `./WhatsAppGo-x86_64.AppImage --appimage-extract-and-run`.
 
+The same file holds a terminal client. `./WhatsAppGo-x86_64.AppImage --tui`
+opens it in place of the window. It talks to the background service the
+window starts, so the window has to be running on the same machine; the
+terminal client itself needs no display, so it also works over ssh into that
+machine. Anything else on the line goes to it, such as `--profile <name>` for
+another account.
+
 The published binaries are **unsigned**: the checksum confirms that the download
 arrived intact, not who built it. Building from source avoids the question.
 

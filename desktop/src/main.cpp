@@ -52,8 +52,16 @@
 #include <QTemporaryDir>
 #include <QtMath>
 
+#include <cerrno>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
+#include <vector>
+
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
 
 // QtTest's wheel helper enters through this QtGui window-system seam. Calling
 // it here keeps the production target free of a QtTest dependency while the
@@ -193,8 +201,68 @@ static int testFailure(const char *file, int line)
 #define WHATSAPPGO_TEST_FAILURE() testFailure(__FILE__, __LINE__)
 
 
+#ifdef Q_OS_UNIX
+// The terminal client ships beside the window, and is looked for the way the
+// daemon is: where the environment points, beside this program, in the build
+// tree, then on PATH. Only on Unix: Windows ships no terminal client, and its
+// window has no console to give one.
+static QString terminalClientExecutable()
+{
+    const auto applicationDir = QCoreApplication::applicationDirPath();
+    const QString name = QStringLiteral("whatsapptui");
+    const QStringList candidates{
+        qEnvironmentVariable("WHATSAPPGO_TUI"),
+        QDir(applicationDir).filePath(name),
+        QDir(applicationDir).filePath(QStringLiteral("../../bin/") + name),
+        QStandardPaths::findExecutable(name),
+    };
+    for (const auto &candidate : candidates) {
+        if (!candidate.isEmpty() && QFileInfo(candidate).isExecutable())
+            return QDir::cleanPath(candidate);
+    }
+    return {};
+}
+
+// --tui starts the terminal client in place of the window and hands it every
+// other argument, so the one AppImage can be either. It runs before anything
+// that needs a display, which is the point of a terminal client: over ssh, or
+// on a machine with no desktop at all.
+static int runTerminalClient(int argc, char *argv[])
+{
+    QList<QByteArray> passed;
+    for (int at = 1; at < argc; ++at) {
+        if (qstrcmp(argv[at], "--tui") != 0)
+            passed.append(QByteArray(argv[at]));
+    }
+    // Only to find where this program is; a core application needs no display.
+    QCoreApplication core(argc, argv);
+    const QString program = terminalClientExecutable();
+    if (program.isEmpty()) {
+        fprintf(stderr, "whatsappgo: the terminal client (whatsapptui) is not part of this installation\n");
+        return EXIT_FAILURE;
+    }
+    // Replacing this process rather than starting another keeps the terminal
+    // the client's alone, and keeps an AppImage's files mounted while it runs.
+    QByteArray path = QFile::encodeName(program);
+    std::vector<char *> arguments{path.data()};
+    for (auto &argument : passed)
+        arguments.push_back(argument.data());
+    arguments.push_back(nullptr);
+    execv(path.constData(), arguments.data());
+    fprintf(stderr, "whatsappgo: cannot start %s: %s\n", path.constData(), std::strerror(errno));
+    return EXIT_FAILURE;
+}
+#endif
+
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_UNIX
+    for (int at = 1; at < argc; ++at) {
+        if (qstrcmp(argv[at], "--tui") == 0)
+            return runTerminalClient(argc, argv);
+    }
+#endif
+
 #ifdef Q_OS_LINUX
     const QByteArray forcedTheme = linuxPlatformTheme(
         [](const char *name) { return qgetenv(name); });
@@ -418,6 +486,12 @@ int main(int argc, char *argv[])
     parser.addOption(uninstallTestOption);
     QCommandLineOption uninstallOption(QStringLiteral("uninstall"), QStringLiteral("Remove WhatsAppGo's accounts, settings and cached files from this computer"));
     parser.addOption(uninstallOption);
+#ifdef Q_OS_UNIX
+    // Handled before the application exists, at the top of main; listed here
+    // so that --help says it is there.
+    QCommandLineOption tuiOption(QStringLiteral("tui"), QStringLiteral("Open the terminal client instead of the window; the other arguments go to it"));
+    parser.addOption(tuiOption);
+#endif
     QCommandLineOption uninstallYesOption(QStringLiteral("yes"), QStringLiteral("Answer yes to --uninstall rather than asking"));
     parser.addOption(uninstallYesOption);
     QCommandLineOption keepAccountsOption(QStringLiteral("keep-accounts"), QStringLiteral("With --uninstall, leave the accounts and their message history in place"));

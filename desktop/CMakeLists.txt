@@ -628,6 +628,16 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/CleanStartup.cmake
     )
     set_tests_properties(desktop-clean-startup PROPERTIES TIMEOUT 10)
+    if(UNIX)
+        # Its stand-in for the terminal client is a shell script.
+        add_test(NAME desktop-tui-flag
+            COMMAND ${CMAKE_COMMAND}
+                -DAPP=$<TARGET_FILE:whatsappgo>
+                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/tui-flag-test
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/TerminalClient.cmake
+        )
+        set_tests_properties(desktop-tui-flag PROPERTIES TIMEOUT 10)
+    endif()
     add_test(NAME desktop-light-theme COMMAND whatsappgo --theme light --smoke-test)
     add_test(NAME desktop-dark-theme COMMAND whatsappgo --theme dark --smoke-test)
     add_test(NAME desktop-search-navigation COMMAND whatsappgo --search-navigation-test)
