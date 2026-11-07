@@ -10,6 +10,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// emoji_table.go is written from the desktop client's list, by the test that
+// checks the two agree.
+//go:generate go test -run TestTheEmojiAreTheDesktopClients -update-emoji .
+
 // emojiGroup is one of the desktop client's emoji groups: its name, the
 // picture its tab shows, and its emoji with the words each is found by.
 type emojiGroup struct {
