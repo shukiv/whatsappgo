@@ -35,9 +35,9 @@ DESTDIR="${appdir}" cmake --install "${build_dir}"
 install -Dm755 "${project_root}/bin/whatsappd" "${appdir}/usr/bin/whatsappd"
 install -Dm755 "${project_root}/bin/whatsappctl" "${appdir}/usr/bin/whatsappctl"
 # The terminal client talks to the same daemon, so it travels with it too. The
-# image starts the window; the terminal client is taken out of it with
-#   ./WhatsAppGo-x86_64.AppImage --appimage-extract usr/bin/whatsapptui
-# and run as squashfs-root/usr/bin/whatsapptui.
+# image starts the window, or with --tui the terminal client, which the window
+# finds beside itself:
+#   ./WhatsAppGo-x86_64.AppImage --tui
 install -Dm755 "${project_root}/bin/whatsapptui" "${appdir}/usr/bin/whatsapptui"
 install -Dm644 "${project_root}/packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml" "${appdir}/usr/share/metainfo/org.whatsappgo.Desktop.metainfo.xml"
 
