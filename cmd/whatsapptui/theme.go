@@ -18,15 +18,16 @@ var (
 	styleUnread = lipgloss.NewStyle().Foreground(colourBrand)
 	stylePane   = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).
 			BorderForeground(colourSelect)
-	// A message is a bubble of colour: the account's own in WhatsApp's light
-	// green with dark words, everybody else's in grey. The grey is a light one
-	// on a light terminal and a dark one on a dark terminal, so a bubble stands
-	// off the window either way.
+	// A message is a bubble of colour: the account's own in WhatsApp's green,
+	// everybody else's in grey. Both follow the terminal the way the desktop
+	// client's themes do - the light green with dark words on a light
+	// terminal, the dark green with light words on a dark one, and a light
+	// grey or a dark one - so a bubble stands off the window either way.
 	paintOwn = bubblePaint{
-		fill:   lipgloss.Color("#D9FDD3"),
-		words:  lipgloss.Color("#111B21"),
-		muted:  lipgloss.Color("#54656F"),
-		sender: lipgloss.Color("#008069"),
+		fill:   lipgloss.AdaptiveColor{Light: "#D9FDD3", Dark: "#005C4B"},
+		words:  lipgloss.AdaptiveColor{Light: "#111B21", Dark: "#E9EDEF"},
+		muted:  lipgloss.AdaptiveColor{Light: "#54656F", Dark: "#8696A0"},
+		sender: lipgloss.AdaptiveColor{Light: "#008069", Dark: "#06CF9C"},
 	}
 	paintTheirs = bubblePaint{
 		fill:   lipgloss.AdaptiveColor{Light: "#E9EDEF", Dark: "#202C33"},
