@@ -10,6 +10,19 @@ The desktop application starts and owns its backend automatically. Build it,
 launch `whatsappgo`, and use it as one application—there is no service or
 systemd unit to start manually.
 
+<p align="center">
+  <img src="docs/images/desktop-light.png" width="100%"
+       alt="The WhatsAppGo window in the light theme: the conversation list beside an open group chat with sender names, a quoted reply and reactions">
+</p>
+<p align="center">
+  <img src="docs/images/desktop-dark.png" width="49%"
+       alt="The WhatsAppGo window in the dark theme with a one-to-one conversation open">
+  <img src="docs/images/terminal.png" width="49%"
+       alt="The terminal client in a dark terminal: the conversation list and an open group chat drawn as coloured bubbles">
+</p>
+<p align="center"><sub>The window in its light and dark themes, and the terminal
+client (<code>--tui</code>). Every name, number and message shown is made up.</sub></p>
+
 > **Important:** WhatsAppGo is not affiliated with, authorized by, or endorsed
 > by WhatsApp or Meta. Voice and video calls cannot be placed because the
 > underlying protocol library does not implement them, and protocol changes can
