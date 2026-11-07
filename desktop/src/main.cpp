@@ -6101,7 +6101,15 @@ QtObject {
         // be measured against WhatsApp Web without driving the desktop.
         if (!screenshotChat.isEmpty()) {
             QTimer::singleShot(1500, &app, [&backend, screenshotChat] {
-                backend.openChat(screenshotChat, QString());
+                // A click hands over the name the list shows; without it the
+                // header falls back to "Group" or the number.
+                QString title;
+                for (const auto &entry : backend.chats()) {
+                    const auto chat = entry.toMap();
+                    if (chat.value(QStringLiteral("jid")).toString() == screenshotChat)
+                        title = chat.value(QStringLiteral("title")).toString();
+                }
+                backend.openChat(screenshotChat, title);
             });
         }
 
