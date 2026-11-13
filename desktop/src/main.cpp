@@ -4548,11 +4548,21 @@ QtObject {
             [&enterSent](const QString &, const QString &, const QString &, const QString &, bool) { enterSent = true; });
         composer->setProperty("text", QStringLiteral("A message typed while reading older history"));
         composer->forceActiveFocus();
-        QKeyEvent enterPress(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        // Ctrl+Enter sends. Enter alone starts a new line unless "Enter is
+        // send" is turned on, which it is not until someone turns it on.
+        auto *settingsPane = mainRoot->findChild<QObject *>(QStringLiteral("settingsPane"));
+        if (!settingsPane)
+            return WHATSAPPGO_TEST_FAILURE();
+        require(!settingsPane->property("enterIsSend").toBool(), QStringLiteral("\"Enter is send\" is on by default"));
+        QKeyEvent plainPress(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QCoreApplication::sendEvent(applicationWindow, &plainPress);
+        settle();
+        require(!enterSent, QStringLiteral("Enter sent the message with \"Enter is send\" off"));
+        QKeyEvent enterPress(QEvent::KeyPress, Qt::Key_Return, Qt::ControlModifier);
         QCoreApplication::sendEvent(applicationWindow, &enterPress);
         settle();
         QObject::disconnect(sentObservation);
-        require(enterSent, QStringLiteral("the physical Enter key did not reach the send action"));
+        require(enterSent, QStringLiteral("Ctrl+Enter did not reach the send action"));
         require(messageList->property("followTail").toBool() && newestAtBottom(),
                 QStringLiteral("pressing Enter while reading history did not jump to the newest message"));
         // A real send's row can arrive later than the key press/acknowledgement.
@@ -5573,6 +5583,44 @@ QtObject {
         QMetaObject::invokeMethod(starredDialog, "openForChat", Q_ARG(QVariant, QString()));
         if (!starredDialog->property("chatJid").toString().isEmpty())
             return WHATSAPPGO_TEST_FAILURE(); // The global list retained a contact filter.
+
+        // Ctrl+Enter confirms what was written in a dialog, as it sends from
+        // the message box, and Enter alone starts a new line there. What the
+        // dialog posts goes to this run's stand-in daemon.
+        auto *statusDialog = root->findChild<QObject *>(QStringLiteral("textStatusDialog"));
+        auto *statusField = qobject_cast<QQuickItem *>(root->findChild<QObject *>(QStringLiteral("statusTextField")));
+        auto *keysWindow = qobject_cast<QQuickWindow *>(root);
+        if (!statusDialog || !statusField || !keysWindow)
+            return WHATSAPPGO_TEST_FAILURE();
+        // A dialog says it is open, or closed, once its transition is over.
+        const auto settleUntil = [](std::function<bool()> done, int limit = 3000) {
+            QElapsedTimer waited;
+            waited.start();
+            while (!done() && waited.elapsed() < limit)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            return done();
+        };
+        QMetaObject::invokeMethod(starredDialog, "close");
+        QMetaObject::invokeMethod(statusDialog, "open");
+        if (!settleUntil([statusDialog] { return statusDialog->property("opened").toBool(); }))
+            return WHATSAPPGO_TEST_FAILURE();
+        statusField->setProperty("text", QStringLiteral("first line"));
+        statusField->setProperty("cursorPosition", 10);
+        statusField->forceActiveFocus();
+        QKeyEvent plainReturn(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QCoreApplication::sendEvent(keysWindow, &plainReturn);
+        settleUntil([] { return false; }, 400); // Long enough for a wrong close to show.
+        if (!statusDialog->property("opened").toBool()
+                || statusField->property("text").toString() != QStringLiteral("first line\n")) {
+            qInfo() << "FAIL: Enter in a dialog did not start a new line";
+            return WHATSAPPGO_TEST_FAILURE();
+        }
+        QKeyEvent controlReturn(QEvent::KeyPress, Qt::Key_Return, Qt::ControlModifier);
+        QCoreApplication::sendEvent(keysWindow, &controlReturn);
+        if (!settleUntil([statusDialog] { return !statusDialog->property("visible").toBool(); })) {
+            qInfo() << "FAIL: Ctrl+Enter did not confirm the dialog";
+            return WHATSAPPGO_TEST_FAILURE();
+        }
         return EXIT_SUCCESS;
     }
 

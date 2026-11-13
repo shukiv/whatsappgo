@@ -3088,16 +3088,16 @@ ApplicationWindow {
                                                 event.accepted = true
                                             return
                                         }
-                                        // With "Enter is send" off, the roles swap:
-                                        // Enter opens a line and Ctrl+Enter sends,
-                                        // which is what the PWA does.
+                                        // Ctrl+Enter sends, whatever the setting.
+                                        // Enter opens a line, unless "Enter is
+                                        // send" is on, when it sends as well.
                                         const enterSends = settingsPane.enterIsSend
                                         const plainReturn = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                                             && !(event.modifiers & Qt.ShiftModifier)
                                             && !(event.modifiers & Qt.ControlModifier)
                                         const controlReturn = (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
-                                            && (event.modifiers & Qt.ControlModifier)
-                                        if ((enterSends && plainReturn) || (!enterSends && controlReturn)) {
+                                            && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))
+                                        if ((enterSends && plainReturn) || controlReturn) {
                                             sendButton.clicked()
                                             event.accepted = true
                                         }
@@ -4298,8 +4298,9 @@ ApplicationWindow {
                         { keys: "Alt+8", label: qsTr("Star / unstar focused or hovered message") },
                         { keys: "Ctrl+Up", label: qsTr("Edit last message (empty composer)") },
                         { keys: "Esc", label: qsTr("Back one level (Chats is the starting page)") },
-                        { keys: settingsPane.enterIsSend ? "Enter" : "Ctrl+Enter", label: qsTr("Send the message") },
-                        { keys: settingsPane.enterIsSend ? "Shift+Enter" : "Enter", label: qsTr("New line in the message") }
+                        { keys: settingsPane.enterIsSend ? "Enter / Ctrl+Enter" : "Ctrl+Enter", label: qsTr("Send the message") },
+                        { keys: settingsPane.enterIsSend ? "Shift+Enter" : "Enter", label: qsTr("New line in the message") },
+                        { keys: "Ctrl+Enter", label: qsTr("Save or post what you wrote in a dialog") }
                     ]
                     RowLayout {
                         required property var modelData
