@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.13
+Version:        0.1.15
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -46,6 +46,12 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Fri Nov 13 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.15-1
+- Add a terminal client, whatsapptui, on the same background service as the window
+- Ctrl+Enter sends and Enter starts a new line; Ctrl+Enter also saves what is written in a dialog
+- Draw a shared contact as WhatsApp Web does, with Message and Save contact
+- Ask for profile pictures by person, ending the red 400 error on opening the window
+
 * Tue Sep 29 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.13-1
 - Build with libwebp, so animated stickers play instead of reporting themselves unavailable
 - Draw a message that arrives late where it happened rather than at the end
