@@ -122,6 +122,14 @@ Popup {
                 placeholderTextColor: Theme.textMuted
                 Accessible.name: qsTr("Group description")
                 background: Rectangle { color: Theme.surfaceMuted; radius: 8; border.color: descriptionField.activeFocus ? Theme.primary : Theme.border }
+                // Enter starts a new line; Ctrl+Enter saves, as everywhere else.
+                Keys.onPressed: event => {
+                    if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                            && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))) {
+                        if (saveButton.enabled) saveButton.clicked()
+                        event.accepted = true
+                    }
+                }
             }
         }
         Label {
@@ -148,6 +156,7 @@ Popup {
                 onClicked: root.close()
             }
             ExpressionButton {
+                id: saveButton
                 objectName: "groupMetadataSave"
                 text: qsTr("Save")
                 primary: true

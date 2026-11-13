@@ -27,7 +27,7 @@ ColumnLayout {
 
     // Local preferences live with the pane that owns them; the composer reads
     // them through this pane rather than keeping a second copy.
-    readonly property alias enterIsSend: composerSettings.enterIsSend
+    readonly property alias enterIsSend: composerSettings.enterSends
     readonly property alias replaceEmoticons: composerSettings.replaceEmoticons
     readonly property alias showWallpaper: composerSettings.showWallpaper
     readonly property alias photoQuality: composerSettings.photoQuality
@@ -39,7 +39,11 @@ ColumnLayout {
     Settings {
         id: composerSettings
         category: "composer"
-        property bool enterIsSend: true
+        // Ctrl+Enter sends and Enter starts a new line until this is turned
+        // on. It was "enterIsSend", on by default, and the settings write
+        // every value back on quitting, so every copy holds that old default
+        // whether anyone chose it or not: a new name starts everyone afresh.
+        property bool enterSends: false
         property bool replaceEmoticons: true
         property bool showWallpaper: true
         property string photoQuality: "original"
@@ -817,9 +821,9 @@ ColumnLayout {
                     objectName: "settingsRow_enterIsSend"
                     Layout.fillWidth: true
                     text: qsTr("Enter is send")
-                    description: qsTr("Enter sends the message. Turn this off to start a new line instead.")
-                    on: composerSettings.enterIsSend
-                    onSwitched: value => composerSettings.enterIsSend = value
+                    description: qsTr("Enter sends the message as well as Ctrl+Enter. Off, Enter starts a new line.")
+                    on: composerSettings.enterSends
+                    onSwitched: value => composerSettings.enterSends = value
                 }
                 SettingsChoiceRow {
                     objectName: "settingsPhotoQuality"

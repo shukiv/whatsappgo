@@ -79,6 +79,19 @@ Popup {
     contentItem: ColumnLayout {
         spacing: 0
 
+        // Ctrl+Enter confirms what is being written, as it sends from the
+        // message box: in a field of several lines, where Enter only starts a
+        // new one. A one-line field answers Enter itself, and a destructive
+        // confirmation waits for its button.
+        Keys.onPressed: event => {
+            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+                    && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))
+                    && Window.activeFocusItem instanceof TextEdit && !root.destructive) {
+                root.accept()
+                event.accepted = true
+            }
+        }
+
         Label {
             objectName: "dialogTitle"
             Layout.fillWidth: true

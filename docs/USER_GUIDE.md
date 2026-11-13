@@ -254,7 +254,8 @@ actions instead of displaying controls that would fail silently.
 
 ## Sending messages
 
-- **Enter** sends a message; **Shift+Enter** inserts a line break.
+- **Ctrl+Enter** sends a message; **Enter** inserts a line break. Turn on
+  **Enter is send** in Settings to send with Enter as well.
 - The paperclip opens the compact attachment menu. **Document**, **Photos and
   videos**, and **Audio** are functional. **New sticker** opens local image
   selection and a preview before sending. **Contact** searches locally known
@@ -291,7 +292,8 @@ wheel or drag its handle to review earlier lines without scrolling the chat.
 
 | Key | What it does |
 | --- | --- |
-| **Enter** | Sends the message. With **Enter is send** turned off in Settings the roles swap: Enter opens a line and **Ctrl+Enter** sends. |
+| **Ctrl+Enter** | Sends the message. In a dialog it saves or posts what you wrote there: an edited message, a status, a group or community description, a bug report. |
+| **Enter** | Opens a line. With **Enter is send** turned on in Settings it sends as well. |
 | **Shift+Enter** | Always opens a line. |
 | **Up arrow** | On an empty composer, opens the last message you sent for editing. Received messages, deleted ones, and anything that is not text are stepped over. A composer with something in it keeps the arrow for moving the cursor. |
 | **Escape** | Goes back one level: close the current menu/dialog or viewer first, then a nested panel/settings page, then the previous section. Chats is the starting page; Escape there never quits or discards the draft. |
@@ -516,7 +518,7 @@ playback marks the message as played/read. Nothing is handed to a web browser.
 Paste a copied image into the composer to open the media preview. The preview
 supports a caption and basic rotation before sending. The caption field grows
 as you type, then scrolls for longer text while keeping the cursor visible.
-Use **Shift+Enter** for another line and **Enter** to send the image. The preview
+Use **Enter** for another line and **Ctrl+Enter** to send the image. The preview
 image shrinks as needed so the caption and send controls remain accessible.
 Downloaded documents and media are cached on disk. Click a document card to
 save the original file to Downloads; there is no separate **Open** button on

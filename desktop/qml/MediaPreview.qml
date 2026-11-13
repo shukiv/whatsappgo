@@ -11,7 +11,7 @@ Item {
     property real imageRotation: 0
     property bool sending: false
     property bool sendAllowed: true
-    property bool enterIsSend: true
+    property bool enterIsSend: false
     property bool replaceEmoticons: true
     property bool spellChecking: false
     property string spellLanguage: "en_US"
