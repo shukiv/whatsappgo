@@ -15,6 +15,21 @@
   <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
+    <release version="0.1.15" date="2026-11-13">
+      <description>
+        <p>A terminal client opens the same account in a terminal, talking to the same background service as the window.</p>
+        <p>Ctrl+Enter sends and Enter starts a new line. Ctrl+Enter also saves or posts what was written in a dialog.</p>
+        <p>A shared contact is drawn the way WhatsApp Web draws one, with Message and Save contact.</p>
+        <p>Opening the window no longer shows a red error about a profile picture.</p>
+      </description>
+    </release>
+    <release version="0.1.14" date="2026-10-22">
+      <description>
+        <p>A received question with tappable answers is drawn in the conversation and can be answered.</p>
+        <p>The AppImage carries its own background service, and quitting no longer ends in a crash.</p>
+        <p>A long message collapses behind Read more, and a conversation holding a scheduled message is listed.</p>
+      </description>
+    </release>
     <release version="0.1.13" date="2026-09-29">
       <description>
         <p>Animated stickers play. Every build published until now was made without the library that decodes them, so one always said it was unavailable.</p>
