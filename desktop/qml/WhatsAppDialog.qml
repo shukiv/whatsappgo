@@ -77,16 +77,20 @@ Popup {
     }
 
     contentItem: ColumnLayout {
+        id: dialogContent
         spacing: 0
 
         // Ctrl+Enter confirms what is being written, as it sends from the
         // message box: in a field of several lines, where Enter only starts a
         // new one. A one-line field answers Enter itself, and a destructive
         // confirmation waits for its button.
+        // The window is asked through this item by name, as the other dialogs
+        // ask it: a bare `Window` here found the field on Qt 6.8 and nothing
+        // on Qt 6.9, so the dialog stayed open.
         Keys.onPressed: event => {
             if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                     && (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier))
-                    && Window.activeFocusItem instanceof TextEdit && !root.destructive) {
+                    && dialogContent.Window.activeFocusItem instanceof TextEdit && !root.destructive) {
                 root.accept()
                 event.accepted = true
             }
