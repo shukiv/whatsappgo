@@ -3478,12 +3478,15 @@ ApplicationWindow {
     // cursor goes to the box without a second click, the way WhatsApp Web does
     // it. A channel has no box to put it in. One turn later, because the box is
     // revealed by bindings that have not run when this arrives, and a hidden
-    // box cannot hold the cursor.
+    // box cannot hold the cursor. A dialog that has the cursor by then keeps
+    // it: a conversation opened behind it, from a notification or in the same
+    // turn the dialog opened, would take the typing out of the dialog.
     Connections {
         target: backend
         function onChatOpened(chatJid) {
             Qt.callLater(function() {
-                if (String(backend.selectedChat.jid || "") === chatJid && !window.selectedIsChannel)
+                if (String(backend.selectedChat.jid || "") === chatJid && !window.selectedIsChannel
+                        && !Theme.popupOwnsFocus(window.Overlay.overlay, window.activeFocusItem))
                     window.focusComposer()
             })
         }

@@ -63,9 +63,6 @@
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #endif
-#ifdef __GLIBC__
-#include <execinfo.h>
-#endif
 
 // QtTest's wheel helper enters through this QtGui window-system seam. Calling
 // it here keeps the production target free of a QtTest dependency while the
@@ -5605,7 +5602,7 @@ QtObject {
             return done();
         };
         // Every move of the focus from here on, so a red run says when the
-        // message box took it, and on glibc which code gave it.
+        // message box took it.
         QStringList focusTrail;
         QElapsedTimer trailClock;
         trailClock.start();
@@ -5617,26 +5614,8 @@ QtObject {
             focusTrail << QStringLiteral("%1ms %2").arg(trailClock.elapsed()).arg(what);
         };
         const auto trail = QObject::connect(keysWindow, &QQuickWindow::activeFocusItemChanged, keysWindow,
-                                            [&focusTrail, &mark, &describe, keysWindow] {
-            QQuickItem *item = keysWindow->activeFocusItem();
-            mark(QStringLiteral("focus -> ") + describe(item));
-#ifdef __GLIBC__
-            if (item && item->objectName() == QLatin1String("messageComposer")) {
-                void *frames[48];
-                const int count = backtrace(frames, 48);
-                char **names = backtrace_symbols(frames, count);
-                int kept = 0;
-                for (int i = 0; names && i < count && kept < 4; ++i) {
-                    const QByteArray frame(names[i]);
-                    if (frame.contains("Popup") || frame.contains("Focus") || frame.contains("Timer")
-                            || frame.contains("Key") || frame.contains("CallLater") || frame.contains("QV4")) {
-                        focusTrail << QStringLiteral("    ") + QString::fromLatin1(frame);
-                        ++kept;
-                    }
-                }
-                std::free(names);
-            }
-#endif
+                                            [&mark, &describe, keysWindow] {
+            mark(QStringLiteral("focus -> ") + describe(keysWindow->activeFocusItem()));
         });
         const auto stopTrail = qScopeGuard([trail] { QObject::disconnect(trail); });
         const auto failWithTrail = [&focusTrail](const char *why) {
@@ -5658,6 +5637,15 @@ QtObject {
         statusField->setProperty("text", QStringLiteral("first line"));
         statusField->setProperty("cursorPosition", 10);
         statusField->forceActiveFocus();
+        // A conversation opened behind the dialog, as a notification opens
+        // one, leaves the cursor where the person is writing.
+        mark(QStringLiteral("open Bob behind the dialog"));
+        backend.openChat(QStringLiteral("bob@lid"), QStringLiteral("Bob"));
+        settleUntil([] { return false; }, 200);
+        if (keysWindow->activeFocusItem() != statusField) {
+            failWithTrail("a conversation opened behind the dialog took the cursor out of it");
+            return WHATSAPPGO_TEST_FAILURE();
+        }
         mark(QStringLiteral("Return"));
         QKeyEvent plainReturn(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
         QCoreApplication::sendEvent(keysWindow, &plainReturn);
