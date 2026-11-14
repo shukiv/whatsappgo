@@ -5600,7 +5600,12 @@ QtObject {
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             return done();
         };
+        // The starred list is gone before the status dialog opens: from Qt 6.9
+        // a popup that finishes closing gives the focus back to what had it
+        // before, here the message box, even while another dialog is open.
         QMetaObject::invokeMethod(starredDialog, "close");
+        if (!settleUntil([starredDialog] { return !starredDialog->property("visible").toBool(); }))
+            return WHATSAPPGO_TEST_FAILURE();
         QMetaObject::invokeMethod(statusDialog, "open");
         if (!settleUntil([statusDialog] { return statusDialog->property("opened").toBool(); }))
             return WHATSAPPGO_TEST_FAILURE();
