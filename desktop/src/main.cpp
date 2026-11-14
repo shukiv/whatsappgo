@@ -45,6 +45,7 @@
 #include <QMenu>
 #include <QQmlProperty>
 #include <QQuickItem>
+#include <QScopeGuard>
 #include <QQuickView>
 #include <QStyleHints>
 #include <QProcess>
@@ -61,6 +62,9 @@
 
 #ifdef Q_OS_UNIX
 #include <unistd.h>
+#endif
+#ifdef __GLIBC__
+#include <execinfo.h>
 #endif
 
 // QtTest's wheel helper enters through this QtGui window-system seam. Calling
@@ -5600,34 +5604,74 @@ QtObject {
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             return done();
         };
+        // Every move of the focus from here on, so a red run says when the
+        // message box took it, and on glibc which code gave it.
+        QStringList focusTrail;
+        QElapsedTimer trailClock;
+        trailClock.start();
+        const auto describe = [](QQuickItem *item) {
+            return item ? QString::fromLatin1(item->metaObject()->className()) + u' ' + item->objectName()
+                        : QStringLiteral("nothing");
+        };
+        const auto mark = [&focusTrail, &trailClock](const QString &what) {
+            focusTrail << QStringLiteral("%1ms %2").arg(trailClock.elapsed()).arg(what);
+        };
+        const auto trail = QObject::connect(keysWindow, &QQuickWindow::activeFocusItemChanged, keysWindow,
+                                            [&focusTrail, &mark, &describe, keysWindow] {
+            QQuickItem *item = keysWindow->activeFocusItem();
+            mark(QStringLiteral("focus -> ") + describe(item));
+#ifdef __GLIBC__
+            if (item && item->objectName() == QLatin1String("messageComposer")) {
+                void *frames[48];
+                const int count = backtrace(frames, 48);
+                char **names = backtrace_symbols(frames, count);
+                int kept = 0;
+                for (int i = 0; names && i < count && kept < 4; ++i) {
+                    const QByteArray frame(names[i]);
+                    if (frame.contains("Popup") || frame.contains("Focus") || frame.contains("Timer")
+                            || frame.contains("Key") || frame.contains("CallLater") || frame.contains("QV4")) {
+                        focusTrail << QStringLiteral("    ") + QString::fromLatin1(frame);
+                        ++kept;
+                    }
+                }
+                std::free(names);
+            }
+#endif
+        });
+        const auto stopTrail = qScopeGuard([trail] { QObject::disconnect(trail); });
+        const auto failWithTrail = [&focusTrail](const char *why) {
+            qInfo().noquote() << "FAIL:" << why;
+            for (const QString &line : std::as_const(focusTrail))
+                qInfo().noquote() << line;
+        };
         // The starred list is gone before the status dialog opens: from Qt 6.9
         // a popup that finishes closing gives the focus back to what had it
         // before, here the message box, even while another dialog is open.
+        mark(QStringLiteral("close starred"));
         QMetaObject::invokeMethod(starredDialog, "close");
         if (!settleUntil([starredDialog] { return !starredDialog->property("visible").toBool(); }))
             return WHATSAPPGO_TEST_FAILURE();
+        mark(QStringLiteral("open status"));
         QMetaObject::invokeMethod(statusDialog, "open");
         if (!settleUntil([statusDialog] { return statusDialog->property("opened").toBool(); }))
             return WHATSAPPGO_TEST_FAILURE();
         statusField->setProperty("text", QStringLiteral("first line"));
         statusField->setProperty("cursorPosition", 10);
         statusField->forceActiveFocus();
+        mark(QStringLiteral("Return"));
         QKeyEvent plainReturn(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
         QCoreApplication::sendEvent(keysWindow, &plainReturn);
         settleUntil([] { return false; }, 400); // Long enough for a wrong close to show.
         if (!statusDialog->property("opened").toBool()
                 || statusField->property("text").toString() != QStringLiteral("first line\n")) {
-            qInfo() << "FAIL: Enter in a dialog did not start a new line";
+            failWithTrail("Enter in a dialog did not start a new line");
             return WHATSAPPGO_TEST_FAILURE();
         }
+        mark(QStringLiteral("Ctrl+Return, focus on ") + describe(keysWindow->activeFocusItem()));
         QKeyEvent controlReturn(QEvent::KeyPress, Qt::Key_Return, Qt::ControlModifier);
         QCoreApplication::sendEvent(keysWindow, &controlReturn);
         if (!settleUntil([statusDialog] { return !statusDialog->property("visible").toBool(); })) {
-            QQuickItem *focused = keysWindow->activeFocusItem();
-            qInfo().noquote() << "FAIL: Ctrl+Enter did not confirm the dialog; the focus was on"
-                              << (focused ? QString::fromLatin1(focused->metaObject()->className())
-                                                + u' ' + focused->objectName()
-                                          : QStringLiteral("nothing"));
+            failWithTrail("Ctrl+Enter did not confirm the dialog");
             return WHATSAPPGO_TEST_FAILURE();
         }
         return EXIT_SUCCESS;
