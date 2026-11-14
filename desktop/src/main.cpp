@@ -5618,7 +5618,11 @@ QtObject {
         QKeyEvent controlReturn(QEvent::KeyPress, Qt::Key_Return, Qt::ControlModifier);
         QCoreApplication::sendEvent(keysWindow, &controlReturn);
         if (!settleUntil([statusDialog] { return !statusDialog->property("visible").toBool(); })) {
-            qInfo() << "FAIL: Ctrl+Enter did not confirm the dialog";
+            QQuickItem *focused = keysWindow->activeFocusItem();
+            qInfo().noquote() << "FAIL: Ctrl+Enter did not confirm the dialog; the focus was on"
+                              << (focused ? QString::fromLatin1(focused->metaObject()->className())
+                                                + u' ' + focused->objectName()
+                                          : QStringLiteral("nothing"));
             return WHATSAPPGO_TEST_FAILURE();
         }
         return EXIT_SUCCESS;
