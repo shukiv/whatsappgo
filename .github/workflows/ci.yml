@@ -90,6 +90,26 @@ jobs:
       - run: cmake -S desktop -B desktop/build-nowebp -G Ninja -DCMAKE_BUILD_TYPE=Release -DWHATSAPPGO_DISABLE_WEBP=ON
       - run: cmake --build desktop/build-nowebp --parallel "$(./scripts/build-jobs.sh)"
       - run: ctest --test-dir desktop/build-nowebp -R desktop-sticker --output-on-failure
+      # A job's log can only be read signed in, but its annotations are on the
+      # run's public page. A red ctest writes one per failing test there, with
+      # the last lines the test printed, so a failure can be read from anywhere.
+      - if: failure()
+        run: |
+          for dir in desktop/build desktop/build-nowebp; do
+            failed="$dir/Testing/Temporary/LastTestsFailed.log"
+            [ -f "$failed" ] || continue
+            cut -d: -f2- "$failed" | while IFS= read -r name; do
+              tail=$(awk -v t="$name" '
+                  { line = $0 }
+                  !want && sub(/^[0-9]+\/[0-9]+ Test: /, "", line) && line == t { want = 1; next }
+                  want && $0 == "<end of output>" { exit }
+                  want && seen { print; next }
+                  want && /^-+$/ { seen = 1 }
+                ' "$dir/Testing/Temporary/LastTest.log" | tail -n 25 \
+                | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{ printf "%s%%0A", $0 }')
+              echo "::error title=ctest failed%3A ${name}::${tail}"
+            done
+          done
 
   desktop-windows:
     runs-on: windows-latest
