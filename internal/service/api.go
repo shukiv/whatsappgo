@@ -90,6 +90,7 @@ var apiMethods = []MethodDescription{
 	method("notifications.get", "Read local per-profile notification preferences", false, map[string]any{}),
 	method("notifications.set", "Change a local notification preference", true, map[string]any{"name": "previews", "value": false}),
 	method("notifications.test_sound", "Preview the incoming or outgoing desktop sound (Linux)", true, map[string]any{"kind": "incoming"}),
+	method("notifications.present", "Show desktop notifications from this daemon until this connection closes, even if it was started without them", true, nil),
 	method("preferences.get", "Read local media-download and link-preview preferences", false, map[string]any{}),
 	method("preferences.set", "Change one local network preference", true, map[string]any{"name": "download_video", "value": false}),
 	method("privacy.set", "Change one privacy setting", true, map[string]any{"name": "last_seen", "value": "contacts"}),

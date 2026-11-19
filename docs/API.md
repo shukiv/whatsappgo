@@ -322,6 +322,17 @@ Local per-profile notification preferences:
 - `notifications.test_sound` takes `{"kind":"incoming"}` or `"outgoing"`.
   It plays the Linux desktop sound without sending a WhatsApp message and
   reports missing audio dependencies/output failures.
+- `notifications.present` takes no parameters and keeps a daemon started with
+  `--notifications=false` posting desktop notifications until the connection
+  that asked closes. It returns `{"presenting":true}` once the daemon posts
+  them itself, and fails only when the daemon cannot reach the session bus. A
+  notification the daemon then fails to post - no notification service owns the
+  name - is sent to clients unhandled, as `notification.received` with
+  `handled` `"0"`. A daemon started with notifications on presents them anyway.
+  The desktop window sends it on every connection it opens, to the profile it
+  shows and to the others it watches, so a daemon it finds already running - one
+  the MCP server or a service manager started - still shows notifications while
+  the window is open.
 - `preferences.get` / `preferences.set` use the same name/boolean contract for
   `download_image`, `download_video`, `download_audio`, `download_document`,
   `download_sticker` (default true) and `disable_link_previews` (default false).
@@ -733,6 +744,9 @@ WantedBy=default.target
 ```
 
 `loginctl enable-linger <user>` keeps it running when nobody is logged in.
+With `--notifications=false` it posts no notifications of its own, but a
+desktop window that attaches to it asks for them with `notifications.present`
+and gets them for as long as it stays open.
 
 ## Socket protocol
 

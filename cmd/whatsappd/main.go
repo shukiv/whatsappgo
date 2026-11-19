@@ -32,7 +32,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	socketOverride := flag.String("socket", "", "override Unix socket path")
 	profile := flag.String("profile", "default", "isolated account profile name")
-	desktopNotifications := flag.Bool("notifications", true, "send native desktop notifications")
+	desktopNotifications := flag.Bool("notifications", true, "send native desktop notifications; when false, only while a desktop window is connected and asks for them")
 	exitWithParent := flag.Bool("exit-with-parent", false, "shut down when the process that started this one goes away")
 	flag.Parse()
 	if *showVersion {
@@ -140,6 +140,22 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 			notifier = desktop
 			defer desktop.Close()
 		}
+	} else {
+		// Started without notifications - by the MCP server, or as a service -
+		// this daemon is still the one a desktop window attaches to if it is
+		// already running, and on Linux the window leaves notifications to the
+		// daemon. The window holds them through notifications.present while it
+		// stays connected. The error is returned bare, never a nil *Desktop in
+		// the interface, for the reason given above.
+		onDemand := notify.NewOnDemand(func() (notify.Notifier, error) {
+			desktop, err := notify.NewDesktop(paths.Profile)
+			if err != nil {
+				return nil, err
+			}
+			return desktop, nil
+		})
+		notifier = onDemand
+		defer onDemand.Close()
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -160,6 +176,7 @@ func run(socketOverride, profile string, desktopNotifications, exitWithParent bo
 	app.Describe(version, countProfiles())
 	app.OwnProfile(paths)
 	app.OnShutdownRequest(stop)
+	app.UseNotifier(notifier)
 	// Look for a newer release now and every few hours after that. Nothing is
 	// downloaded here: the desktop is told what exists and the reader decides.
 	app.WatchForUpdates(ctx, updates.Interval, func(ctx context.Context) (updates.Release, error) {

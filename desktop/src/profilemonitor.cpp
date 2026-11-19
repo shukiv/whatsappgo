@@ -15,7 +15,10 @@ ProfileMonitor::ProfileMonitor(const QString &profile, const QString &socketPath
 
     connect(&m_reconnectTimer, &QTimer::timeout, this, &ProfileMonitor::connectSocket);
     connect(&m_refreshTimer, &QTimer::timeout, this, &ProfileMonitor::refresh);
-    connect(&m_socket, &QLocalSocket::connected, this, &ProfileMonitor::refresh);
+    connect(&m_socket, &QLocalSocket::connected, this, [this] {
+        presentNotifications();
+        refresh();
+    });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
         m_pendingId.clear();
         m_refreshAgain = false;
@@ -81,6 +84,21 @@ void ProfileMonitor::refresh()
     const QJsonObject request{{QStringLiteral("version"), 1},
                               {QStringLiteral("id"), m_pendingId},
                               {QStringLiteral("method"), QStringLiteral("chats.unread_count")},
+                              {QStringLiteral("params"), QJsonObject{}}};
+    m_socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+}
+
+// The window watches every other profile through this connection, and a
+// daemon it starts for one of them presents notifications. One it finds
+// already running may have been started without them - by the MCP server, or
+// as a service - so this asks it to present them for as long as the window
+// keeps the connection open. The answer carries an id no refresh waits for and
+// is dropped, as is the error from a daemon too old to know the request.
+void ProfileMonitor::presentNotifications()
+{
+    const QJsonObject request{{QStringLiteral("version"), 1},
+                              {QStringLiteral("id"), QStringLiteral("present-%1").arg(++m_requestId)},
+                              {QStringLiteral("method"), QStringLiteral("notifications.present")},
                               {QStringLiteral("params"), QJsonObject{}}};
     m_socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
 }
