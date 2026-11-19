@@ -47,6 +47,32 @@ type Service struct {
 	// clock is the time scheduled messages are measured against. Only a test
 	// sets it; everything else reads the wall clock.
 	clock func() time.Time
+	// notifier is the one the daemon posts notifications with, so that a
+	// desktop client can hold it. Nil until the daemon sets it.
+	notifier notify.Notifier
+}
+
+// UseNotifier tells the service which notifier the daemon posts with, so
+// notifications.present can answer for it and hold one that presents on
+// demand. See notify.OnDemand.
+func (s *Service) UseNotifier(n notify.Notifier) { s.notifier = n }
+
+// presentNotifications keeps this daemon presenting notifications for as long
+// as the connection that asked stays open: ctx is that connection's, and the
+// RPC server cancels it when the client goes away. A daemon started with
+// notifications on presents them anyway, and one with none to post through
+// says so. The answer is whether notifications now reach the screen from
+// here; when they do not, the client presents what the daemon leaves to it.
+func (s *Service) presentNotifications(ctx context.Context) (map[string]bool, error) {
+	if s.notifier == nil {
+		return map[string]bool{"presenting": false}, nil
+	}
+	if holder, ok := s.notifier.(interface{ Hold(context.Context) error }); ok {
+		if err := holder.Hold(ctx); err != nil {
+			return nil, fmt.Errorf("present desktop notifications: %w", err)
+		}
+	}
+	return map[string]bool{"presenting": s.notifier.Presents()}, nil
 }
 
 // OnShutdownRequest gives the service a way to end the daemon it belongs to.
@@ -295,6 +321,8 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		return s.gateway.Status(), nil
 	case "notifications.get":
 		return s.store.NotificationSettings(ctx)
+	case "notifications.present":
+		return s.presentNotifications(ctx)
 	case "notifications.test_sound":
 		var p struct {
 			Kind string `json:"kind"`

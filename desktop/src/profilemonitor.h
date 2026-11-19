@@ -30,6 +30,7 @@ signals:
 private:
     void connectSocket();
     void refresh();
+    void presentNotifications();
     void processLine(const QByteArray &line);
 
     QString m_profile;

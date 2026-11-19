@@ -344,6 +344,13 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
     });
     connect(&m_socket, &QLocalSocket::connected, this, [this] {
         emit daemonConnectedChanged();
+        // A daemon this window finds already running may have been started
+        // without notifications - by the MCP server, or as a service - and on
+        // Linux the window leaves them to the daemon, so none reached the
+        // screen. This keeps the daemon presenting them for as long as the
+        // window stays connected. A daemon too old to know the request leaves
+        // them to the window, as before.
+        sendRequest(QStringLiteral("notifications.present"), {}, {}, OnFailure::StayQuiet);
         refreshStatus();
         refreshLocalSettings();
         refreshChats();

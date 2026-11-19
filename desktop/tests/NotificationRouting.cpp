@@ -62,10 +62,11 @@ int main(int argc, char **argv)
         return testFatal("could not listen on the socket", socketPath + QStringLiteral(": ") + server.errorString());
 
     QLocalSocket *daemon = nullptr;
+    QStringList methods;
     QObject::connect(&server, &QLocalServer::newConnection, &app, [&] {
         daemon = server.nextPendingConnection();
         // Answer every request with an empty result so the client stays quiet.
-        QObject::connect(daemon, &QLocalSocket::readyRead, daemon, [daemon] {
+        QObject::connect(daemon, &QLocalSocket::readyRead, daemon, [daemon, &methods] {
             static QByteArray input;
             input += daemon->readAll();
             while (true) {
@@ -74,6 +75,7 @@ int main(int argc, char **argv)
                     break;
                 const auto request = QJsonDocument::fromJson(input.left(newline)).object();
                 input.remove(0, newline + 1);
+                methods << request.value(QStringLiteral("method")).toString();
                 daemon->write(QJsonDocument(QJsonObject{
                                   {QStringLiteral("version"), 1},
                                   {QStringLiteral("id"), request.value(QStringLiteral("id"))},
@@ -97,6 +99,11 @@ int main(int argc, char **argv)
             app.quit();
             return;
         }
+        // A daemon started without notifications - by the MCP server, or as a
+        // service - leaves them all to a client that never asks, and on Linux
+        // the client leaves them to the daemon: nothing reaches the screen.
+        check(methods.contains(QStringLiteral("notifications.present")),
+              "the client asks the daemon it connects to for notifications");
         daemon->write(notification(QStringLiteral("1")));
         daemon->flush();
         QTimer::singleShot(200, &app, [&] {

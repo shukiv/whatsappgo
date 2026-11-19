@@ -21,11 +21,22 @@ int main(int argc, char **argv)
         return testFatal("could not listen on the socket", path + QStringLiteral(": ") + server.errorString());
 
     int requests = 0;
+    // A daemon this monitor finds running may have been started without
+    // notifications; the monitor asks it to present them while it watches.
+    bool askedToPresent = false;
     QObject::connect(&server, &QLocalServer::newConnection, &app, [&] {
         auto *socket = server.nextPendingConnection();
         QObject::connect(socket, &QLocalSocket::readyRead, socket, [&, socket] {
             while (socket->canReadLine()) {
                 const auto request = QJsonDocument::fromJson(socket->readLine()).object();
+                if (request.value(QStringLiteral("method")).toString() == QStringLiteral("notifications.present")) {
+                    askedToPresent = true;
+                    QJsonObject response{{QStringLiteral("version"), 1},
+                                         {QStringLiteral("id"), request.value(QStringLiteral("id"))},
+                                         {QStringLiteral("result"), QJsonObject{{QStringLiteral("presenting"), true}}}};
+                    socket->write(QJsonDocument(response).toJson(QJsonDocument::Compact) + '\n');
+                    continue;
+                }
                 if (request.value(QStringLiteral("method")).toString() != QStringLiteral("chats.unread_count"))
                     QCoreApplication::exit(EXIT_FAILURE);
                 ++requests;
@@ -54,8 +65,11 @@ int main(int argc, char **argv)
                      [&](const QString &profile, int count) {
                          if (profile != QStringLiteral("work"))
                              QCoreApplication::exit(EXIT_FAILURE);
-                         if (count == 0 && requests >= 3)
-                             QCoreApplication::exit(EXIT_SUCCESS);
+                         if (count == 0 && requests >= 3) {
+                             if (!askedToPresent)
+                                 qWarning("FAILED: the monitor never asked its daemon to present notifications");
+                             QCoreApplication::exit(askedToPresent ? EXIT_SUCCESS : EXIT_FAILURE);
+                         }
                      });
     QTimer::singleShot(3000, &app, [] { QCoreApplication::exit(EXIT_FAILURE); });
     return app.exec();
