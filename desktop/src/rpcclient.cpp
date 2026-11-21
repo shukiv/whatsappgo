@@ -21,6 +21,7 @@
 #include <QDesktopServices>
 #include "updateinstaller.h"
 #include "photoquality.h"
+#include "videopreview.h"
 #include <QDateTime>
 #include <QFileInfo>
 #include <QFile>
@@ -33,6 +34,7 @@
 #include <QJsonDocument>
 #include <QLocalServer>
 #include <QMimeData>
+#include <QMimeDatabase>
 #include <QProcess>
 #include <QPromise>
 #include <QRegularExpression>
@@ -351,6 +353,14 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         // window stays connected. A daemon too old to know the request leaves
         // them to the window, as before.
         sendRequest(QStringLiteral("notifications.present"), {}, {}, OnFailure::StayQuiet);
+        // A video sent without a thumbnail and a length is a grey box on the
+        // phone. The window makes them, and hands them only to a service that
+        // says it takes them; an older one would refuse the video.
+        m_sendMediaTakesPreview = false;
+        sendRequest(QStringLiteral("rpc.discover"), {}, [this](const QJsonValue &result, const QJsonObject &error) {
+            if (error.isEmpty())
+                m_sendMediaTakesPreview = VideoPreview::sendMediaTakesPreview(result);
+        }, OnFailure::StayQuiet);
         refreshStatus();
         refreshLocalSettings();
         refreshChats();
@@ -385,6 +395,7 @@ RpcClient::RpcClient(const QString &initialProfile, const QString &initialChat, 
         m_privacySettings.clear();
         emit privacySettingsChanged();
         abandonPendingRequests(tr("The background service disconnected."), true);
+        m_sendMediaTakesPreview = false;
         if (activityCleared || !m_selectedPresence.isEmpty()) {
             m_selectedPresence.clear();
             emit selectedPresenceChanged();
@@ -3374,7 +3385,7 @@ void RpcClient::sendPreparedAttachment(const QString &localUrl, const QString &c
         return;
     }
     setBusy(true);
-    const auto upload = [this, sentProfile, generation, chatJid, caption, replyTo, document, finish](const PhotoQuality::Prepared &prepared) {
+    const auto upload = [this, sentProfile, generation, chatJid, caption, replyTo, document, finish](const PhotoQuality::Prepared &prepared, const QJsonObject &videoPreview) {
         if (m_profile != sentProfile || generation != m_attachmentSession || !daemonConnected()) {
             finish(false);
             return;
@@ -3384,14 +3395,29 @@ void RpcClient::sendPreparedAttachment(const QString &localUrl, const QString &c
             finish(false);
             return;
         }
-        sendRequest(QStringLiteral("message.send_media"),
-                    {{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("path"), prepared.path},
-                     {QStringLiteral("caption"), caption}, {QStringLiteral("reply_to"), replyTo},
-                     {QStringLiteral("document"), document}},
+        QJsonObject params{{QStringLiteral("chat_jid"), chatJid}, {QStringLiteral("path"), prepared.path},
+                           {QStringLiteral("caption"), caption}, {QStringLiteral("reply_to"), replyTo},
+                           {QStringLiteral("document"), document}};
+        // The service may have been replaced by an older one while the video
+        // was being looked at.
+        if (m_sendMediaTakesPreview) {
+            for (auto field = videoPreview.begin(); field != videoPreview.end(); ++field)
+                params.insert(field.key(), field.value());
+        }
+        sendRequest(QStringLiteral("message.send_media"), params,
                     [finish, prepared](const QJsonValue &, const QJsonObject &error) { finish(error.isEmpty()); });
     };
+    // A phone shows a video as a grey box with no length unless the message
+    // carries a still, the length and the size, as WhatsApp's own apps send.
+    if (!document && m_sendMediaTakesPreview
+            && QMimeDatabase().mimeTypeForFile(path).name().startsWith(QStringLiteral("video/"))) {
+        VideoPreview::inspect(path, this, [upload, path](const VideoPreview::Result &result) {
+            upload(PhotoQuality::Prepared{path, {}, {}}, VideoPreview::requestFields(result));
+        });
+        return;
+    }
     if (document || (quality != QStringLiteral("standard") && quality != QStringLiteral("hd"))) {
-        upload(PhotoQuality::Prepared{path, {}, {}});
+        upload(PhotoQuality::Prepared{path, {}, {}}, {});
         return;
     }
     auto promise = std::make_shared<QPromise<PhotoQuality::Prepared>>();
@@ -3399,7 +3425,7 @@ void RpcClient::sendPreparedAttachment(const QString &localUrl, const QString &c
     connect(watcher, &QFutureWatcher<PhotoQuality::Prepared>::finished, this, [watcher, upload] {
         const auto prepared = watcher->result();
         watcher->deleteLater();
-        upload(prepared);
+        upload(prepared, {});
     });
     promise->start();
     watcher->setFuture(promise->future());

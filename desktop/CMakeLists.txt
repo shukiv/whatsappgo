@@ -87,6 +87,8 @@ qt_add_executable(whatsappgo
     src/rpcclient.h
     src/photoquality.cpp
     src/photoquality.h
+    src/videopreview.cpp
+    src/videopreview.h
     src/updateinstaller.cpp
     src/updateinstaller.h
     src/traybehavior.cpp
@@ -567,10 +569,29 @@ if(BUILD_TESTING)
         src/updateinstaller.cpp
         src/updateinstaller.h
     )
+    qt_add_executable(video-send-test
+        tests/VideoSend.cpp
+        src/messagemodel.cpp
+        src/messagemodel.h
+        src/profilemonitor.cpp
+        src/profilemonitor.h
+        src/rpcclient.cpp
+        src/rpcclient.h
+        src/updateinstaller.cpp
+        src/updateinstaller.h
+    )
+    target_include_directories(video-send-test PRIVATE src)
+    target_link_libraries(video-send-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
+    add_test(NAME desktop-video-send COMMAND video-send-test)
+    set_tests_properties(desktop-video-send PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
     foreach(rpc_target pairing-auto-start-test presence-updates-test update-flow-test
             chat-list-updates-test conversation-updates-test notification-routing-test
-            backend-probe-test link-preview-upgrade-test profile-display-names-test)
-        target_sources(${rpc_target} PRIVATE src/photoquality.cpp src/photoquality.h)
+            backend-probe-test link-preview-upgrade-test profile-display-names-test
+            video-send-test)
+        target_sources(${rpc_target} PRIVATE src/photoquality.cpp src/photoquality.h
+            src/videopreview.cpp src/videopreview.h)
+        target_link_libraries(${rpc_target} PRIVATE Qt6::Multimedia)
     endforeach()
     target_include_directories(profile-display-names-test PRIVATE src)
     target_link_libraries(profile-display-names-test PRIVATE Qt6::Core Qt6::Gui Qt6::Network)
@@ -580,6 +601,16 @@ if(BUILD_TESTING)
     set_tests_properties(desktop-privacy-settings PROPERTIES TIMEOUT 20)
     add_test(NAME desktop-video-surface COMMAND video-surface-test)
     set_tests_properties(desktop-video-surface PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    qt_add_executable(video-preview-test
+        tests/VideoPreview.cpp
+        src/videopreview.cpp
+        src/videopreview.h
+    )
+    target_include_directories(video-preview-test PRIVATE src)
+    target_link_libraries(video-preview-test PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia)
+    add_test(NAME desktop-video-preview COMMAND video-preview-test)
+    set_tests_properties(desktop-video-preview PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 20)
     add_test(NAME desktop-notification-routing COMMAND notification-routing-test)
     add_test(NAME desktop-backend-probe COMMAND backend-probe-test)
     set_tests_properties(desktop-profile-display-names PROPERTIES TIMEOUT 5)

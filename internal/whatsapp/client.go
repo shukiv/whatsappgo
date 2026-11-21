@@ -730,6 +730,11 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 	if req.GIF {
 		payload.VideoMessage.GifPlayback = proto.Bool(true)
 	}
+	duration := 0
+	if payload.VideoMessage != nil {
+		applyVideoPreview(payload.VideoMessage, req.Video)
+		duration = int(payload.VideoMessage.GetSeconds())
+	}
 	if req.Sticker {
 		payload.StickerMessage.Width = &stickerWidth
 		payload.StickerMessage.Height = &stickerHeight
@@ -749,7 +754,23 @@ func (c *Client) SendMedia(ctx context.Context, req gateway.MediaRequest) (model
 			c.emit(gateway.Event{Name: "daemon.error", Data: map[string]string{"message": "store sent attachment: " + err.Error()}})
 		}
 	}
-	return c.withReplyPreview(ctx, model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), ForwardingScore: req.ForwardingScore, GIFPlayback: req.GIF}), nil
+	return c.withReplyPreview(ctx, model.Message{ID: string(resp.ID), ChatJID: chat.String(), SenderJID: c.selfJID(), Timestamp: resp.Timestamp.UnixMilli(), Kind: kind, Body: req.Caption, FromMe: true, Status: "sent", ReplyTo: req.ReplyTo, MediaMIME: mimeType, MediaName: filepath.Base(req.Path), MediaPath: localPath, MediaSize: stat.Size(), MediaDuration: duration, ForwardingScore: req.ForwardingScore, GIFPlayback: req.GIF}), nil
+}
+
+// applyVideoPreview adds what a phone shows of a video before downloading it:
+// a still, the length and the picture size. WhatsApp's own apps always send
+// them; a video without them is a grey box with no length on the phone.
+func applyVideoPreview(video *waE2E.VideoMessage, preview gateway.VideoPreview) {
+	if len(preview.Thumbnail) > 0 {
+		video.JPEGThumbnail = preview.Thumbnail
+	}
+	if preview.Seconds > 0 {
+		video.Seconds = proto.Uint32(uint32(preview.Seconds))
+	}
+	if preview.Width > 0 && preview.Height > 0 {
+		video.Width = proto.Uint32(uint32(preview.Width))
+		video.Height = proto.Uint32(uint32(preview.Height))
+	}
 }
 
 func (c *Client) cacheOutgoing(sourcePath, chatJID, messageID, kind string) (string, error) {

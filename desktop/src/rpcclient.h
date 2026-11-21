@@ -654,6 +654,9 @@ private:
     bool m_defaultTimerBusy = false;
     quint64 m_defaultTimerGeneration = 0;
     quint64 m_attachmentSession = 0;
+    // Whether the connected service takes a video's thumbnail, length and size
+    // with message.send_media (rpc.discover). An older one refuses them.
+    bool m_sendMediaTakesPreview = false;
     QSet<QString> m_interactiveMutations;
     QVariantList m_chatLabels;
     QVariantList m_mediaLibrary;
