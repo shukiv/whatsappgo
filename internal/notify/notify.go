@@ -63,6 +63,12 @@ type Desktop struct {
 	// body it is handed: a server that advertises it parses markup there.
 	bodyMarkup bool
 	playSound  func()
+	// gnomeShell is true when the notification service is GNOME Shell, which
+	// is never asked to replace or close a notification. See Notify.
+	gnomeShell bool
+	// server is how Notify reaches the notification service: the session bus in
+	// the daemon, a recording stand-in in tests.
+	server notificationServer
 
 	// liveNotifications are the ids this daemon has posted and not yet seen
 	// closed, oldest first. chatNotifications maps a chat to its live id so a
@@ -86,7 +92,7 @@ func NewDesktop(profile string) (*Desktop, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Desktop{conn: conn, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), chatNotifications: make(map[string]uint32), profile: profile, playSound: playNotificationSound}
+	d := &Desktop{conn: conn, server: busNotificationServer{conn: conn}, signals: make(chan *dbus.Signal, 16), done: make(chan struct{}), actions: make(map[uint32]string), portalActions: make(map[string]string), chatNotifications: make(map[string]uint32), profile: profile, playSound: playNotificationSound}
 	lookupOwner := func() (string, error) {
 		var current string
 		err := conn.BusObject().CallWithContext(context.Background(), "org.freedesktop.DBus.GetNameOwner", 0, notificationService).Store(&current)
@@ -130,6 +136,12 @@ func NewDesktop(profile string) (*Desktop, error) {
 					d.bodyMarkup = true
 				}
 			}
+		}
+		var name, vendor, version, specVersion string
+		if err := conn.Object(notificationService, dbus.ObjectPath(notificationPath)).
+			CallWithContext(context.Background(), notificationInterface+".GetServerInformation", 0).
+			Store(&name, &vendor, &version, &specVersion); err == nil {
+			d.gnomeShell = isGNOMEShell(name)
 		}
 	}
 	d.launcher = resolveDesktopExecutable(os.Executable, exec.LookPath)
@@ -239,13 +251,27 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 	// the server's queue on its own.
 	// Making room and posting are one action. Anything between them lets a
 	// second message take the room this one just made.
+	//
+	// GNOME Shell is the exception: it is handed every message as a new
+	// notification and is never asked to replace or close one. Replacing the
+	// notification it is showing as a banner sends GNOME Shell 48 and 49 down
+	// the path that updates the banner on screen, and there its message tray
+	// can lose the notification while it still counts one as shown: it throws
+	// "this._notification is null" and shows no banner again, from any
+	// program, until the shell restarts. Closing is left alone too, as it acts
+	// on a notification that may be on screen, and GNOME Shell never needs it:
+	// it trims each program's notifications to its own limit and never refuses
+	// one for a full queue.
 	d.post.Lock()
 	defer d.post.Unlock()
 
-	d.makeRoom(ctx)
-	d.mu.Lock()
-	replaces := d.chatNotifications[message.ChatJID]
-	d.mu.Unlock()
+	var replaces uint32
+	if !d.gnomeShell {
+		d.makeRoom(ctx)
+		d.mu.Lock()
+		replaces = d.chatNotifications[message.ChatJID]
+		d.mu.Unlock()
+	}
 
 	id, err := d.postNotification(ctx, replaces, appIcon, message, actions, hints)
 	if isMaxNotificationsExceeded(err) {
@@ -262,7 +288,11 @@ func (d *Desktop) Notify(ctx context.Context, message Message) error {
 
 	d.mu.Lock()
 	d.trackActionLocked(id, message.ChatJID)
-	d.trackLiveLocked(id, message.ChatJID)
+	// Nothing posted to GNOME Shell is replaced or closed, so keeping its ids
+	// would only grow the list.
+	if !d.gnomeShell {
+		d.trackLiveLocked(id, message.ChatJID)
+	}
 	d.mu.Unlock()
 	if !message.Silent && !d.serverPlaysSound && d.playSound != nil {
 		go d.playSound()
@@ -289,8 +319,22 @@ func (d *Desktop) presentedBody(body string) string {
 func (d *Desktop) postNotification(ctx context.Context, replaces uint32, appIcon string, message Message, actions []string, hints map[string]dbus.Variant) (uint32, error) {
 	// The D-Bus round trip is not guarded, so delivering a notification never
 	// blocks the signal watcher that resolves earlier notification clicks.
-	call := d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).CallWithContext(ctx, notificationInterface+".Notify", 0,
-		"WhatsAppGo", replaces, appIcon, message.Title, message.Body, actions, hints, int32(8000))
+	return d.server.Notify(ctx, replaces, appIcon, message.Title, message.Body, actions, hints)
+}
+
+// notificationServer is the part of org.freedesktop.Notifications that Notify
+// calls.
+type notificationServer interface {
+	Notify(ctx context.Context, replaces uint32, appIcon, summary, body string, actions []string, hints map[string]dbus.Variant) (uint32, error)
+	CloseNotification(ctx context.Context, id uint32) error
+}
+
+// busNotificationServer reaches the notification service over the session bus.
+type busNotificationServer struct{ conn *dbus.Conn }
+
+func (s busNotificationServer) Notify(ctx context.Context, replaces uint32, appIcon, summary, body string, actions []string, hints map[string]dbus.Variant) (uint32, error) {
+	call := s.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).CallWithContext(ctx, notificationInterface+".Notify", 0,
+		"WhatsAppGo", replaces, appIcon, summary, body, actions, hints, int32(8000))
 	if call.Err != nil {
 		return 0, call.Err
 	}
@@ -300,6 +344,19 @@ func (d *Desktop) postNotification(ctx context.Context, replaces uint32, appIcon
 	}
 	return id, nil
 }
+
+func (s busNotificationServer) CloseNotification(ctx context.Context, id uint32) error {
+	return s.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).
+		CallWithContext(ctx, notificationInterface+".CloseNotification", 0, id).Err
+}
+
+// gnomeShellServerName is the name GNOME Shell's notification service gives in
+// GetServerInformation, its package name. GNOME's separate notification-daemon
+// names itself differently, and since it does refuse a full queue it keeps the
+// replacing and closing.
+const gnomeShellServerName = "gnome-shell"
+
+func isGNOMEShell(serverName string) bool { return serverName == gnomeShellServerName }
 
 func isMaxNotificationsExceeded(err error) bool {
 	var dbusErr dbus.Error
@@ -313,8 +370,7 @@ func (d *Desktop) closeNotification(ctx context.Context, id uint32) {
 	if id == 0 {
 		return
 	}
-	_ = d.conn.Object(notificationService, dbus.ObjectPath(notificationPath)).
-		CallWithContext(ctx, notificationInterface+".CloseNotification", 0, id).Err
+	_ = d.server.CloseNotification(ctx, id)
 	d.mu.Lock()
 	d.forgetLiveLocked(id)
 	d.mu.Unlock()

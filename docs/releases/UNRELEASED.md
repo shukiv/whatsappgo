@@ -18,9 +18,20 @@ use them; a rebuild does not replace an already running process.
   server runs the `whatsappd` installed beside it, not the one in the
   AppImage.
 
+- On GNOME, notifications stopped appearing altogether - from WhatsAppGo and
+  from every other program - until the next log-in. A second message from a
+  chat replaced that chat's notification, and when the one replaced was the
+  banner GNOME Shell was showing, its message tray failed with
+  "this._notification is null" in the session log and showed no banner again.
+  GNOME Shell 48 and 49 both do this. WhatsAppGo now hands GNOME Shell every
+  message as a new notification and never replaces or closes one there;
+  other notification services are unchanged.
+
 ## Changed
 
-- Nothing yet.
+- On GNOME, a chat that sends several messages shows several notifications
+  instead of one that updates. GNOME Shell keeps the latest ten for each
+  program and drops older ones itself.
 
 ## Known issues
 
