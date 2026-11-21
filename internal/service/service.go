@@ -209,6 +209,12 @@ type sendMediaParams struct {
 	Document bool   `json:"document"`
 	GIF      bool   `json:"gif"`
 	Sticker  bool   `json:"sticker"`
+	// What a phone shows of a video before downloading it; videopreview.go.
+	// The thumbnail is base64 in JSON.
+	Thumbnail []byte `json:"thumbnail"`
+	Seconds   int    `json:"seconds"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
 }
 type reactionParams struct {
 	ChatJID   string `json:"chat_jid"`
@@ -1246,7 +1252,11 @@ func (s *Service) handle(ctx context.Context, method string, raw json.RawMessage
 		if modes > 1 {
 			return nil, errors.New("document, voice, gif and sticker are mutually exclusive")
 		}
-		msg, err := s.gateway.SendMedia(ctx, gateway.MediaRequest{ChatJID: p.ChatJID, Path: p.Path, Caption: p.Caption, ReplyTo: p.ReplyTo, Voice: p.Voice, Document: p.Document, GIF: p.GIF, Sticker: p.Sticker})
+		video, err := p.videoPreview()
+		if err != nil {
+			return nil, err
+		}
+		msg, err := s.gateway.SendMedia(ctx, gateway.MediaRequest{ChatJID: p.ChatJID, Path: p.Path, Caption: p.Caption, ReplyTo: p.ReplyTo, Voice: p.Voice, Document: p.Document, GIF: p.GIF, Sticker: p.Sticker, Video: video})
 		if err != nil {
 			return nil, err
 		}

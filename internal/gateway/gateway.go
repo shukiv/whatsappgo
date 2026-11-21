@@ -28,6 +28,21 @@ type MediaRequest struct {
 	// ForwardingScore marks the attachment as forwarded and says how long the
 	// chain is. Zero means an ordinary send.
 	ForwardingScore int
+	// Video is what a phone shows of a video before downloading it. Without
+	// it a video arrives as a grey box with no length. It applies only to an
+	// attachment sent as a video, GIFs included.
+	Video VideoPreview
+}
+
+// VideoPreview describes a video the way WhatsApp's own apps do when they send
+// one. Zero values are left out of the message.
+type VideoPreview struct {
+	// Thumbnail is a small JPEG of a frame, embedded in the message.
+	Thumbnail []byte
+	Seconds   int
+	// Width and Height are the picture as it is watched, upright.
+	Width  int
+	Height int
 }
 
 type TextRequest struct {
