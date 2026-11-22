@@ -6,6 +6,12 @@ use them; a rebuild does not replace an already running process.
 
 ## Fixed
 
+- Opening the archived chats after scrolling the chat list could show chats
+  that are not archived, a different few each time, in place of the archived
+  ones. The list reused rows it had set aside while scrolling, and they kept
+  the chats they were showing. The archive now always shows the archived
+  chats.
+
 - A video sent from the window showed on phones as a grey box with no
   picture and no length until it was downloaded. The window now sends each
   video with a small still of its first frame, its length and its size, as

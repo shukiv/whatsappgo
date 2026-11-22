@@ -696,6 +696,10 @@ if(BUILD_TESTING)
     add_test(NAME desktop-chat-filters COMMAND whatsappgo --chat-filter-test)
     add_test(NAME desktop-chat-row-menu COMMAND whatsappgo --chat-row-menu-test)
     add_test(NAME desktop-search-results COMMAND whatsappgo --search-results-test)
+    add_test(NAME desktop-archived-list COMMAND whatsappgo --archived-list-test)
+    # Its own runtime directory, so the stub it serves is never a real daemon.
+    set_tests_properties(desktop-archived-list PROPERTIES TIMEOUT 30
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XDG_RUNTIME_DIR=${WHATSAPPGO_TEST_RUNTIME_BASE}/al;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/archived-list-test/data;XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/archived-list-test/cache;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/archived-list-test/config")
     add_test(NAME desktop-profile-removal COMMAND whatsappgo --profile-removal-test)
     # The same removal with the per-account monitors constructed, which is how
     # the application runs it. WHATSAPPGO_BACKEND points at a program that exits
