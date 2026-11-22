@@ -1768,10 +1768,24 @@ ApplicationWindow {
                         anchors.leftMargin: 7
                         anchors.rightMargin: 8
                         visible: !window.searching
-                        model: window.showArchived ? backend.archivedChatListModel : backend.chatListModel
+                        model: backend.chatListModel
                         spacing: 2
                         clip: true
                         reuseItems: true
+                        // A row pooled while the chats were scrolled kept its
+                        // chat when the archive reused it, so the archive showed
+                        // chats that are not archived. Turning reuse off empties
+                        // the pool, and it has to happen before the model
+                        // changes: the new rows are made during that change.
+                        Connections {
+                            target: window
+                            function onShowArchivedChanged() {
+                                chatList.reuseItems = false
+                                chatList.model = window.showArchived
+                                    ? backend.archivedChatListModel : backend.chatListModel
+                                chatList.reuseItems = true
+                            }
+                        }
                         boundsBehavior: Flickable.StopAtBounds
                         // The list arrives a page at a time. Nearing the end of
                         // what is loaded asks for the next page, so an account

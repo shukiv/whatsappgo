@@ -442,6 +442,8 @@ int main(int argc, char *argv[])
     parser.addOption(chatRowMenuTestOption);
     QCommandLineOption searchResultsTestOption(QStringLiteral("search-results-test"), QStringLiteral("Verify the sidebar search swaps the chat list for grouped results"));
     parser.addOption(searchResultsTestOption);
+    QCommandLineOption archivedListTestOption(QStringLiteral("archived-list-test"), QStringLiteral("Verify the archive shows only archived chats after the chat list was scrolled"));
+    parser.addOption(archivedListTestOption);
     QCommandLineOption bugReportTestOption(QStringLiteral("bug-report-test"), QStringLiteral("Verify report-a-problem actions open GitHub issues directly"));
     parser.addOption(bugReportTestOption);
     QCommandLineOption updateSettingsTestOption(QStringLiteral("update-settings-test"), QStringLiteral("Verify the Help page reports the version and offers the update button"));
@@ -668,6 +670,7 @@ int main(int argc, char *argv[])
     const bool chatFilterTest = parser.isSet(chatFilterTestOption);
     const bool chatRowMenuTest = parser.isSet(chatRowMenuTestOption);
     const bool searchResultsTest = parser.isSet(searchResultsTestOption);
+    const bool archivedListTest = parser.isSet(archivedListTestOption);
     const bool bugReportTest = parser.isSet(bugReportTestOption);
     const bool updateSettingsTest = parser.isSet(updateSettingsTestOption);
     const bool composerDraftTest = parser.isSet(composerDraftTestOption);
@@ -693,7 +696,7 @@ int main(int argc, char *argv[])
     const auto screenshotConversationSearch = parser.value(conversationSearchOption);
     const auto screenshotChat = parser.value(screenshotChatOption);
     const bool automatedRun = smokeTest || searchNavigationTest || messageInteractionTest || messageHistoryTest || promptChoicesTest || scheduleSendTest || clipboardImageTest
-        || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || profileRemovalTest
+        || layoutRegressionTest || mediaPreviewTest || chatFilterTest || chatRowMenuTest || searchResultsTest || archivedListTest || profileRemovalTest
         || backendLifecycleTest || resizeRenderingTest || channelRowTest
         || messageLayoutTest || messageScrollTest || desktopIntegrationTest || contactInfoTest || statusStoriesTest
         || channelPostsTest || voiceSeekTest || stickerAnimationTest
@@ -782,7 +785,7 @@ int main(int argc, char *argv[])
     const auto fixtureChannel = QStringLiteral("120363421242390117@newsletter");
     int channelPostRequests = 0;
     if (searchResultsTest || composerDraftTest || messageScrollTest || bugReportTest
-            || channelPostsTest || channelRowTest) {
+            || channelPostsTest || channelRowTest || archivedListTest) {
         const auto stubPath = RpcClient::socketPathForProfile(initialProfile);
 #ifndef Q_OS_WIN
         QDir().mkpath(QFileInfo(stubPath).absolutePath());
@@ -793,9 +796,9 @@ int main(int argc, char *argv[])
                                         .arg(stubPath, stubDaemon.errorString());
             return WHATSAPPGO_TEST_FAILURE();
         }
-        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, channelPostsTest, channelRowTest, fixtureChannel, &channelPostRequests, &rejectedDraftSends] {
+        QObject::connect(&stubDaemon, &QLocalServer::newConnection, &app, [&stubDaemon, composerDraftTest, messageScrollTest, channelPostsTest, channelRowTest, archivedListTest, fixtureChannel, &channelPostRequests, &rejectedDraftSends] {
             auto *socket = stubDaemon.nextPendingConnection();
-            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, channelPostsTest, channelRowTest, fixtureChannel, &channelPostRequests, &rejectedDraftSends] {
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket, composerDraftTest, messageScrollTest, channelPostsTest, channelRowTest, archivedListTest, fixtureChannel, &channelPostRequests, &rejectedDraftSends] {
                 while (socket->canReadLine()) {
                     const auto request = QJsonDocument::fromJson(socket->readLine()).object();
                     const auto method = request.value(QStringLiteral("method")).toString();
@@ -824,6 +827,23 @@ int main(int argc, char *argv[])
                     if (request.value(QStringLiteral("method")).toString() == QStringLiteral("status.get")) {
                         result = QJsonObject{{QStringLiteral("logged_in"), true},
                                              {QStringLiteral("state"), QStringLiteral("connected")}};
+                    }
+                    // Sixty chats, enough to scroll, and two archived ones.
+                    if (archivedListTest && method == QStringLiteral("chats.list")) {
+                        const auto params = request.value(QStringLiteral("params")).toObject();
+                        QJsonArray chats;
+                        if (params.value(QStringLiteral("archived")).toBool()) {
+                            for (int i = 1; i <= 2; ++i)
+                                chats.append(QJsonObject{{QStringLiteral("jid"), QStringLiteral("archived-%1@g.us").arg(i)},
+                                                         {QStringLiteral("title"), QStringLiteral("Archived %1").arg(i)},
+                                                         {QStringLiteral("archived"), true}});
+                        } else if (params.value(QStringLiteral("offset")).toInt() == 0) {
+                            for (int i = 0; i < 60; ++i)
+                                chats.append(QJsonObject{{QStringLiteral("jid"), QStringLiteral("main-%1@s.whatsapp.net").arg(i)},
+                                                         {QStringLiteral("title"), QStringLiteral("Main %1").arg(i)},
+                                                         {QStringLiteral("last_message_at"), 1790000000000LL - i}});
+                        }
+                        result = chats;
                     }
                     if (channelPostsTest) {
                         const auto params = request.value(QStringLiteral("params")).toObject();
@@ -5702,6 +5722,57 @@ QtObject {
         if (root->property("transientNotice").toString() != expectedUrl)
             return WHATSAPPGO_TEST_FAILURE();
         return EXIT_SUCCESS;
+    }
+    if (archivedListTest) {
+        auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
+        auto *mainWindow = qobject_cast<QQuickWindow *>(mainRoot);
+        if (mainWindow == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        mainWindow->show();
+        auto *chatList = mainRoot->findChild<QQuickItem *>(QStringLiteral("chatList"));
+        if (chatList == nullptr)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto settle = [](int ms) {
+            QElapsedTimer waited;
+            waited.start();
+            while (waited.elapsed() < ms)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        };
+        QElapsedTimer loading;
+        loading.start();
+        while ((chatList->property("count").toInt() < 60 || backend.archivedCount() != 2) && loading.elapsed() < 5000)
+            settle(50);
+        if (chatList->property("count").toInt() < 60 || backend.archivedCount() != 2)
+            return WHATSAPPGO_TEST_FAILURE();
+        const auto shownTitles = [&] {
+            QMetaObject::invokeMethod(chatList, "forceLayout");
+            settle(100);
+            QStringList titles;
+            for (int row = 0; row < chatList->property("count").toInt(); ++row) {
+                QQuickItem *item = nullptr;
+                QMetaObject::invokeMethod(chatList, "itemAtIndex", Q_RETURN_ARG(QQuickItem *, item), Q_ARG(int, row));
+                titles << (item ? item->property("displayTitle").toString() : QString());
+            }
+            return titles;
+        };
+        // Rows scrolled out of sight go into a pool the archive takes its rows
+        // from. Each round scrolls differently, so the pool holds other chats.
+        bool passed = true;
+        for (int round = 0; round < 3; ++round) {
+            chatList->setProperty("contentY", 3000);
+            settle(100);
+            chatList->setProperty("contentY", 500 * round);
+            settle(100);
+            mainRoot->setProperty("showArchived", true);
+            const auto titles = shownTitles();
+            if (titles != QStringList{QStringLiteral("Archived 1"), QStringLiteral("Archived 2")}) {
+                qInfo().noquote() << QStringLiteral("FAIL: round %1, the archive showed %2").arg(round).arg(titles.join(QStringLiteral(", ")));
+                passed = false;
+            }
+            mainRoot->setProperty("showArchived", false);
+            settle(50);
+        }
+        return passed ? EXIT_SUCCESS : WHATSAPPGO_TEST_FAILURE();
     }
     if (searchResultsTest) {
         auto *mainRoot = engine.rootObjects().isEmpty() ? nullptr : engine.rootObjects().constFirst();
