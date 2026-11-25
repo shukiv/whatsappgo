@@ -1,5 +1,5 @@
 Name:           whatsappgo
-Version:        0.1.15
+Version:        0.1.16
 Release:        1%{?dist}
 Summary:        Low-memory native WhatsApp client for Linux
 License:        GPL-3.0-or-later
@@ -46,6 +46,12 @@ install -Dm644 packaging/metainfo/org.whatsappgo.Desktop.metainfo.xml %{buildroo
 %{_metainfodir}/org.whatsappgo.Desktop.metainfo.xml
 
 %changelog
+* Wed Nov 25 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.16-1
+- Show the archived chats in the archive, not chats reused from the list after scrolling
+- Send a video from the window with a still of its first frame, its length and its size
+- Ask a background service started without notifications to present them while the window is connected
+- Never replace or close a notification on GNOME Shell, which stopped showing banners until the next log-in
+
 * Fri Nov 13 2026 WhatsAppGo Contributors <maintainers@whatsappgo.org> - 0.1.15-1
 - Add a terminal client, whatsapptui, on the same background service as the window
 - Ctrl+Enter sends and Enter starts a new line; Ctrl+Enter also saves what is written in a dialog

@@ -15,6 +15,13 @@
   <url type="bugtracker">https://github.com/shukiv/whatsappgo/issues</url>
   <provides><binary>whatsappgo</binary></provides>
   <releases>
+    <release version="0.1.16" date="2026-11-25">
+      <description>
+        <p>The archive shows the archived chats, not other chats, after the chat list has been scrolled.</p>
+        <p>A video sent from the window shows a still and its length on phones before it is downloaded.</p>
+        <p>On GNOME, notifications no longer stop appearing until the next log-in, and they appear when the window joins a background service started without them.</p>
+      </description>
+    </release>
     <release version="0.1.15" date="2026-11-13">
       <description>
         <p>A terminal client opens the same account in a terminal, talking to the same background service as the window.</p>
